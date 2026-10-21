@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:app/config/dependencies.dart';
+import 'package:app/data/files/file_receiver.dart';
 import 'package:app/data/local/app_database.dart';
 import 'package:app/data/local/legacy_data_migrator.dart';
 import 'package:app/data/mesh/mesh_sync_service.dart';
@@ -33,6 +34,9 @@ Future<void> initializeApplication() async {
     await LegacyDataMigrator(AppDatabase.instance).migrate();
     await setupDependencies();
     injector.get<SyncService>();
+    // Plan 65 — listen for files from boot so a transfer that starts while
+    // no chat is open still lands (and stale .part files are cleaned).
+    injector.get<FileReceiver>();
   } catch (_) {
     disposeDependencies();
     rethrow;

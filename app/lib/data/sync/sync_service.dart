@@ -802,6 +802,12 @@ class SyncService extends Service {
         _setPlanState(msg);
       case TodoState(:final phases):
         _setTodoPhases(phases);
+      // Plan 65 — file transfers are handled by FileReceiver, not chat rows.
+      case FileOffer():
+      case FileChunk():
+      case FileEnd():
+      case FileCancel():
+        break;
     }
   }
 

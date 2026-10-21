@@ -21,7 +21,8 @@ streaming chat, and approval cards for tool calls.
 - `flutter test` — unit & widget tests
 - `flutter run` — launch on connected device / simulator
 - `dart format .` — format codebase
-- `flutter build apk --release` — release APK build
+- `flutter build apk --release` — release APK build (universal, all three ABIs)
+- `flutter build apk --release --target-platform android-arm64` — phone build (~18 MB, same versionCode); `android-x64` for the emulator. Don't use `--split-per-abi` for phone builds: it adds 2000/4000 to versionCode, which blocks later universal installs.
 
 ## Layer Architecture
 

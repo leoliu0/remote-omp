@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- INTERNET is required for the relay WebSocket. Debug and profile
          manifests already declare it for hot-reload, but the release
          build inherits only from src/main; without this line a signed
@@ -13,6 +14,16 @@
     <!-- Plan 30 — image attachments. CAMERA covers the photo-capture path;
          the gallery uses the Android Photo Picker (no storage permission). -->
     <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- Plan 65 — "Install" on an APK the agent sent. Android still shows
+         its own confirmation (and the per-app "install unknown apps"
+         switch); nothing installs without the user's tap. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- open_filex declares media/storage reads for files outside the app's
+         own dirs. Received files live in filesDir, so drop them. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" tools:node="remove"/>
     <application
         android:label="Remote Pi"
         android:name="${applicationName}"
@@ -39,6 +50,17 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Plan 65 — exposes <filesDir>/received/ (res/xml/file_paths.xml)
+             so the package installer can read an APK the agent sent. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.receivedfiles"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

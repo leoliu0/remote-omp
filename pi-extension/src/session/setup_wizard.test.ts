@@ -32,8 +32,8 @@ function makeUI(answers: Array<string | undefined>): WizardUI & {
     inputCalls,
     selectCalls,
     notifies,
-    input: vi.fn().mockImplementation(async (title: string, opts?: { defaultValue?: string }) => {
-      inputCalls.push({ title, defaultValue: opts?.defaultValue });
+    input: vi.fn().mockImplementation(async (title: string, placeholder?: string) => {
+      inputCalls.push({ title, defaultValue: placeholder });
       return queue.shift();
     }),
     select: vi.fn().mockImplementation(async (title: string, options: string[]) => {
@@ -86,6 +86,25 @@ describe("runSetupWizard (2 prompts + confirm)", () => {
       "Use the relay on this terminal to connect to the remote mesh (mobile + PCs)?",
       "Save and activate?",
     ]);
+  });
+
+  test("2c) ui.input gets the default as its string placeholder (omp calls placeholder.trim())", async () => {
+    // Pi SDK / omp signature: input(title, placeholder?: string, opts?).
+    // omp 18.12 runs `placeholder?.trim()`, so an options object crashed
+    // `/remote-pi` on a fresh dir with "t?.trim is not a function".
+    const placeholders: unknown[] = [];
+    const queue = ["", YES, YES];
+    const ui = {
+      input: async (title: string, placeholder?: unknown) => {
+        placeholders.push(placeholder);
+        (placeholder as string | undefined)?.trim();
+        return queue.shift();
+      },
+      select: async () => queue.shift(),
+    } as unknown as WizardUI;
+    const cfg = await runSetupWizard(ui, { agent_name: "foo", use_relay: true });
+    expect(placeholders).toEqual(["foo"]);
+    expect(cfg).toEqual({ agent_name: "foo", auto_start_relay: true });
   });
 
   test("3a) cancel on first prompt → returns null", async () => {

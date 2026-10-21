@@ -892,6 +892,11 @@ sealed class ServerMessage {
       // session's list on attach, after every session_sync reply and on
       // change. `phases: []` hides the panel.
       'todo_state' => TodoState.fromJson(json),
+      // Plan 65 — files sent to the phone (chunked over the peer channel).
+      'file_offer' => FileOffer.fromJson(json),
+      'file_chunk' => FileChunk.fromJson(json),
+      'file_end' => FileEnd.fromJson(json),
+      'file_cancel' => FileCancel.fromJson(json),
       // forward-compat: unknown types are not fatal — callers catch and log
       _ => throw UnsupportedTypeException(type ?? ''),
     };
@@ -2196,4 +2201,240 @@ class TodoState extends ServerMessage {
       ts: (j['ts'] as num?)?.toInt(),
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Plan 65 — send files to the phone.
+// Contract: plan/65-send-file-to-phone.md (table) and
+// pi-extension/src/protocol/types.ts. ext → app: file_offer, file_chunk,
+// file_end; app → ext: file_ack (cumulative next_seq), file_done, file_error;
+// file_cancel travels both ways. Unknown extra fields are ignored.
+// ---------------------------------------------------------------------------
+
+/// ServerMessage: the extension offers a file. Chunks follow immediately.
+class FileOffer extends ServerMessage {
+  final String fileId;
+  final String name;
+  final String mime;
+  final int size;
+
+  /// Hex SHA-256 of the whole file.
+  final String sha256;
+  final String? caption;
+  final String? turnId;
+
+  const FileOffer({
+    required this.fileId,
+    required this.name,
+    required this.mime,
+    required this.size,
+    required this.sha256,
+    this.caption,
+    this.turnId,
+  });
+
+  factory FileOffer.fromJson(Map<String, dynamic> j) => FileOffer(
+    fileId: j['file_id'] as String,
+    name: j['name'] as String,
+    mime: (j['mime'] as String?) ?? 'application/octet-stream',
+    size: (j['size'] as num).toInt(),
+    sha256: j['sha256'] as String,
+    caption: j['caption'] as String?,
+    turnId: j['turn_id'] as String?,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'type': 'file_offer',
+    'file_id': fileId,
+    'name': name,
+    'mime': mime,
+    'size': size,
+    'sha256': sha256,
+    if (caption != null) 'caption': caption,
+    if (turnId != null) 'turn_id': turnId,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is FileOffer &&
+      other.fileId == fileId &&
+      other.name == name &&
+      other.mime == mime &&
+      other.size == size &&
+      other.sha256 == sha256 &&
+      other.caption == caption &&
+      other.turnId == turnId;
+
+  @override
+  int get hashCode =>
+      Object.hash(fileId, name, mime, size, sha256, caption, turnId);
+}
+
+/// ServerMessage: one chunk of a file (`data` is base64, `seq` from 0).
+class FileChunk extends ServerMessage {
+  final String fileId;
+  final int seq;
+  final String data;
+
+  const FileChunk({required this.fileId, required this.seq, required this.data});
+
+  factory FileChunk.fromJson(Map<String, dynamic> j) => FileChunk(
+    fileId: j['file_id'] as String,
+    seq: (j['seq'] as num).toInt(),
+    data: j['data'] as String,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'type': 'file_chunk',
+    'file_id': fileId,
+    'seq': seq,
+    'data': data,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is FileChunk &&
+      other.fileId == fileId &&
+      other.seq == seq &&
+      other.data == data;
+
+  @override
+  int get hashCode => Object.hash(fileId, seq, data);
+}
+
+/// ServerMessage: the sender has sent all [chunks] chunks.
+class FileEnd extends ServerMessage {
+  final String fileId;
+  final int chunks;
+
+  const FileEnd({required this.fileId, required this.chunks});
+
+  factory FileEnd.fromJson(Map<String, dynamic> j) => FileEnd(
+    fileId: j['file_id'] as String,
+    chunks: (j['chunks'] as num).toInt(),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'type': 'file_end',
+    'file_id': fileId,
+    'chunks': chunks,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is FileEnd && other.fileId == fileId && other.chunks == chunks;
+
+  @override
+  int get hashCode => Object.hash(fileId, chunks);
+}
+
+/// `file_cancel` travels both ways: the extension aborts a send (inbound
+/// [ServerMessage]) or the user cancels a download (outbound [ClientMessage]).
+class FileCancel extends ServerMessage implements ClientMessage {
+  final String fileId;
+
+  const FileCancel({required this.fileId});
+
+  factory FileCancel.fromJson(Map<String, dynamic> j) =>
+      FileCancel(fileId: j['file_id'] as String);
+
+  @override
+  Map<String, dynamic> toJson() => {'type': 'file_cancel', 'file_id': fileId};
+
+  @override
+  bool operator ==(Object other) =>
+      other is FileCancel && other.fileId == fileId;
+
+  @override
+  int get hashCode => fileId.hashCode;
+}
+
+/// ClientMessage: every chunk below [nextSeq] is on disk (cumulative ack).
+/// Also re-sent on reconnect so the sender resumes from [nextSeq].
+class FileAck extends ClientMessage {
+  final String fileId;
+  final int nextSeq;
+
+  FileAck({required this.fileId, required this.nextSeq});
+
+  factory FileAck.fromJson(Map<String, dynamic> j) => FileAck(
+    fileId: j['file_id'] as String,
+    nextSeq: (j['next_seq'] as num).toInt(),
+  );
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'file_ack',
+    'file_id': fileId,
+    'next_seq': nextSeq,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is FileAck && other.fileId == fileId && other.nextSeq == nextSeq;
+
+  @override
+  int get hashCode => Object.hash(fileId, nextSeq);
+}
+
+/// ClientMessage: the file is complete and its SHA-256 matched.
+class FileDone extends ClientMessage {
+  final String fileId;
+
+  FileDone({required this.fileId});
+
+  factory FileDone.fromJson(Map<String, dynamic> j) =>
+      FileDone(fileId: j['file_id'] as String);
+
+  @override
+  Map<String, dynamic> toJson() => {'type': 'file_done', 'file_id': fileId};
+
+  @override
+  bool operator ==(Object other) => other is FileDone && other.fileId == fileId;
+
+  @override
+  int get hashCode => fileId.hashCode;
+}
+
+enum FileErrorReason {
+  shaMismatch('sha_mismatch'),
+  noSpace('no_space'),
+  cancelled('cancelled');
+
+  final String wire;
+  const FileErrorReason(this.wire);
+
+  static FileErrorReason? fromWire(Object? s) {
+    for (final r in values) {
+      if (r.wire == s) return r;
+    }
+    return null;
+  }
+}
+
+/// ClientMessage: the phone gave up on the file.
+class FileError extends ClientMessage {
+  final String fileId;
+  final FileErrorReason? reason;
+
+  FileError({required this.fileId, this.reason});
+
+  factory FileError.fromJson(Map<String, dynamic> j) => FileError(
+    fileId: j['file_id'] as String,
+    reason: FileErrorReason.fromWire(j['reason']),
+  );
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'file_error',
+    'file_id': fileId,
+    if (reason != null) 'reason': reason!.wire,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is FileError && other.fileId == fileId && other.reason == reason;
+
+  @override
+  int get hashCode => Object.hash(fileId, reason);
 }

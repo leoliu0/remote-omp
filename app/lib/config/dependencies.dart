@@ -3,9 +3,12 @@ import 'dart:io' show Platform;
 
 import 'package:app/config/utils/injector.dart';
 import 'package:app/data/actions/actions_repository.dart';
+import 'package:app/data/files/file_receiver.dart';
+import 'package:app/data/files/platform_file_actions.dart';
 import 'package:app/data/mesh/mesh_client.dart';
 import 'package:app/data/mesh/mesh_sync_service.dart';
 import 'package:app/data/local/app_database.dart';
+import 'package:app/data/local/received_file_store.dart';
 import 'package:app/data/local/session_store.dart';
 import 'package:app/data/preferences/preferences.dart';
 import 'package:app/data/repositories/home_read_repository.dart';
@@ -22,6 +25,7 @@ import 'package:app/data/update/update_checker_impl.dart';
 import 'package:app/data/update/url_launcher_opener.dart';
 import 'package:app/data/voice/speech_service.dart';
 import 'package:app/domain/contracts/dismissed_update_store.dart';
+import 'package:app/domain/contracts/file_actions.dart';
 import 'package:app/domain/contracts/update_checker.dart';
 import 'package:app/domain/contracts/url_opener.dart';
 import 'package:app/pairing/owner_identity_bridge.dart';
@@ -111,6 +115,16 @@ Future<void> setupDependencies() async {
     next.addService<SyncService>(
       () => SyncService(next.get<ConnectionManager>(), sessionStore),
     );
+    // Plan 65 — files the agent sends to this phone.
+    final receivedFileStore = ReceivedFileStore(database);
+    next.addInstance<ReceivedFileStore>(
+      receivedFileStore,
+      onDispose: (value) => value.dispose(),
+    );
+    next.addService<FileReceiver>(
+      () => FileReceiver(next.get<ConnectionManager>(), receivedFileStore),
+    );
+    next.addOther<FileActions>(() => PlatformFileActions());
     next.addRepository<SessionReadRepository>(
       () => SessionReadRepository(sessionStore),
     );
@@ -129,6 +143,8 @@ Future<void> setupDependencies() async {
         prefs,
         pairingStorage,
         next.get<IActionsRepository>(),
+        files: next.get<FileReceiver>(),
+        fileActions: next.get<FileActions>(),
       ),
     );
     next.addViewModel<HomeViewModel>(
@@ -145,6 +161,8 @@ Future<void> setupDependencies() async {
         next.get<ConnectionManager>(),
         meshSync,
         ownerBridge,
+        null,
+        next.get<FileReceiver>(),
       ),
     );
     next.addViewModel<PairingViewModel>(

@@ -1,7 +1,14 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
-import { DecodeError, decodeServer, encodeClient } from "./codec.js";
+import {
+  DecodeError,
+  decodeClient,
+  decodeServer,
+  encodeClient,
+  encodeServer,
+} from "./codec.js";
+import type { ClientMessage, ServerMessage } from "./types.js";
 
 const fixtureDir = fileURLToPath(
   new URL("../../../.orchestration/contracts/fixtures", import.meta.url),
@@ -113,5 +120,96 @@ describe("encodeClient roundtrip", () => {
       streaming_behavior: "steer" as const,
     };
     expect(JSON.parse(encodeClient(msg).trim())).toEqual(msg);
+  });
+});
+
+// Plan/65 — file transfer frames. Field names are the wire contract shared
+// with app/lib/protocol/protocol.dart: snake_case, exactly as in the plan.
+describe("file transfer frames (plan/65)", () => {
+  const serverFrames: ServerMessage[] = [
+    {
+      type: "file_offer",
+      file_id: "f-1",
+      name: "app-release.apk",
+      mime: "application/vnd.android.package-archive",
+      size: 33_554_432,
+      sha256: "a".repeat(64),
+      caption: "Fresh build",
+      turn_id: "turn-9",
+    },
+    {
+      type: "file_offer",
+      file_id: "f-2",
+      name: "notes.txt",
+      mime: "text/plain",
+      size: 0,
+      sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    },
+    { type: "file_chunk", file_id: "f-1", seq: 3, data: "AAEC" },
+    { type: "file_end", file_id: "f-1", chunks: 32 },
+    { type: "file_cancel", file_id: "f-1" },
+  ];
+  const clientFrames: ClientMessage[] = [
+    { type: "file_ack", file_id: "f-1", next_seq: 4 },
+    { type: "file_done", file_id: "f-1" },
+    { type: "file_error", file_id: "f-1", reason: "sha_mismatch" },
+    { type: "file_error", file_id: "f-1", reason: "no_space" },
+    { type: "file_error", file_id: "f-1", reason: "cancelled" },
+    { type: "file_cancel", file_id: "f-1" },
+  ];
+
+  for (const frame of serverFrames) {
+    test(`ext → app ${frame.type} round-trips (${JSON.stringify(frame).length} B)`, () => {
+      const line = encodeServer(frame);
+      expect(line.endsWith("\n")).toBe(true);
+      expect(decodeServer(line)).toEqual(frame);
+    });
+  }
+
+  for (const frame of clientFrames) {
+    test(`app → ext ${frame.type} round-trips (${JSON.stringify(frame)})`, () => {
+      expect(decodeClient(encodeClient(frame))).toEqual(frame);
+    });
+  }
+
+  test("wire field names are exactly the plan's snake_case names", () => {
+    expect(Object.keys(JSON.parse(encodeServer(serverFrames[0]!)))).toEqual([
+      "type", "file_id", "name", "mime", "size", "sha256", "caption", "turn_id",
+    ]);
+    expect(Object.keys(JSON.parse(encodeServer(serverFrames[2]!)))).toEqual([
+      "type", "file_id", "seq", "data",
+    ]);
+    expect(Object.keys(JSON.parse(encodeServer(serverFrames[3]!)))).toEqual([
+      "type", "file_id", "chunks",
+    ]);
+    expect(Object.keys(JSON.parse(encodeClient(clientFrames[0]!)))).toEqual([
+      "type", "file_id", "next_seq",
+    ]);
+  });
+
+  test("unknown fields on file_* frames are ignored, not fatal", () => {
+    const offer = decodeServer(
+      '{"type":"file_offer","file_id":"f","name":"a.pdf","mime":"application/pdf",' +
+        '"size":1,"sha256":"00","future_field":{"x":1}}',
+    );
+    expect(offer).toMatchObject({ type: "file_offer", file_id: "f", name: "a.pdf" });
+    const chunk = decodeServer('{"type":"file_chunk","file_id":"f","seq":0,"data":"AA==","crc":7}');
+    expect(chunk).toMatchObject({ type: "file_chunk", seq: 0 });
+    const ack = decodeClient('{"type":"file_ack","file_id":"f","next_seq":2,"window":8}');
+    expect(ack).toMatchObject({ type: "file_ack", next_seq: 2 });
+    const done = decodeClient('{"type":"file_done","file_id":"f","path":"/x"}');
+    expect(done).toMatchObject({ type: "file_done", file_id: "f" });
+  });
+
+  test("direction is enforced: app-only frames are not server frames and vice versa", () => {
+    for (const t of ["file_ack", "file_done", "file_error"]) {
+      expect(() => decodeServer(`{"type":"${t}","file_id":"f"}`)).toThrow(DecodeError);
+    }
+    for (const t of ["file_offer", "file_chunk", "file_end"]) {
+      expect(() => decodeClient(`{"type":"${t}","file_id":"f"}`)).toThrow(DecodeError);
+    }
+    // file_cancel travels both ways.
+    expect(decodeServer('{"type":"file_cancel","file_id":"f"}').type).toBe("file_cancel");
+    expect(decodeClient('{"type":"file_cancel","file_id":"f"}').type).toBe("file_cancel");
   });
 });

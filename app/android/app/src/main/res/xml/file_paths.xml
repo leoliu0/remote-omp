@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Plan 65 — files the agent sent to this phone live under
+     <filesDir>/received/<file_id>/<name>. Only that folder is exposed
+     through the app's FileProvider (APK install via ACTION_VIEW). -->
+<paths>
+    <files-path name="received" path="received/" />
+</paths>

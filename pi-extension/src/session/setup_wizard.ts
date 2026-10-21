@@ -7,7 +7,7 @@ import type { LocalConfig } from "./local_config.js";
  */
 export interface WizardUI {
   /** Free-text prompt. Returns the entered string, or undefined if cancelled. */
-  input?: (title: string, options?: { defaultValue?: string }) => Promise<string | undefined>;
+  input?: (title: string, placeholder?: string) => Promise<string | undefined>;
   /** Picker. Returns the picked option, or undefined if cancelled. */
   select: (title: string, options: string[]) => Promise<string | undefined>;
   /** Non-blocking notification. Used for inline validation feedback. */
@@ -77,8 +77,9 @@ export async function runSetupWizard(
 }
 
 /**
- * Asks the user for free text. The Pi SDK's `ui.input` does not pre-fill the
- * field with `defaultValue` (the SDK ignores that option), so we surface the
+ * Asks the user for free text. The SDK's `ui.input(title, placeholder?)` takes
+ * the default only as a string placeholder, not a pre-filled value (omp calls
+ * `placeholder.trim()`, so it must be a string), so we also surface the
  * default in the prompt label and treat an empty submission as "accept the
  * default" — the standard CLI convention. Falls back to `select` when the
  * SDK doesn't expose `input` at all.
@@ -90,7 +91,7 @@ async function _askText(
 ): Promise<string | null> {
   const titleWithHint = `${title} (default: ${defaultValue})`;
   const raw = ui.input
-    ? await ui.input(titleWithHint, { defaultValue })
+    ? await ui.input(titleWithHint, defaultValue)
     : await ui.select(titleWithHint, [defaultValue, CANCEL_TOKEN]);
   if (raw === undefined) return null;
   if (raw === CANCEL_TOKEN) return null;

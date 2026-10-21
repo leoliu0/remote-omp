@@ -5,6 +5,7 @@ import 'package:app/pairing/storage.dart';
 import 'package:app/ui/core/themes/themes.dart';
 import 'package:app/ui/settings/states/settings_state.dart';
 import 'package:app/ui/settings/viewmodels/settings_viewmodel.dart';
+import 'package:app/ui/chat/widgets/file_card.dart' show formatBytes;
 import 'package:app/ui/settings/web_login_scan_page.dart';
 import 'package:app/ui/settings/widgets/widgets.dart';
 import 'package:flutter/material.dart';
@@ -64,6 +65,10 @@ class SettingsPage extends StatelessWidget {
           Divider(color: colors.border, height: 1),
           _WebSection(scannerBuilder: webLoginScanner),
           Divider(color: colors.border, height: 1),
+          if (vm.hasReceivedFiles) ...[
+            const _StorageSection(),
+            Divider(color: colors.border, height: 1),
+          ],
           const _SectionHeader('Pairings'),
           switch (state) {
             SettingsLoading() => Padding(
@@ -173,6 +178,98 @@ class _WebSection extends StatelessWidget {
             color: colors.muted,
           ),
           onTap: () => _open(context),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+
+/// Plan 65 — space used by files the agent sent, and a way to clear them.
+class _StorageSection extends StatefulWidget {
+  const _StorageSection();
+
+  @override
+  State<_StorageSection> createState() => _StorageSectionState();
+}
+
+class _StorageSectionState extends State<_StorageSection> {
+  late Future<int> _usage;
+
+  @override
+  void initState() {
+    super.initState();
+    _usage = context.read<SettingsViewModel>().receivedFilesUsage();
+  }
+
+  Future<void> _clear() async {
+    final vm = context.read<SettingsViewModel>();
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.colors.surface,
+        title: Text(
+          'Clear received files?',
+          style: TextStyle(color: ctx.colors.text),
+        ),
+        content: Text(
+          'Files the agent sent to this phone are deleted. Copies saved to '
+          'Downloads are kept.',
+          style: TextStyle(color: ctx.colors.muted2),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel', style: TextStyle(color: ctx.colors.muted2)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Clear', style: TextStyle(color: ctx.colors.error)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await vm.clearReceivedFiles();
+    if (!mounted) return;
+    final usage = vm.receivedFilesUsage();
+    setState(() {
+      _usage = usage;
+    });
+    messenger?.showSnackBar(
+      const SnackBar(content: Text('Received files cleared')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _SectionHeader('Storage'),
+        FutureBuilder<int>(
+          future: _usage,
+          builder: (context, snap) => ListTile(
+            key: const Key('settings_clear_received_files'),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 18),
+            leading: Icon(LucideIcons.trash2, size: 20, color: colors.accent),
+            title: Text(
+              'Clear received files',
+              style: context.typo.sansBody.copyWith(color: colors.text),
+            ),
+            subtitle: Text(
+              snap.hasData
+                  ? 'Files sent by the agent · ${formatBytes(snap.data!)}'
+                  : 'Files sent by the agent',
+              style: context.typo.sansBody.copyWith(
+                color: colors.muted,
+                fontSize: 12,
+              ),
+            ),
+            onTap: _clear,
+          ),
         ),
         const SizedBox(height: 8),
       ],

@@ -26,6 +26,7 @@ and 27 (see [`plan/`](plan/) directory for design history).
 
 ### Fixed
 
+- `/remote-pi` in a folder with no setup no longer crashes with `t?.trim is not a function`; the setup prompt opens.
 - The app now shows images that tools return, such as a `read` of a png or webp, in every tool display mode, as the terminal does. In brief mode the picture sits under the tool pill, and those `read` calls are no longer hidden. With tool calls hidden, only the picture shows. The full card shows the picture instead of its base64 text. The extension already sent the image; only the app changed.
 - TeX Guard's patch review now also opens on the app, with the diff, and Yes or No there answers it; whichever of terminal and app answers first wins. Any extension with a terminal-only prompt can do the same through the new `remote-pi:confirm` events (see `pi-extension/README.md`).
 - Long confirm messages in the app scroll and render as markdown, so a diff shows as a code block instead of overflowing the screen.
@@ -43,6 +44,12 @@ and 27 (see [`plan/`](plan/) directory for design history).
 - Web client: Home opens on the Online tab, as the app does. If the relay can't be reached, Online shows its empty state instead of spinning forever.
 - Web client: on wide screens the chat has a session sidebar on the left with the same tabs, grouping and status badges as Home. One click switches session. It collapses to a rail of avatars, and that choice is remembered. Home keeps its tab after you leave a chat.
 ### Added
+
+#### Send files to the phone (plan/65)
+- New agent tool `send_to_phone(path, caption?)` sends a file of up to 256 MiB (`REMOTE_PI_MAX_SEND_MIB`) to the paired phone over the relay, in 1 MiB chunks with acknowledgements. A transfer resumes where it stopped after a dropped connection, for up to 10 minutes.
+- The app shows a file card with progress, then Open, Share, Save to Downloads and, for APKs, Install. Received files can be cleared in Settings → Storage.
+- When the latest message came from the phone, the agent is told the user is on the phone and sends finished files there unprompted. Typing in the terminal removes that note.
+- Phone APK builds are smaller: `--target-platform android-arm64` now also drops plugin libraries for other CPUs, and native libraries are compressed (arm64 17.6 MB instead of 87.8 MB).
 
 #### Owner-key sync (plan/23)
 - New Flutter plugin `remote_pi_identity` for storing the Owner-key in the

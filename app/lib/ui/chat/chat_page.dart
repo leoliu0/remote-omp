@@ -1,5 +1,6 @@
 import 'package:app/data/actions/actions_repository.dart' show ActionFailure;
 import 'package:app/data/preferences/preferences.dart';
+import 'package:app/domain/contracts/file_actions.dart';
 import 'package:app/domain/session_state.dart';
 import 'package:app/pairing/storage.dart';
 import 'package:app/protocol/protocol.dart';
@@ -11,6 +12,7 @@ import 'package:app/ui/chat/states/chat_state.dart';
 import 'package:app/ui/chat/viewmodels/chat_viewmodel.dart';
 import 'package:app/ui/chat/voice/viewmodels/voice_input_viewmodel.dart';
 import 'package:app/ui/chat/widgets/attach_sheet.dart';
+import 'package:app/ui/chat/widgets/file_card.dart';
 import 'package:app/ui/chat/widgets/input_bar.dart';
 import 'package:app/ui/chat/widgets/message_bubble.dart';
 import 'package:app/ui/chat/widgets/thinking_block.dart';
@@ -575,9 +577,39 @@ class _ChatPageState extends State<ChatPage> {
           showThinking: showThinking,
           workingLabel: workingLabel,
           onCancel: onCancel,
+          fileCard: (m) => _buildFileCard(context, vm, m),
         );
       }(),
     };
+  }
+
+  /// Plan 65 — a received file. Actions run only on tap; a failed hand-off
+  /// (no viewer app, write error) surfaces as a snackbar.
+  Widget _buildFileCard(BuildContext context, ChatViewModel vm, FileMsg m) {
+    final file = m.file;
+    void run(Future<FileActionResult> action, {String? okMessage}) {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      action.then((result) {
+        final text = switch (result) {
+          FileActionFailed(:final message) => message,
+          FileActionOk() => okMessage,
+        };
+        if (text != null) {
+          messenger?.showSnackBar(SnackBar(content: Text(text)));
+        }
+      });
+    }
+
+    return FileCard(
+      file: file,
+      canSaveToDownloads: vm.canSaveFilesToDownloads,
+      canInstall: vm.canInstallFiles,
+      onOpen: () => run(vm.openFile(file)),
+      onShare: () => run(vm.shareFile(file)),
+      onSave: () => run(vm.saveFile(file), okMessage: 'Saved to Downloads'),
+      onInstall: () => run(vm.installFile(file)),
+      onCancel: () => vm.cancelFile(file.fileId),
+    );
   }
 
   Widget _buildInput(BuildContext context, ChatState state, ChatViewModel vm) {
@@ -812,9 +844,13 @@ class _MessageList extends StatelessWidget {
     this.showThinking = true,
     this.workingLabel,
     this.onCancel,
+    this.fileCard,
   });
 
   final VoidCallback? onCancel;
+
+  /// Plan 65 — builds the card for a received file.
+  final Widget Function(FileMsg msg)? fileCard;
 
   @override
   Widget build(BuildContext context) {
@@ -865,6 +901,7 @@ class _MessageList extends StatelessWidget {
                 brief: toolDisplay != ToolCallDisplay.full,
               ),
             CompactionMsg() => CompactionBubble(msg),
+            FileMsg() => fileCard?.call(msg) ?? FileCard(file: msg.file),
           },
         );
       },

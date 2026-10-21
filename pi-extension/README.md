@@ -177,6 +177,49 @@ future track). Base64 or a field named `ct` is not an E2E confidentiality
 boundary; the current Relay visibility follows the trust model above. Text-only
 messages are unaffected.
 
+### Files to the phone
+
+The agent tool **`send_to_phone({ path, caption? })`** sends a finished file
+(an APK, a PDF, a zip, a log) from this PC to the paired phone, where it shows
+up as a file card in the chat. Nothing opens or installs on the phone without
+a tap. The tool checks that `path` exists, is a regular file and is under the
+cap before any frame is sent. A relative `path` resolves against the session
+cwd. It returns `{ name, size, device }` once the phone confirms receipt, and
+it cancels the transfer when the tool call is aborted.
+
+The target is the phone that sent the latest user input. If that phone is
+offline, the target is the other online phone. When no phone is online the
+tool fails with `phone_offline` and nothing is queued.
+
+The file travels as chunked frames over the normal peer channel, so the relay
+does not change:
+
+| Frame | Direction | Fields |
+|---|---|---|
+| `file_offer` | ext → app | `file_id`, `name`, `mime`, `size`, `sha256` (hex), `caption?`, `turn_id?` |
+| `file_chunk` | ext → app | `file_id`, `seq` (0-based), `data` (base64 of up to 1 MiB) |
+| `file_end` | ext → app | `file_id`, `chunks` |
+| `file_ack` | app → ext | `file_id`, `next_seq` (cumulative: the first chunk the phone still needs) |
+| `file_done` / `file_error` | app → ext | `file_id`, `reason?` (`sha_mismatch`, `no_space`, `cancelled`) |
+| `file_cancel` | either | `file_id` |
+
+The sender keeps at most 4 chunks in flight beyond the last `file_ack`. When
+acks stop, it probes with the first unacked chunk (after 30 s, doubling up to
+120 s), and a re-attached phone is probed at once. The phone answers with
+`file_ack`, and the transfer continues from that `next_seq`. With no progress
+for 10 minutes the transfer fails with `timeout` and the extension sends
+`file_cancel`. Receivers ignore unknown fields on `file_*` frames.
+
+The per-file cap is 256 MiB. Set **`REMOTE_PI_MAX_SEND_MIB`** to change it
+(for example `REMOTE_PI_MAX_SEND_MIB=512`).
+
+While the latest input came from a phone that is online, every provider
+request carries one short note: *"The user is on their phone (Remote Pi app)
+and cannot see this PC's screen or files. Deliver finished files with
+`send_to_phone`."* The note keeps the same bytes and position until the input
+source changes, so prompt caching still works. Input typed in the terminal (or
+sent by an RPC client) removes it, and so does that phone disconnecting.
+
 ### Prompts from other extensions
 
 A prompt drawn with `ctx.ui.custom` lives only in the terminal. An extension
@@ -625,6 +668,9 @@ with a `[<cwd>]` prefix, so a single log stream shows every agent.
 | `~/.pi/remote/peers.json` | Per-machine | Paired mobile devices |
 | `~/.pi/remote/sessions/<name>/` | Per-session | Broker socket + `audit.jsonl` |
 | `~/.pi/remote/skills/agent-network/SKILL.md` | Per-user | Agent skill the LLM reads |
+
+`REMOTE_PI_MAX_SEND_MIB` (environment) sets the per-file cap of
+`send_to_phone` in MiB (default 256).
 
 Override the relay for a single run without persisting:
 

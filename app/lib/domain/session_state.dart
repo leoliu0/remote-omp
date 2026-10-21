@@ -1,6 +1,8 @@
 // Session domain model — chat message variants + streaming buffer.
 // Lives in domain/ → no Flutter, no network, no storage.
 
+import 'package:app/domain/entities/received_file.dart';
+
 // ---------------------------------------------------------------------------
 // ChatMessage — sealed union of message variants in the conversation history
 // ---------------------------------------------------------------------------
@@ -189,6 +191,19 @@ class CompactionMsg extends ChatMessage {
 
   @override
   int get hashCode => Object.hash(id, summary, tokensBefore);
+}
+
+/// Plan 65 — a file the agent sent to this phone, placed in the timeline by
+/// its arrival time. Rendered as a file card (progress, then actions).
+class FileMsg extends ChatMessage {
+  final ReceivedFile file;
+  FileMsg(this.file) : super(id: 'file_${file.fileId}');
+
+  @override
+  bool operator ==(Object other) => other is FileMsg && other.file == file;
+
+  @override
+  int get hashCode => file.hashCode;
 }
 
 // ---------------------------------------------------------------------------

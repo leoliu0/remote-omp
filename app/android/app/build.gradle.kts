@@ -42,6 +42,32 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // `--target-platform android-arm64` only drops Flutter's own .so files;
+        // plugin prebuilts (ML Kit, sqlite, CameraX) still ship for every ABI.
+        // Filter them too so a phone build is ~33 MB instead of ~88 MB. Skipped
+        // under --split-per-abi, which configures ABI splits itself.
+        val targetPlatforms = project.findProperty("target-platform") as String?
+        if (targetPlatforms != null && project.findProperty("split-per-abi") != "true") {
+            val abiByPlatform = mapOf(
+                "android-arm" to "armeabi-v7a",
+                "android-arm64" to "arm64-v8a",
+                "android-x64" to "x86_64",
+            )
+            ndk {
+                // The Flutter plugin pre-fills all three ABIs; replace, don't append.
+                abiFilters.clear()
+                abiFilters += targetPlatforms.split(",").mapNotNull { abiByPlatform[it.trim()] }
+            }
+        }
+    }
+
+    // Compress native libs inside the APK (they are stored uncompressed by
+    // default). The APK is sideloaded, so download/transfer size matters more
+    // than the extra install-time extraction: arm64 drops from ~33 MB to ~17 MB.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     signingConfigs {
@@ -85,4 +111,7 @@ dependencies {
     implementation("androidx.camera:camera-core:1.4.2")
     implementation("androidx.camera:camera-camera2:1.4.2")
     implementation("androidx.camera:camera-lifecycle:1.4.2")
+    // Plan 65 — FileProvider for the received-files APK install intent
+    // (same version share_plus already pulls in).
+    implementation("androidx.core:core-ktx:1.16.0")
 }

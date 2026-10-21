@@ -4,6 +4,7 @@ import 'package:app/data/preferences/preferences.dart';
 import 'package:app/data/site/web_login.dart';
 import 'package:app/data/transport/connection_manager.dart';
 import 'package:app/data/transport/relay_config.dart';
+import 'package:app/domain/repositories/received_files_repository.dart';
 import 'package:app/pairing/storage.dart';
 import 'package:app/pairing/owner_identity_bridge.dart';
 import 'package:app/ui/core/viewmodel/viewmodel.dart';
@@ -21,6 +22,9 @@ class SettingsViewModel extends ViewModel<SettingsState> {
   final MeshSyncService? _meshSync;
   final OwnerIdentityBridge? _ownerBridge;
   final WebLoginClient _webLogin;
+
+  /// Plan 65 — files the agent sent to this phone (Settings → Storage).
+  final ReceivedFilesRepository? _receivedFiles;
   bool _disposed = false;
 
   SettingsViewModel(
@@ -30,6 +34,7 @@ class SettingsViewModel extends ViewModel<SettingsState> {
     this._meshSync,
     this._ownerBridge,
     WebLoginClient? webLogin,
+    this._receivedFiles,
   ])  : _webLogin = webLogin ?? WebLoginClient(),
         super(const SettingsLoading()) {
     _load();
@@ -63,6 +68,16 @@ class SettingsViewModel extends ViewModel<SettingsState> {
     await _storage.savePeer(updated, intent: PeerSaveIntent.nickname);
     await _load();
   }
+
+  /// Whether the Storage section (received files) applies.
+  bool get hasReceivedFiles => _receivedFiles != null;
+
+  /// Bytes used by files the agent sent to this phone.
+  Future<int> receivedFilesUsage() async =>
+      await _receivedFiles?.diskUsage() ?? 0;
+
+  /// Deletes every received file (and cancels any still arriving).
+  Future<void> clearReceivedFiles() async => _receivedFiles?.clearAll();
 
   /// Effective relay URL the app is connecting to right now.
   String get effectiveRelayUrl => resolveRelayUrl(_prefs);

@@ -7871,3 +7871,204 @@ describe("omp in-process subagents", () => {
     expect(todos().at(-1)).toEqual([]);
   });
 });
+
+// ── Plan/65 — send_to_phone routing + phone-presence note ─────────────────────
+
+describe("plan/65 send_to_phone + phone presence", () => {
+  const NOTE =
+    "The user is on their phone (Remote Pi app) and cannot see this PC's screen or files. " +
+    "Deliver finished files with `send_to_phone`.";
+
+  type Tool = {
+    name: string;
+    execute: (id: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<{
+      details: Record<string, unknown>;
+    }>;
+  };
+
+  function harness(): { handler: (e: string) => EventHandler; tools: Tool[]; pi: ExtensionAPI } {
+    const handlers = new Map<string, EventHandler>();
+    const tools: Tool[] = [];
+    const pi = {
+      on(e: string, h: EventHandler) { handlers.set(e, h); },
+      registerCommand: () => undefined,
+      registerTool: (t: Tool) => { tools.push(t); },
+      registerShortcut: () => undefined,
+      registerFlag: () => undefined, getFlag: () => undefined,
+      registerMessageRenderer: () => undefined,
+      sendMessage: () => undefined, sendUserMessage: () => undefined,
+    } as unknown as ExtensionAPI;
+    (extension as ExtensionFactory)(pi);
+    return {
+      handler(e: string) {
+        const h = handlers.get(e);
+        if (!h) throw new Error(`event "${e}" handler not registered`);
+        return h;
+      },
+      tools,
+      pi,
+    };
+  }
+
+  function fromPhone(peer: string, inner: object): void {
+    relayRef.current!.emit("message", makeInnerLine(peer, inner));
+  }
+
+  async function phoneSays(peer: string, text: string): Promise<void> {
+    fromPhone(peer, { type: "user_message", id: `m-${randomId()}`, text });
+    await new Promise<void>((r) => setImmediate(r));
+  }
+
+  let seq = 0;
+  function randomId(): string {
+    seq += 1;
+    return String(seq);
+  }
+
+  function context(h: ReturnType<typeof harness>, messages: unknown[]): unknown[] {
+    return (h.handler("context")({ type: "context", messages }) as { messages: unknown[] }).messages;
+  }
+
+  function notes(messages: unknown[]): unknown[] {
+    return messages.filter((m) => (m as { customType?: string }).customType === "remote-pi:phone-presence");
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    _knownPeers.length = 0;
+    _addedPeers.length = 0;
+    _removedPeers.length = 0;
+    _consumeCalls.length = 0;
+    _setRelayCalls.length = 0;
+    _savedRelayUrl = null;
+    _tokenStatus = "ok";
+    relayRef.current = null;
+    _setDisposedForTest(false);  // an earlier session_shutdown leaves the shared module disposed
+    const qr = await import("./pairing/qr.js");
+    (qr.qrSession.consumeToken as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (token: string) => {
+        _consumeCalls.push(token);
+        return _tokenStatus;
+      },
+    );
+    const stop = captureHandler("remote-pi stop");
+    await stop("", makeMockCtx());
+  });
+
+  const u1 = { role: "user", content: "build the apk", timestamp: 1_000 };
+  const a1 = { role: "assistant", content: [{ type: "text", text: "on it" }], timestamp: 1_001 };
+  const u2 = { role: "user", content: "and the pdf", timestamp: 2_000 };
+
+  test("input from the phone adds the note to the next request", async () => {
+    await _pairForTest("peer-A");
+    const h = harness();
+    expect(notes(context(h, [u1]))).toHaveLength(0);
+
+    await phoneSays("peer-A", "build the apk");
+    const out = context(h, [u1]);
+    expect(out[0]).toBe(u1);
+    expect(out).toHaveLength(2);
+    expect(out[1]).toMatchObject({ role: "custom", customType: "remote-pi:phone-presence", display: false });
+    expect((out[1] as { content: string }).content).toBe(NOTE);
+  });
+
+  test("the note is byte-identical across turns while the source is unchanged", async () => {
+    await _pairForTest("peer-A");
+    const h = harness();
+    await phoneSays("peer-A", "build the apk");
+    const first = context(h, [u1]);
+    const again = context(h, [u1, a1]);
+    await phoneSays("peer-A", "and the pdf");
+    const next = context(h, [u1, a1, u2]);
+
+    expect(JSON.stringify(notes(again))).toBe(JSON.stringify(notes(first)));
+    expect(JSON.stringify(notes(next))).toBe(JSON.stringify(notes(first)));
+    // The note keeps its place, so the request prefix stays cacheable.
+    expect(JSON.stringify(next.slice(0, first.length))).toBe(JSON.stringify(first));
+    expect(notes(next)).toHaveLength(1);
+  });
+
+  test("terminal input removes the note; extension-sourced input does not", async () => {
+    await _pairForTest("peer-A");
+    const h = harness();
+    await phoneSays("peer-A", "build the apk");
+    expect(notes(context(h, [u1]))).toHaveLength(1);
+
+    h.handler("input")({ type: "input", text: "ok", source: "extension" });
+    expect(notes(context(h, [u1]))).toHaveLength(1);
+
+    h.handler("input")({ type: "input", text: "typed here", source: "interactive" });
+    expect(notes(context(h, [u1, a1, u2]))).toHaveLength(0);
+
+    await phoneSays("peer-A", "back on the phone");
+    expect(notes(context(h, [u1, a1, u2]))).toHaveLength(1);
+  });
+
+  test("a disconnected phone removes the note", async () => {
+    await _pairForTest("peer-A");
+    const h = harness();
+    await phoneSays("peer-A", "build the apk");
+    expect(notes(context(h, [u1]))).toHaveLength(1);
+    _onPeerDisconnect("peer-A");
+    expect(notes(context(h, [u1]))).toHaveLength(0);
+  });
+
+  test("send_to_phone is registered once per pi", () => {
+    const h = harness();
+    (extension as ExtensionFactory)(h.pi);  // duplicate load of the same session
+    expect(h.tools.filter((t) => t.name === "send_to_phone")).toHaveLength(1);
+  });
+
+  test("send_to_phone targets the phone that typed and finishes on its file_done", async () => {
+    await _pairForTest("peer-A");
+    await _pairAdditionalForTest("peer-B", "Tablet");
+    const h = harness();
+    await phoneSays("peer-A", "send me the notes");
+    const dir = mkdtempSync(join(tmpdir(), "rp-send-"));
+    try {
+      writeFileSync(join(dir, "notes.txt"), "hello phone");
+      const tool = h.tools.find((t) => t.name === "send_to_phone")!;
+      const sendsBefore = relayRef.current!.send.mock.calls.length;
+      const pending = tool.execute("call-1", { path: "notes.txt", caption: "here" }, undefined, undefined, { cwd: dir });
+
+      const fileFrames = () => relayRef.current!.send.mock.calls.slice(sendsBefore)
+        .map((c) => decodeSentCt(c[0] as string))
+        .filter((d) => d.inner.type.startsWith("file_"));
+      await vi.waitFor(() => expect(fileFrames().some((d) => d.inner.type === "file_end")).toBe(true));
+      expect(fileFrames().every((d) => d.peer === "peer-A")).toBe(true);
+      const offer = fileFrames()[0]!.inner;
+      expect(offer).toMatchObject({
+        type: "file_offer",
+        name: "notes.txt",
+        mime: "text/plain",
+        size: 11,
+        sha256: createHash("sha256").update("hello phone").digest("hex"),
+        caption: "here",
+      });
+      const fileId = offer["file_id"] as string;
+      const chunk = fileFrames().find((d) => d.inner.type === "file_chunk")!.inner;
+      expect(Buffer.from(chunk["data"] as string, "base64").toString()).toBe("hello phone");
+
+      // A frame from the other phone is ignored; the target's file_done settles it.
+      fromPhone("peer-B", { type: "file_done", file_id: fileId });
+      fromPhone("peer-A", { type: "file_ack", file_id: fileId, next_seq: 1 });
+      fromPhone("peer-A", { type: "file_done", file_id: fileId });
+      const res = await pending;
+      expect(res.details).toMatchObject({ name: "notes.txt", size: 11, device: "Phone" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("send_to_phone with no phone online fails with phone_offline", async () => {
+    const h = harness();
+    const dir = mkdtempSync(join(tmpdir(), "rp-send-"));
+    try {
+      writeFileSync(join(dir, "a.txt"), "x");
+      const tool = h.tools.find((t) => t.name === "send_to_phone")!;
+      await expect(tool.execute("c", { path: join(dir, "a.txt") })).rejects.toThrow(/phone_offline/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

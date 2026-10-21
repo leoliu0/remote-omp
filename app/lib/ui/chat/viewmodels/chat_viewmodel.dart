@@ -8,6 +8,9 @@ import 'package:app/data/repositories/session_read_repository.dart';
 import 'package:app/data/sync/sync_events.dart';
 import 'package:app/data/sync/sync_service.dart';
 import 'package:app/data/transport/connection_manager.dart';
+import 'package:app/domain/contracts/file_actions.dart';
+import 'package:app/domain/entities/received_file.dart';
+import 'package:app/domain/repositories/received_files_repository.dart';
 import 'package:app/domain/session_state.dart';
 import 'package:app/pairing/storage.dart';
 import 'package:app/protocol/protocol.dart';
@@ -29,7 +32,13 @@ class ChatViewModel extends ViewModel<ChatState> {
   final PairingStorage _storage;
   final IActionsRepository _actions;
 
+  /// Plan 65 — files the agent sent to this phone + their card actions.
+  /// Optional so screens/tests without the feature keep working.
+  final ReceivedFilesRepository? _files;
+  final FileActions? _fileActions;
+
   StreamSubscription<List<MessageRecord>>? _msgsSub;
+  StreamSubscription<List<ReceivedFile>>? _filesSub;
   StreamSubscription<RuntimeRecord>? _runtimeSub;
   StreamSubscription<StreamingMessage?>? _streamingSub;
   StreamSubscription<bool>? _workingSub;
@@ -49,6 +58,8 @@ class ChatViewModel extends ViewModel<ChatState> {
   bool _disposed = false;
 
   List<ChatMessage> _messages = const [];
+  List<MessageRecord> _records = const [];
+  List<ReceivedFile> _receivedFiles = const [];
   StreamingMessage? _streaming;
   bool _working = false;
   List<QueuedMsg> _queuedMessages = const [];
@@ -79,8 +90,12 @@ class ChatViewModel extends ViewModel<ChatState> {
     this._conn,
     this._prefs,
     this._storage,
-    this._actions,
-  ) : super(const ChatReady(messages: [])) {
+    this._actions, {
+    ReceivedFilesRepository? files,
+    FileActions? fileActions,
+  }) : _files = files,
+       _fileActions = fileActions,
+       super(const ChatReady(messages: [])) {
     // Plan/32f — do NOT seed _streaming/_working from the shared SyncService
     // here: it may still be bound to the PREVIOUS chat (this VM is recreated
     // on session switch, before _bootstrap rebinds via activate). Seeding now
@@ -210,6 +225,7 @@ class ChatViewModel extends ViewModel<ChatState> {
     _todo = _sync.todoPhases;
     _msgsSub = _read.watchMessages(epk, roomId).listen(_onMessages);
     _runtimeSub = _read.watchRuntime(epk, roomId).listen(_onRuntime);
+    _filesSub = _files?.watchSession(epk, roomId).listen(_onFiles);
 
     _bootstrapping = false;
     _sync.requestSync();
@@ -238,7 +254,14 @@ class ChatViewModel extends ViewModel<ChatState> {
   }
 
   void _onMessages(List<MessageRecord> rows) {
-    _messages = [for (final r in rows) r.toChatMessage()];
+    _records = rows;
+    _messages = mergeFilesIntoTimeline(rows, _receivedFiles);
+    _recompute();
+  }
+
+  void _onFiles(List<ReceivedFile> files) {
+    _receivedFiles = files;
+    _messages = mergeFilesIntoTimeline(_records, files);
     _recompute();
   }
 
@@ -437,6 +460,32 @@ class ChatViewModel extends ViewModel<ChatState> {
     }
   }
 
+  // --- Plan 65 — received file cards ---
+
+  bool get canSaveFilesToDownloads => _fileActions?.canSaveToDownloads ?? false;
+  bool get canInstallFiles => _fileActions?.canInstall ?? false;
+
+  Future<FileActionResult> openFile(ReceivedFile f) =>
+      _fileAction((a) => a.open(f));
+  Future<FileActionResult> shareFile(ReceivedFile f) =>
+      _fileAction((a) => a.share(f));
+  Future<FileActionResult> saveFile(ReceivedFile f) =>
+      _fileAction((a) => a.saveToDownloads(f));
+  Future<FileActionResult> installFile(ReceivedFile f) =>
+      _fileAction((a) => a.install(f));
+
+  Future<void> cancelFile(String fileId) async => _files?.cancel(fileId);
+
+  Future<FileActionResult> _fileAction(
+    Future<FileActionResult> Function(FileActions a) run,
+  ) async {
+    final actions = _fileActions;
+    if (actions == null) {
+      return const FileActionFailed('Not available on this device');
+    }
+    return run(actions);
+  }
+
   Future<void> clearActiveSession() async {
     _messages = const [];
     _streaming = null;
@@ -465,6 +514,7 @@ class ChatViewModel extends ViewModel<ChatState> {
   void dispose() {
     _disposed = true;
     _msgsSub?.cancel();
+    _filesSub?.cancel();
     _runtimeSub?.cancel();
     _streamingSub?.cancel();
     _workingSub?.cancel();
@@ -479,4 +529,27 @@ class ChatViewModel extends ViewModel<ChatState> {
     _statusSub?.cancel();
     super.dispose();
   }
+}
+
+/// Plan 65 — projects message rows to [ChatMessage]s and slots each received
+/// file in by arrival time: a file goes before the first row newer than it.
+/// [rows] keep their seq order; [files] are sorted by creation time.
+List<ChatMessage> mergeFilesIntoTimeline(
+  List<MessageRecord> rows,
+  List<ReceivedFile> files,
+) {
+  if (files.isEmpty) return [for (final r in rows) r.toChatMessage()];
+  final sorted = [...files]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  final out = <ChatMessage>[];
+  var i = 0;
+  for (final r in rows) {
+    while (i < sorted.length && sorted[i].createdAt.isBefore(r.ts)) {
+      out.add(FileMsg(sorted[i++]));
+    }
+    out.add(r.toChatMessage());
+  }
+  while (i < sorted.length) {
+    out.add(FileMsg(sorted[i++]));
+  }
+  return out;
 }

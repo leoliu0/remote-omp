@@ -241,6 +241,75 @@ export type ExtensionUiResponseWire =
       ask?: AskResponseEnrichmentWire;
     };
 
+// ── Plan/65 — send a file from the PC to one phone ────────────────────────
+// Chunked over the existing peer channel: each `file_chunk` carries at most
+// 1 MiB of raw bytes (base64 in `data`), so a frame stays well under the
+// relay's 4 MiB `ct` cap. The sender keeps at most 4 chunks in flight beyond
+// the last cumulative `file_ack`. All frames of one transfer go to ONE phone.
+// Receivers ignore unknown fields on every `file_*` frame (forward-compat).
+
+/** Why a phone refused or abandoned a transfer. Open for forward-compat. */
+export type FileTransferReason =
+  | "sha_mismatch"
+  | "no_space"
+  | "cancelled"
+  | (string & {});
+
+/** ext → app: announces a transfer. `sha256` is lowercase hex of the whole file. */
+export interface FileOfferMessage {
+  type: "file_offer";
+  file_id: string;
+  name: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  caption?: string;
+  turn_id?: string;
+}
+
+/** ext → app: one chunk, `seq` 0-based, `data` base64 of ≤ 1 MiB raw bytes. */
+export interface FileChunkMessage {
+  type: "file_chunk";
+  file_id: string;
+  seq: number;
+  data: string;
+}
+
+/** ext → app: every chunk has been sent; `chunks` is the total count. */
+export interface FileEndMessage {
+  type: "file_end";
+  file_id: string;
+  chunks: number;
+}
+
+/** app → ext: cumulative ack. `next_seq` = first chunk the phone still needs.
+ *  Also sent after a reconnect so the sender resumes from there. */
+export interface FileAckMessage {
+  type: "file_ack";
+  file_id: string;
+  next_seq: number;
+}
+
+/** app → ext: file stored and its SHA-256 matched. */
+export interface FileDoneMessage {
+  type: "file_done";
+  file_id: string;
+  reason?: FileTransferReason;
+}
+
+/** app → ext: the phone gave up on the transfer. */
+export interface FileErrorMessage {
+  type: "file_error";
+  file_id: string;
+  reason?: FileTransferReason;
+}
+
+/** Either direction: abandon the transfer. */
+export interface FileCancelMessage {
+  type: "file_cancel";
+  file_id: string;
+}
+
 export type ClientMessage =
   | { type: "pair_request"; id: string; token: string; device_name: string }
   // Plan/30: optional `images` carry inline base64 attachments (one today).
@@ -277,7 +346,12 @@ export type ClientMessage =
   | { type: "plan_mode"; id: string; action: "enter" | "exit" | "review" }
   // Mirrors RpcExtensionUIResponse; the optional `ask` envelope carries
   // pi-ask's structured answer so multi/preview/notes survive the round-trip.
-  | ExtensionUiResponseWire;
+  | ExtensionUiResponseWire
+  // Plan/65 — file transfer replies from the receiving phone.
+  | FileAckMessage
+  | FileDoneMessage
+  | FileErrorMessage
+  | FileCancelMessage;
 
 /**
  * Plan/30 — one inline image attachment on a `user_message`. Mirrors the
@@ -441,7 +515,12 @@ export type ServerMessage =
   // owner on attach and after every session_sync reply (rebuilt from the
   // session branch, so it survives reconnects and resumes), then broadcast to
   // active owners on change only (deduped). `phases: []` means hide the panel.
-  | TodoStateMessage;
+  | TodoStateMessage
+  // Plan/65 — file transfer to one phone (see FileOfferMessage).
+  | FileOfferMessage
+  | FileChunkMessage
+  | FileEndMessage
+  | FileCancelMessage;
 
 /**
  * One `status_line` snapshot: the values behind omp's footer segments

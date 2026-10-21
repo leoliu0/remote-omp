@@ -103,6 +103,7 @@ import {
   getPendingAskRequests,
 } from "./session/ask_tool.js";
 import { formatPeerInventory } from "./session/peer_inventory.js";
+import { FileSender, registerSendToPhoneTool } from "./session/send_file.js";
 import { MeshNode } from "./session/mesh_node.js";
 import {
   handleSessionCompact,
@@ -200,6 +201,93 @@ let _relayUrl: string | null = null;  // URL used by current _relay connection
  */
 const _activePeers = new Map<string, PlainPeerChannel>();
 let _peerShort = "";  // shortid of the most recently attached peer (UX hint only)
+
+// ── Plan/65 — send files to the phone + phone presence ───────────────────────
+
+/** Display name per attached owner (pair_request `device_name` / peers.json). */
+const _peerNames = new Map<string, string>();
+
+/** Where the latest user input came from. `phone` = a `user_message` routed
+ *  from that owner's channel; `terminal` = `pi.on("input")` from the TUI or an
+ *  RPC client (not our own `extension` injections). Drives the presence note. */
+type InputSource = { kind: "terminal" } | { kind: "phone"; device: string };
+let _latestInputSource: InputSource | null = null;
+/** Phone that sent the most recent user input: `send_to_phone`'s target. */
+let _latestPhoneInputDevice: string | null = null;
+
+/** Appended to the provider request while the user is on an online phone. */
+export const PHONE_PRESENCE_NOTE =
+  "The user is on their phone (Remote Pi app) and cannot see this PC's screen or files. " +
+  "Deliver finished files with `send_to_phone`.";
+const PHONE_PRESENCE_TYPE = "remote-pi:phone-presence";
+/** Timestamp of the user message the note follows. The note stays anchored
+ *  there while it is active, so every request shares the same prefix (prompt
+ *  caching) until the source changes. */
+let _phoneNoteAnchor: number | null = null;
+
+const _fileSender = new FileSender({
+  online: () => _activePeers,
+  latestInputDevice: () => _latestPhoneInputDevice,
+  deviceName: (id) => _peerNames.get(id) ?? id.slice(0, 8),
+});
+
+function _deviceIdOf(channel: PlainPeerChannel): string | null {
+  for (const [id, ch] of _activePeers) if (ch === channel) return id;
+  return null;
+}
+
+function _notePhoneInput(sender: PlainPeerChannel): void {
+  const device = _deviceIdOf(sender);
+  if (device === null) return;
+  _latestInputSource = { kind: "phone", device };
+  _latestPhoneInputDevice = device;
+}
+
+function _phonePresenceActive(): boolean {
+  return _latestInputSource?.kind === "phone" && _activePeers.has(_latestInputSource.device);
+}
+
+function _isUserMessage(m: unknown): boolean {
+  return typeof m === "object" && m !== null && (m as { role?: unknown }).role === "user";
+}
+
+function _timestampOf(m: unknown): number | null {
+  const ts = (m as { timestamp?: unknown }).timestamp;
+  return typeof ts === "number" ? ts : null;
+}
+
+/**
+ * Adds the phone-presence note right after the user message it is anchored
+ * to (the latest user message when it became active). Same bytes and same
+ * position on every request until the input source changes.
+ */
+export function _withPhonePresenceNote<T>(messages: T[]): T[] {
+  if (!_phonePresenceActive()) {
+    _phoneNoteAnchor = null;
+    return messages;
+  }
+  let idx = -1;
+  if (_phoneNoteAnchor !== null) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (_isUserMessage(messages[i]) && _timestampOf(messages[i]) === _phoneNoteAnchor) { idx = i; break; }
+    }
+  }
+  if (idx < 0) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (_isUserMessage(messages[i])) { idx = i; break; }
+    }
+    _phoneNoteAnchor = idx >= 0 ? _timestampOf(messages[idx]) : null;
+  }
+  const note = {
+    role: "custom",
+    customType: PHONE_PRESENCE_TYPE,
+    content: PHONE_PRESENCE_NOTE,
+    display: false,
+    timestamp: _phoneNoteAnchor ?? 0,
+  } as unknown as T;
+  if (idx < 0) return [...messages, note];
+  return [...messages.slice(0, idx + 1), note, ...messages.slice(idx + 1)];
+}
 
 const REMOTE_PI_RECEIVED_IMAGE_TYPE = "remote-pi:received-image";
 const RECEIVED_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
@@ -2647,6 +2735,9 @@ function _attachOwner(
   );
 
   _attachPeerChannel(appPeerId, channel);
+  _peerNames.set(appPeerId, peerName);
+  // Plan/65: a transfer to this phone resumes from its file_ack.
+  _fileSender.onPhoneAttached(appPeerId);
   _refreshFooter();
 
   _safeNotify(
@@ -2972,15 +3063,20 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
   // tool always sees the current state.
   registerAgentTools(pi, () => _meshNode?.peer() ?? null);
   registerAskWrapperTool(pi, _broadcastToActive, () => _anyPeerActive());
+  // Plan/65: deliver finished files to the phone the user is typing on.
+  registerSendToPhoneTool(pi, _fileSender, () => _currentTurnId);
   _registerReceivedImageRenderer(pi);
 
   // Received-image preview entries are for local TUI display only. Pi's custom
   // messages normally become user-role LLM context, so strip this type before
   // every provider request; the actual Android image still reaches the model via
   // the paired sendUserMessage call.
-  pi.on("context", (event) => ({
-    messages: _filterInternalMessagesFromContext(event.messages),
-  }));
+  // Plan/65: while the latest input came from an online phone, a short stable
+  // note tells the model the user cannot see this PC (main session only).
+  pi.on("context", (event) => {
+    const messages = _filterInternalMessagesFromContext(event.messages);
+    return { messages: fromSubagent() ? messages : _withPhonePresenceNote(messages) };
+  });
 
   // Tool calls execute without prompting the remote user. The Pi SDK has no
   // native `requiresApproval` per tool, and a hardcoded gate (Bash/Edit/Write)
@@ -3001,6 +3097,11 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
     if (event.text.startsWith(CTRL_PREFIX)) {
       void _handleControl(event.text.slice(CTRL_PREFIX.length).trim());
       return { action: "handled" } as const;
+    }
+    // Plan/65: the user typed on this PC (TUI or RPC client). Our own
+    // injections of phone messages are `extension` or flagged in flight.
+    if (event.source !== "extension" && !_terminalInjectionInFlight) {
+      _latestInputSource = { kind: "terminal" };
     }
     // Every typed or injected line: `/plan-review` re-opens omp's plan
     // review, anything else means its overlay is closed.
@@ -5877,6 +5978,9 @@ export function _routeClientMessageFrom(
     }
     return;
   }
+  // Plan/65: file_ack / file_done / file_error / file_cancel for send_to_phone.
+  if (_fileSender.handleMessage(_deviceIdOf(sender), msg)) return;
+  if (msg.type === "user_message") _notePhoneInput(sender);
   if (!_pi) return;
   switch (msg.type) {
     case "queued_message_set": {
