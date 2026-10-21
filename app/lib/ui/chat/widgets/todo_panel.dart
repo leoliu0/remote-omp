@@ -122,7 +122,8 @@ class TodoPanel extends StatefulWidget {
 }
 
 class _TodoPanelState extends State<TodoPanel> {
-  bool _collapsed = false;
+  // Starts as the one-line header (count + current task); tap shows the list.
+  bool _collapsed = true;
   // Finished phases start folded (omp's checklist `collapsed`); tap unfolds.
   final Set<String> _unfolded = {};
   Timer? _ticker;

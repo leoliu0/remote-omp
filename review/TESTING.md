@@ -951,3 +951,8 @@ Existing stored duplicates are not purged by this fix.
 - Change: the note now covers phone and web, says a `read` image shows in the chat, and allows `send_to_phone` only when the user asks; the tool description says the same.
 - Tests: the presence-note test (new expected wording) and `send_to_phone tells the agent to send only on request and to read images to show them` failed first; extension 1029 passed / 3 skipped, typecheck clean, `dist/` rebuilt.
 - Not verified: a live session asked for a picture from the web after restart (needs a model run; the note text sent to the provider is pinned by the test).
+
+### 2026-10-21 - App: to-do list collapsed by default ("Can default to not show to-do list on mobile")
+- Change: `TodoPanel` starts collapsed to its one-line header (`TODO 2/6 · current task`); a tap on the header shows the list, as before.
+- Tests: `starts collapsed to one line with the current task; tap shows the list` (and the three tests that now expand first) failed before the change; app 909/909, `flutter analyze` unchanged at 10 old issues.
+- Surface: arm64 APK (1.2.58/2069, PC-signed) sent to the user's phone. Not verified on the emulator (unpaired, no session with a to-do list).

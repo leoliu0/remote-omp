@@ -111,8 +111,15 @@ void main() {
           MaterialApp(home: Scaffold(body: TodoPanel(phases: phases, working: working))),
         );
 
+    // The panel starts collapsed to one line; tap the header to show the list.
+    Future<void> expand(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('todo-panel-header')));
+      await tester.pump();
+    }
+
     testWidgets('renders phases, counts and statuses like the TUI', (tester) async {
       await pumpPanel(tester, _phases(_afterDrop));
+      await expand(tester);
       expect(find.text('TODO'), findsOneWidget);
       expect(find.text('2/6'), findsOneWidget);
       expect(find.text('I. Setup'), findsOneWidget);
@@ -130,19 +137,22 @@ void main() {
 
     testWidgets('spins the in-progress task while the agent works', (tester) async {
       await pumpPanel(tester, _phases(_afterDrop), working: true);
+      await expand(tester);
       expect(find.text('⠋'), findsOneWidget);
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('⠙'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('collapses to one line with the current task', (tester) async {
+    testWidgets('starts collapsed to one line with the current task; tap shows the list', (tester) async {
       await pumpPanel(tester, _phases(_afterDrop));
-      await tester.tap(find.byKey(const Key('todo-panel-header')));
-      await tester.pump();
       expect(find.text('I. Setup'), findsNothing);
       expect(find.text('Write parser'), findsOneWidget);
       expect(find.text('2/6'), findsOneWidget);
+      await expand(tester);
+      expect(find.text('I. Setup'), findsOneWidget);
+      await expand(tester);
+      expect(find.text('I. Setup'), findsNothing);
     });
 
     testWidgets('a finished phase is folded until tapped; empty list renders nothing', (tester) async {
@@ -165,6 +175,7 @@ void main() {
         ],
       });
       await pumpPanel(tester, phases);
+      await expand(tester);
       expect(find.text('I. Setup'), findsOneWidget);
       expect(find.text('Create repo'), findsNothing);
       await tester.tap(find.text('I. Setup'));
