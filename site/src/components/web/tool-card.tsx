@@ -3,6 +3,7 @@
 import type { ToolCallData } from "./web-client";
 import { argRows, bashCard, toolSummary } from "./tool-output";
 import { todoPill } from "./todo";
+import { toolResultImages, toolResultText } from "./tool-images";
 
 const STATUS_COLOR: Record<ToolCallData["status"], string> = {
   pending: "#00D4FF",
@@ -24,12 +25,26 @@ const STATUS_ICON: Record<ToolCallData["status"], string> = {
 
 const ERROR_TEXT = "text-[#E5484D]";
 
+/** The pictures a tool returned, stacked; also shown alone when tool calls are hidden. */
+export function ToolResultImages({ urls }: { urls: string[] }) {
+  if (urls.length === 0) return null;
+  return (
+    <div className="flex flex-col items-start gap-1.5">
+      {urls.map((url, i) => (
+        // eslint-disable-next-line @next/next/no-img-element -- inline base64 from the Pi, not an optimizable URL
+        <img key={i} src={url} alt="image" className="max-h-[360px] max-w-full rounded-lg" />
+      ))}
+    </div>
+  );
+}
+
 /** Brief mode: one pill with the tool name and its intent (else command). */
 export function ToolPill({ tool, onExpand }: { tool: ToolCallData; onExpand: () => void }) {
   const color = STATUS_COLOR[tool.status];
   const summary = toolSummary(tool.args);
+  const images = toolResultImages(tool);
   return (
-    <div className="my-1.5 max-w-[95%] sm:max-w-[90%]">
+    <div className="my-1.5 max-w-[95%] sm:max-w-[90%] space-y-1.5">
       <button
         type="button"
         onClick={onExpand}
@@ -57,6 +72,8 @@ export function ToolPill({ tool, onExpand }: { tool: ToolCallData; onExpand: () 
           <span className="text-[#666] group-hover:text-white transition-colors text-[10px]">▾</span>
         </div>
       </button>
+      {/* Pictures stay visible without expanding, as in the terminal and the phone. */}
+      <ToolResultImages urls={images} />
     </div>
   );
 }
@@ -93,7 +110,8 @@ function OutputLabel() {
 }
 
 function BashBody({ tool }: { tool: ToolCallData }) {
-  const card = bashCard(tool.args, tool.output ?? null);
+  const card = bashCard(tool.args, toolResultText(tool) ?? null);
+  const images = toolResultImages(tool);
   return (
     <div className="p-3 bg-[#050505] font-mono text-xs space-y-2">
       <pre className="whitespace-pre-wrap break-words text-white">
@@ -114,6 +132,7 @@ function BashBody({ tool }: { tool: ToolCallData }) {
           </pre>
         </>
       )}
+      <ToolResultImages urls={images} />
       {(card.footer.text || card.footer.exit) && (
         <div className="text-[11px] text-[#6B6B6B]">
           {card.footer.text}
@@ -131,6 +150,8 @@ function BashBody({ tool }: { tool: ToolCallData }) {
 
 function GenericBody({ tool }: { tool: ToolCallData }) {
   const rows = argRows(tool.args);
+  const text = toolResultText(tool);
+  const images = toolResultImages(tool);
   return (
     <div className="p-3 bg-[#050505] font-mono text-xs space-y-2">
       {rows.length > 0 && (
@@ -161,16 +182,19 @@ function GenericBody({ tool }: { tool: ToolCallData }) {
           ))}
         </div>
       )}
-      {tool.output !== undefined ? (
+      {text !== undefined ? (
         <>
           <OutputLabel />
-          <pre
-            className={`whitespace-pre-wrap break-words max-h-96 overflow-y-auto ${
-              tool.status === "error" ? ERROR_TEXT : "text-[#C8C8C8]"
-            }`}
-          >
-            {tool.output.trim() === "" ? "(no output)" : tool.output}
-          </pre>
+          {(text.trim() !== "" || images.length === 0) && (
+            <pre
+              className={`whitespace-pre-wrap break-words max-h-96 overflow-y-auto ${
+                tool.status === "error" ? ERROR_TEXT : "text-[#C8C8C8]"
+              }`}
+            >
+              {text.trim() === "" ? "(no output)" : text}
+            </pre>
+          )}
+          <ToolResultImages urls={images} />
         </>
       ) : (
         <div className="text-[11px] text-[#6B6B6B]">Running…</div>

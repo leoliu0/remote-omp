@@ -27,7 +27,8 @@ import { slashMenuItems } from "./slash-commands";
 import { BrailleSpinner } from "./braille-spinner";
 import type { RelayConnection } from "./relay-connection";
 import { workingLabel } from "./working-label";
-import { TodoToolPill, ToolFullCard, ToolPill } from "./tool-card";
+import { TodoToolPill, ToolFullCard, ToolPill, ToolResultImages } from "./tool-card";
+import { toolResultImages, toolRowView, type ToolDisplay } from "./tool-images";
 import { ExtensionUiPrompt } from "./extension-ui-prompt";
 import { PlanReviewPrompt } from "./plan-review-prompt";
 import { applyExtensionUiRequest, type ExtensionUiResponseWire, type PendingPrompt } from "./extension-ui";
@@ -58,8 +59,6 @@ import {
   type ScrollAnchor,
 } from "./scroll-follow";
 
-type ToolDisplay = "brief" | "full" | "hidden";
-
 /** Stable "no list" for other rooms' state, so memo/effect deps don't churn. */
 const NO_TODOS: TodoPhase[] = [];
 
@@ -86,24 +85,6 @@ interface WebChatProps {
   onRoomAction: (cmd: RoomAction) => void;
   onOpenSettings?: () => void;
 }
-
-const READ_ONLY_TOOLS = new Set([
-  "read",
-  "grep",
-  "glob",
-  "find",
-  "ls",
-  "view",
-  "cat",
-  "head",
-  "tail",
-  "web_search",
-  "google_web_search",
-  "mcp__read",
-  "mcp__grep",
-  "mcp__glob",
-  "mcp__gemini_search_google_web_search",
-]);
 
 /** Stable key for a tool row's expanded state. */
 function toolRowKey(m: WebChatMessage): string {
@@ -170,6 +151,13 @@ const MessageRow = memo(function MessageRow({
 
       {/* TOOL CALL (Mobile Parity: Brief Pill / Full Card). `todo` calls stay one
           line in every mode (the list lives in the Todo panel); expanding shows the card. */}
+      {/* Hidden mode: only the pictures a tool returned (no card), as on the phone. */}
+      {m.role === "tool" && m.tool && toolDisplay === "hidden" && (
+        <div className="my-1.5 max-w-[95%] sm:max-w-[90%]">
+          <ToolResultImages urls={toolResultImages(m.tool)} />
+        </div>
+      )}
+
       {m.role === "tool" && m.tool && toolDisplay !== "hidden" && (
         m.tool.tool === "todo" && !expanded ? (
           <TodoToolPill tool={m.tool} onExpand={() => onSetToolExpanded(toolRowKey(m), true)} />
@@ -229,12 +217,9 @@ const ChatTimeline = memo(function ChatTimeline({
   );
   const visibleMessages = messages.filter((m) => {
     if (m.role !== "tool") return true;
-    if (toolDisplay === "hidden") return false;
-    if (toolDisplay === "brief" && m.tool) {
-      const toolName = m.tool.tool.toLowerCase();
-      return !READ_ONLY_TOOLS.has(toolName);
-    }
-    return true;
+    if (!m.tool) return toolDisplay !== "hidden";
+    // A tool that returned a picture stays in every mode (tool-images.ts).
+    return toolRowView(m.tool, toolDisplay) !== null;
   });
 
   return (

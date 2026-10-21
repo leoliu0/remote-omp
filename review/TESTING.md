@@ -937,3 +937,11 @@ Existing stored duplicates are not purged by this fix.
 - Change: `android/app/build.gradle.kts` sets `packaging.jniLibs.useLegacyPackaging = true`. The APK is sideloaded, so transfer size matters more than install-time extraction.
 - Check: arm64 17.6 MB (`native-code: arm64-v8a`, versionCode 2069, PC-signed `7f8b3240…3871f`); x86_64 18.2 MB. The x86_64 build installed on `RemotePi_Pixel` and launched to onboarding with no `UnsatisfiedLink`/FATAL in logcat ([launch](screens/2026-10-21-compressed-libs-x64-launch.png)).
 - Not verified: install and launch on the phone (sent as an APK file for the user to install).
+
+### 2026-10-21 - Web: images from tools and in agent replies ("Can remote pi web display images")
+- Cause: the web tool card printed the raw tool output, so a `read` of a png showed its base64 text; react-markdown's default URL rule dropped `data:` images in agent replies. Only images the user attached showed.
+- Change: `site/src/components/web/tool-images.ts` extracts `![image](data:image/…;base64,…)` from tool output, strips it from the text and decides per display mode what a tool row shows (app parity: hidden mode shows only the picture, brief mode keeps image `read`s, failed tools show none). `markdown-url.ts` allows base64 png/jpeg/gif/webp as `<img>` sources only (no svg, no `data:` links).
+- Tests: `tool-images.test.ts` and `markdown-url.test.ts` failed first (modules missing); site 185 → 196 passing, `tsc` clean, eslint 0 errors (2 old warnings), `pnpm build` ok (first run hit the transient next/font/google lookup; rerun clean).
+- Surface: real `WebChat` under `next dev` with a fake relay serving a real-shaped `session_history`, headless Chromium: full mode ([card](screens/2026-10-21-web-images-1-tool-card-full.png)), hidden mode ([picture only](screens/2026-10-21-web-images-2-hidden-mode.png)), brief mode ([pill + picture](screens/2026-10-21-web-images-3-brief-and-reply.png)), reply with an embedded png and an inert `data:` link ([reply](screens/2026-10-21-web-images-4-agent-reply.png)).
+- Deployed via `install-vps.sh` (build `v7nVG6p4p-xfaKfbTLywo`). `/web` returns 200, the live chunk `0pklym6kns3p4.js` contains the new image classes, `remote-pi-site` and `caddy` are active and relay `/health` returns 200.
+- Not verified: a live signed-in session showing a real tool image, and phone-width layout.

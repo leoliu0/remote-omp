@@ -12,6 +12,7 @@ import dockerfile from "highlight.js/lib/languages/dockerfile";
 import "katex/dist/katex.min.css";
 import "./markdown-renderer.css";
 import { prepareMarkdown } from "./markdown-text";
+import { markdownUrlTransform } from "./markdown-url";
 
 type HastElement = NonNullable<ExtraProps["node"]>;
 type HastChild = HastElement["children"][number];
@@ -87,6 +88,13 @@ const COMPONENTS: Components = {
       </div>
     );
   },
+  img({ src, alt }) {
+    if (typeof src !== "string" || !src) return null;
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- inline base64 / remote URL from the agent, not an optimizable asset
+      <img src={src} alt={alt ?? "image"} className="my-2 block max-h-96 max-w-full rounded-lg" />
+    );
+  },
   a({ href, children }) {
     return (
       <a href={href} target="_blank" rel="noopener noreferrer">
@@ -103,7 +111,9 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, isStre
   if (!source && !isStreaming) return null;
   return (
     <div className="md-prose">
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={COMPONENTS}>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={COMPONENTS}
+        urlTransform={markdownUrlTransform}
+      >
         {source}
       </ReactMarkdown>
       {isStreaming && <span className="md-cursor" aria-hidden />}
