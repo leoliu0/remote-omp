@@ -4,7 +4,9 @@ import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Intent
 import android.provider.MediaStore
+import android.view.View
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowInsetsCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -38,6 +40,31 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        // KeyboardInsetGuard (Dart): re-apply the real window insets when the
+        // keyboard is hidden but Flutter kept its height as the bottom inset.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WINDOW_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "resyncInsets" -> result.success(resyncInsets())
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /**
+     * Flutter's ImeSyncDeferringInsetsCallback swallows insets while an IME
+     * animation runs and applies the last ones in onEnd. Without onEnd it
+     * keeps the keyboard height. Hand the FlutterView the current insets
+     * directly (as that callback does), only while the keyboard is hidden.
+     */
+    private fun resyncInsets(): Boolean {
+        val view = findViewById<View>(FLUTTER_VIEW_ID) ?: return false
+        val insets = view.rootWindowInsets ?: return false
+        if (WindowInsetsCompat.toWindowInsetsCompat(insets, view).isVisible(WindowInsetsCompat.Type.ime())) {
+            return false
+        }
+        view.onApplyWindowInsets(insets)
+        return true
     }
 
     private fun receivedFile(path: String): File? {
@@ -104,6 +131,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "remote_pi/files"
+        private const val WINDOW_CHANNEL = "remote_pi/window"
         private const val APK_MIME = "application/vnd.android.package-archive"
     }
 }

@@ -6,6 +6,7 @@ import 'package:app/data/files/file_receiver.dart';
 import 'package:app/data/local/app_database.dart';
 import 'package:app/data/local/legacy_data_migrator.dart';
 import 'package:app/data/mesh/mesh_sync_service.dart';
+import 'package:app/data/platform/keyboard_inset_guard.dart';
 import 'package:app/data/preferences/preferences.dart';
 import 'package:app/data/sync/sync_service.dart';
 import 'package:app/data/transport/connection_manager.dart';
@@ -23,6 +24,8 @@ void main() {
     debugPrint('[Main] uncaught async error: $error');
     return true;
   };
+  // Clears a keyboard inset Android left behind (black band under the input).
+  KeyboardInsetGuard().start();
   runApp(const AppBootstrap());
 }
 

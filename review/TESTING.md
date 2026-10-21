@@ -956,3 +956,10 @@ Existing stored duplicates are not purged by this fix.
 - Change: `TodoPanel` starts collapsed to its one-line header (`TODO 2/6 · current task`); a tap on the header shows the list, as before.
 - Tests: `starts collapsed to one line with the current task; tap shows the list` (and the three tests that now expand first) failed before the change; app 909/909, `flutter analyze` unchanged at 10 old issues.
 - Surface: arm64 APK (1.2.58/2069, PC-signed) sent to the user's phone. Not verified on the emulator (unpaired, no session with a to-do list).
+
+### 2026-10-21 - App: black band under the input bar until restart ("There is black part down the bottom of the mobile app sometimes")
+- Cause: on the user's Samsung the chat laid out as if the keyboard were open after it closed ([phone](screens/2026-10-21-stuck-keyboard-inset-phone.jpg)). Flutter's `ImeSyncDeferringInsetsCallback` consumes insets while an IME animation runs and applies the last ones in `onEnd`; without `onEnd` it keeps the keyboard height and swallows every later inset until the next IME animation.
+- Change: `lib/data/platform/keyboard_inset_guard.dart` (started in `main.dart`) waits 700 ms after a metrics change or resume; if a bottom inset remains it calls `remote_pi/window` `resyncInsets`. `MainActivity` then, only when the IME is not visible, passes the root window insets straight to the FlutterView (as the engine callback does).
+- Tests: `test/data/platform/keyboard_inset_guard_test.dart` (6) failed first (no guard); app 915/915, `flutter analyze` unchanged at 10 old issues.
+- Surface: x86_64 build on `RemotePi_Pixel`: keyboard open keeps the layout above it ([open](screens/2026-10-21-inset-guard-01-keyboard-open.png)), closed restores full height ([closed](screens/2026-10-21-inset-guard-02-keyboard-closed.png)); no exceptions in logcat.
+- Not verified: the stuck state itself (not reproducible on the emulator); the arm64 APK was sent to the phone.
