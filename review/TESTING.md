@@ -945,3 +945,9 @@ Existing stored duplicates are not purged by this fix.
 - Surface: real `WebChat` under `next dev` with a fake relay serving a real-shaped `session_history`, headless Chromium: full mode ([card](screens/2026-10-21-web-images-1-tool-card-full.png)), hidden mode ([picture only](screens/2026-10-21-web-images-2-hidden-mode.png)), brief mode ([pill + picture](screens/2026-10-21-web-images-3-brief-and-reply.png)), reply with an embedded png and an inert `data:` link ([reply](screens/2026-10-21-web-images-4-agent-reply.png)).
 - Deployed via `install-vps.sh` (build `v7nVG6p4p-xfaKfbTLywo`). `/web` returns 200, the live chunk `0pklym6kns3p4.js` contains the new image classes, `remote-pi-site` and `caddy` are active and relay `/health` returns 200.
 - Not verified: a live signed-in session showing a real tool image, and phone-width layout.
+
+### 2026-10-21 - Extension: agent sent a picture to the phone instead of showing it ("Asking pic should always render first, things are sent unless I asked")
+- Cause: the plan 65 presence note said "Deliver finished files with `send_to_phone`", and the web client signs in with the phone's owner key, so web input also turned the note on. Asked for a picture on the web, the agent sent it to the phone.
+- Change: the note now covers phone and web, says a `read` image shows in the chat, and allows `send_to_phone` only when the user asks; the tool description says the same.
+- Tests: the presence-note test (new expected wording) and `send_to_phone tells the agent to send only on request and to read images to show them` failed first; extension 1029 passed / 3 skipped, typecheck clean, `dist/` rebuilt.
+- Not verified: a live session asked for a picture from the web after restart (needs a model run; the note text sent to the provider is pinned by the test).

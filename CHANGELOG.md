@@ -48,7 +48,7 @@ and 27 (see [`plan/`](plan/) directory for design history).
 #### Send files to the phone (plan/65)
 - New agent tool `send_to_phone(path, caption?)` sends a file of up to 256 MiB (`REMOTE_PI_MAX_SEND_MIB`) to the paired phone over the relay, in 1 MiB chunks with acknowledgements. A transfer resumes where it stopped after a dropped connection, for up to 10 minutes.
 - The app shows a file card with progress, then Open, Share, Save to Downloads and, for APKs, Install. Received files can be cleared in Settings → Storage.
-- When the latest message came from the phone, the agent is told the user is on the phone and sends finished files there unprompted. Typing in the terminal removes that note.
+- When the latest message came from the phone or web, the agent is told the user cannot see the PC: it shows images by reading them into the chat and sends files only when asked. Typing in the terminal removes that note.
 - Phone APK builds are smaller: `--target-platform android-arm64` now also drops plugin libraries for other CPUs, and native libraries are compressed (arm64 17.6 MB instead of 87.8 MB).
 
 #### Owner-key sync (plan/23)

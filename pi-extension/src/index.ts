@@ -215,10 +215,14 @@ let _latestInputSource: InputSource | null = null;
 /** Phone that sent the most recent user input: `send_to_phone`'s target. */
 let _latestPhoneInputDevice: string | null = null;
 
-/** Appended to the provider request while the user is on an online phone. */
+/** Appended to the provider request while the user is on an online phone.
+ *  The web client signs in with the phone's owner key, so it counts as the
+ *  same peer: the wording covers both. Images are shown by `read` (they render
+ *  in the chat); files are sent only when asked. */
 export const PHONE_PRESENCE_NOTE =
-  "The user is on their phone (Remote Pi app) and cannot see this PC's screen or files. " +
-  "Deliver finished files with `send_to_phone`.";
+  "The user is on Remote Pi (phone app or web) and cannot see this PC's screen or files. " +
+  "To show an image, `read` the image file: it appears in their chat. " +
+  "Use `send_to_phone` only when the user asks for a file on their phone.";
 const PHONE_PRESENCE_TYPE = "remote-pi:phone-presence";
 /** Timestamp of the user message the note follows. The note stays anchored
  *  there while it is active, so every request shares the same prefix (prompt

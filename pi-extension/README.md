@@ -214,9 +214,11 @@ The per-file cap is 256 MiB. Set **`REMOTE_PI_MAX_SEND_MIB`** to change it
 (for example `REMOTE_PI_MAX_SEND_MIB=512`).
 
 While the latest input came from a phone that is online, every provider
-request carries one short note: *"The user is on their phone (Remote Pi app)
-and cannot see this PC's screen or files. Deliver finished files with
-`send_to_phone`."* The note keeps the same bytes and position until the input
+request carries one short note: *"The user is on Remote Pi (phone app or web)
+and cannot see this PC's screen or files. To show an image, `read` the image
+file: it appears in their chat. Use `send_to_phone` only when the user asks for
+a file on their phone."* The web client signs in with the phone's owner key, so
+its input counts as the same peer. The note keeps the same bytes and position until the input
 source changes, so prompt caching still works. Input typed in the terminal (or
 sent by an RPC client) removes it, and so does that phone disconnecting.
 

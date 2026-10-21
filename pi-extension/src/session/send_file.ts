@@ -594,8 +594,9 @@ export function registerSendToPhoneTool(
     description:
       "Send a finished file from this PC to the user's paired phone (Remote Pi app), e.g. a built APK, " +
       "a PDF, a zip or a log the user should open there. The file appears as a card in the phone chat; " +
-      "nothing opens or installs without the user's tap. Use it only for finished files the user asked " +
-      "for or needs, not for files you are still working on. Returns when the phone confirms receipt. " +
+      "nothing opens or installs without the user's tap. Use it only when the user asks for a file on " +
+      "their phone. To show an image, `read` it instead: it displays in the chat on the phone and web. " +
+      "Returns when the phone confirms receipt. " +
       `Limit ${DEFAULT_MAX_SEND_MIB} MiB per file by default. Fails with phone_offline when no phone is online.`,
     parameters: SendToPhoneParams,
     execute: async (_toolCallId, params, signal, onUpdate, ctx) => {

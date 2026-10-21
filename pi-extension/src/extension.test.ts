@@ -7875,9 +7875,13 @@ describe("omp in-process subagents", () => {
 // ── Plan/65 — send_to_phone routing + phone-presence note ─────────────────────
 
 describe("plan/65 send_to_phone + phone presence", () => {
+  // Covers the web client too (it signs in with the phone's owner key), and
+  // must not push the agent to send what it can show: a `read` image renders
+  // in the chat; files are sent only on request.
   const NOTE =
-    "The user is on their phone (Remote Pi app) and cannot see this PC's screen or files. " +
-    "Deliver finished files with `send_to_phone`.";
+    "The user is on Remote Pi (phone app or web) and cannot see this PC's screen or files. " +
+    "To show an image, `read` the image file: it appears in their chat. " +
+    "Use `send_to_phone` only when the user asks for a file on their phone.";
 
   type Tool = {
     name: string;
@@ -8011,6 +8015,13 @@ describe("plan/65 send_to_phone + phone presence", () => {
     expect(notes(context(h, [u1]))).toHaveLength(1);
     _onPeerDisconnect("peer-A");
     expect(notes(context(h, [u1]))).toHaveLength(0);
+  });
+
+  test("send_to_phone tells the agent to send only on request and to read images to show them", () => {
+    const h = harness();
+    const tool = h.tools.find((t) => t.name === "send_to_phone") as unknown as { description: string };
+    expect(tool.description).toContain("only when the user asks");
+    expect(tool.description).toContain("`read` it instead");
   });
 
   test("send_to_phone is registered once per pi", () => {
