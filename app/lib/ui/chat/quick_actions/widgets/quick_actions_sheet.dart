@@ -9,8 +9,9 @@ import 'package:app/ui/chat/quick_actions/states/quick_actions_state.dart';
 import 'package:app/ui/chat/quick_actions/viewmodels/quick_actions_viewmodel.dart';
 import 'package:app/ui/chat/quick_actions/widgets/dismiss_on_session_change.dart';
 import 'package:app/ui/chat/quick_actions/widgets/model_picker_sheet.dart';
+import 'package:app/ui/chat/quick_actions/widgets/thinking_segmented.dart';
 import 'package:app/ui/chat/viewmodels/chat_viewmodel.dart';
-import 'package:app/ui/home/widgets/session_tile.dart' show formatModelName, thinkingLabel;
+import 'package:app/ui/home/widgets/session_tile.dart' show formatModelName;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
@@ -562,101 +563,13 @@ class _ThinkingRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          _ThinkingSegmented(
+          ThinkingSegmented(
             current: current,
             disabled: busy || disabled,
             levels: levels,
             onPick: onPick,
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ThinkingSegmented extends StatelessWidget {
-  final ThinkingLevel? current;
-  final bool disabled;
-  final ValueChanged<ThinkingLevel> onPick;
-
-  /// Levels the current model supports, in the Pi's order (omp: off, auto,
-  /// then the model's efforts). Null/empty = show every level.
-  final List<ThinkingLevel>? levels;
-  const _ThinkingSegmented({
-    required this.current,
-    required this.disabled,
-    required this.onPick,
-    this.levels,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final shown = (levels == null || levels!.isEmpty)
-        ? ThinkingLevel.values
-        : levels!;
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: context.colors.border),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        children: [
-          for (final level in shown)
-            Expanded(
-              child: _SegButton(
-                key: Key('qa-thinking-${level.wire}'),
-                label: thinkingLabel(level),
-                selected: current == level,
-                disabled: disabled,
-                onTap: () => onPick(level),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SegButton extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final bool disabled;
-  final VoidCallback onTap;
-  const _SegButton({
-    super.key,
-    required this.label,
-    required this.selected,
-    required this.disabled,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    return GestureDetector(
-      onTap: disabled ? null : onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          color: selected
-              ? colors.accent.withValues(alpha: 0.15)
-              : Colors.transparent,
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              fontFamily: kMonoFamily,
-              fontSize: 11,
-              color: disabled
-                  ? colors.muted.withValues(alpha: 0.5)
-                  : selected
-                  ? colors.accent
-                  : colors.text,
-            ),
-          ),
-        ),
       ),
     );
   }

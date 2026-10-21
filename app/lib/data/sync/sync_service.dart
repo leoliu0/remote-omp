@@ -743,6 +743,11 @@ class SyncService extends Service {
         // ignore: discarded_futures
         _applyHistory(msg);
 
+      case ErrorMessage(:final inReplyTo?)
+          when inReplyTo.startsWith(kActionRequestIdPrefix):
+        // Answers a typed action (ActionsRepository fails that request); it
+        // says nothing about the chat turn.
+        break;
       case ErrorMessage(:final code, :final message):
         if (code.contains('unknown_peer')) {
           if (!_eventController.isClosed) {
@@ -783,6 +788,7 @@ class SyncService extends Service {
       case ActionOk():
       case ActionError():
       case ModelsList():
+      case ModelRoles():
         break;
       case SkillsList(:final skills, :final inReplyTo):
         _dynamicSkills = skills;

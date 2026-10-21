@@ -45,6 +45,10 @@ and 27 (see [`plan/`](plan/) directory for design history).
 - Web client: on wide screens the chat has a session sidebar on the left with the same tabs, grouping and status badges as Home. One click switches session. It collapses to a rail of avatars, and that choice is remembered. Home keeps its tab after you leave a chat.
 ### Added
 
+#### omp model roles from the app (plan/66)
+- The app's model sheet has a Roles tab listing omp's model roles (default, plan, task, smol, advisor and the rest) with model, thinking level and description. Pick a role, then a model and thinking level, or Reset it; the change goes through omp's own settings into `~/.omp/agent/config.yml` and applies to every session, as in the terminal.
+- A role's eligible models are fetched when it is tapped, so the roles list stays about 3 KB.
+
 #### Send files to the phone (plan/65)
 - New agent tool `send_to_phone(path, caption?)` sends a file of up to 256 MiB (`REMOTE_PI_MAX_SEND_MIB`) to the paired phone over the relay, in 1 MiB chunks with acknowledgements. A transfer resumes where it stopped after a dropped connection, for up to 10 minutes.
 - The app shows a file card with progress, then Open, Share, Save to Downloads and, for APKs, Install. Received files can be cleared in Settings → Storage.

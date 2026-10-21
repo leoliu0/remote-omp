@@ -1,0 +1,16 @@
+╭─ Models ───────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   Roles             5/16 │  Model roles — f adds a retry fallback, cleared roles fall back to auto-selection                                                                                       │
+│    All models        1103 │  Roles:  all   chat  kinds  Alt+←/Alt+→   Preset: custom  Ctrl+←/Ctrl+→ · p/󰘶 P                                                                                      │
+│ ────────────────────────── │     DEFAULT    anthropic/claude-opus-5-5                                                                                                                 󰪥 xhigh   2  │
+│    alibaba-token-plan  15 │     SMOL       anthropic/claude-sonnet-5-5                                                                                                                 auto   1  │
+│    anthropic           28 │     SLOW       auto → anthropic/claude-opus-5-5                                                                                                                    3  │
+│    deepseek             4 │     VISION     —                                                                                                                                                       │
+│    google              69 │     PLAN       anthropic/claude-sonnet-5-5                                                                                                                     󰪣 high  │
+│    google-antigravity  13 │     COMMIT     —                                                                                                                                                       │
+│    kimi-code            7 │     TINY       auto → anthropic/claude-sonnet-5-5                                                                                                                      │
+│    local               14 │     MEMORY     auto → anthropic/claude-sonnet-5-5                                                                                                                      │
+│    minimax              9 │     TASK       —                                                                                                                                                       │
+│    moonshot            17 │     ADVISOR    anthropic/claude-opus-5-5                                                                                                                       󰪣 high  │
+│    openai             126 │     designer   xai-oauth/grok-4.6                                                                                                                              󰪣 high  │
+│    openai-codex         4 │    ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────    │
+│    openrouter         757 │     IMAGE      auto → openai/gpt-image-2                                                                                                                               │

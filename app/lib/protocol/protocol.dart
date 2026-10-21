@@ -629,6 +629,11 @@ class SessionSync extends ClientMessage {
 // Plan/28 — Typed app actions
 // ---------------------------------------------------------------------------
 
+/// Request-id prefix of every typed action the app sends (`act_<uuid7>`).
+/// Replies to these ids, including `error` frames, belong to the actions
+/// layer, not the chat.
+const kActionRequestIdPrefix = 'act_';
+
 /// Plan/28 — Curated catalogue of actions the app can dispatch on the
 /// Pi-side session. Each value matches an `action_ok`/`action_error`
 /// reply emitted by the pi-extension handlers in
@@ -639,7 +644,9 @@ enum ActionName {
   modelSet('model_set'),
   thinkingSet('thinking_set'),
   reloadPlugins('reload_plugins'),
-  planMode('plan_mode');
+  planMode('plan_mode'),
+  // Plan 66 — omp model role change; replies with action_ok / action_error.
+  modelRoleSet('model_role_set');
   final String wire;
   const ActionName(this.wire);
 
@@ -807,6 +814,167 @@ class ListModels extends ClientMessage {
   Map<String, dynamic> toJson() => {'type': 'list_models', 'id': id};
 }
 
+/// Plan 66 — one omp model role (`modelRoles` in omp's config.yml), as
+/// reported in a `model_roles` frame. [model] reuses [WireModel] so the
+/// picker can reuse its model rows and per-model thinking levels.
+class WireModelRole {
+  /// Role id (`default`, `plan`, `task`, `smol`, ...).
+  final String role;
+
+  /// Display name from omp's role info.
+  final String name;
+  final String description;
+
+  /// Model the role resolves to; `null` when unset or unresolvable.
+  final WireModel? model;
+
+  /// Thinking level carried by the role (`provider/model:thinking`).
+  final ThinkingLevel? thinking;
+
+  /// Where the role comes from: `global`, `project` or `default`.
+  final String source;
+
+  /// Models eligible for this role, as `{provider, model_id}` refs. Only on
+  /// the reply to a role-scoped `list_model_roles {role}`, and left out when
+  /// the pool equals the full `models_list`. `null` = show every model.
+  final List<WireModelRef>? candidates;
+
+  const WireModelRole({
+    required this.role,
+    required this.name,
+    required this.description,
+    required this.source,
+    this.model,
+    this.thinking,
+    this.candidates,
+  });
+
+  factory WireModelRole.fromJson(Map<String, dynamic> j) {
+    final model = j['model'];
+    final thinking = j['thinking'];
+    return WireModelRole(
+      role: j['role'] as String,
+      name: (j['name'] as String?) ?? (j['role'] as String),
+      description: (j['description'] as String?) ?? '',
+      source: (j['source'] as String?) ?? 'default',
+      model: model is Map<String, dynamic> ? WireModel.fromJson(model) : null,
+      thinking: thinking is String ? ThinkingLevel.fromWire(thinking) : null,
+      candidates: (j['candidates'] as List<dynamic>?)
+          ?.map((e) => WireModelRef.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'role': role,
+    'name': name,
+    'description': description,
+    if (model != null) 'model': model!.toJson(),
+    if (thinking != null) 'thinking': thinking!.wire,
+    'source': source,
+    if (candidates != null)
+      'candidates': candidates!.map((m) => m.toJson()).toList(),
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireModelRole &&
+      other.role == role &&
+      other.name == name &&
+      other.description == description &&
+      other.model == model &&
+      other.thinking == thinking &&
+      other.source == source &&
+      (other.candidates == null
+          ? candidates == null
+          : candidates != null &&
+                _listEquals(other.candidates!, candidates!));
+
+  @override
+  int get hashCode => Object.hash(
+    role,
+    name,
+    description,
+    model,
+    thinking,
+    source,
+    candidates == null ? null : Object.hashAll(candidates!),
+  );
+}
+
+/// Plan 66 — a `{provider, model_id}` pair naming one model in a role's
+/// candidate pool. Matched against the `models_list` catalogue.
+class WireModelRef {
+  final String provider;
+  final String modelId;
+  const WireModelRef({required this.provider, required this.modelId});
+
+  factory WireModelRef.fromJson(Map<String, dynamic> j) => WireModelRef(
+    provider: j['provider'] as String,
+    modelId: j['model_id'] as String,
+  );
+
+  Map<String, dynamic> toJson() => {'provider': provider, 'model_id': modelId};
+
+  bool matches(WireModel m) => m.provider == provider && m.id == modelId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireModelRef &&
+      other.provider == provider &&
+      other.modelId == modelId;
+
+  @override
+  int get hashCode => Object.hash(provider, modelId);
+}
+
+/// Plan 66 — asks the extension for omp's model roles. Replied with a
+/// `model_roles` frame carrying `in_reply_to`. With [role], the reply holds
+/// only that role plus its `candidates`.
+class ListModelRoles extends ClientMessage {
+  final String id;
+  final String? role;
+  ListModelRoles({required this.id, this.role});
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'list_model_roles',
+    'id': id,
+    if (role != null) 'role': role,
+  };
+}
+
+/// Plan 66 — sets (or clears) one omp model role. Omitting [provider] and
+/// [modelId] clears the role back to its default. Replies with `action_ok`
+/// / `action_error`; on success the extension broadcasts `model_roles`.
+class ModelRoleSet extends ClientMessage {
+  final String id;
+  final String role;
+  final String? provider;
+  final String? modelId;
+  final ThinkingLevel? thinking;
+  ModelRoleSet({
+    required this.id,
+    required this.role,
+    this.provider,
+    this.modelId,
+    this.thinking,
+  }) : assert(
+         (provider == null) == (modelId == null),
+         'provider and modelId go together',
+       );
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'model_role_set',
+    'id': id,
+    'role': role,
+    if (provider != null) 'provider': provider,
+    if (modelId != null) 'model_id': modelId,
+    if (thinking != null) 'thinking': thinking!.wire,
+  };
+}
+
 class ReloadPlugins extends ClientMessage {
   final String id;
   ReloadPlugins({required this.id});
@@ -876,6 +1044,9 @@ sealed class ServerMessage {
       'action_ok' => ActionOk.fromJson(json),
       'action_error' => ActionError.fromJson(json),
       'models_list' => ModelsList.fromJson(json),
+      // Plan 66 — omp model roles: reply to list_model_roles (in_reply_to
+      // set) or a broadcast after any role change (no in_reply_to).
+      'model_roles' => ModelRoles.fromJson(json),
       // Plan/57 — interactive extension prompt (ask_user via pi-ask). Mirrors
       // the SDK's extension_ui_request RPC contract; optional `ask` envelope
       // carries pi-ask's full question so the app renders multi/preview/notes.
@@ -1464,6 +1635,21 @@ class ModelsList extends ServerMessage {
       current: cur is Map<String, dynamic> ? WireModel.fromJson(cur) : null,
     );
   }
+}
+
+/// Plan 66 — omp's model roles. [inReplyTo] is set on the reply to a
+/// `list_model_roles`; `null` marks a broadcast after a role change.
+class ModelRoles extends ServerMessage {
+  final String? inReplyTo;
+  final List<WireModelRole> roles;
+  ModelRoles({this.inReplyTo, required this.roles});
+
+  factory ModelRoles.fromJson(Map<String, dynamic> j) => ModelRoles(
+    inReplyTo: j['in_reply_to'] as String?,
+    roles: (j['roles'] as List<dynamic>? ?? const <dynamic>[])
+        .map((e) => WireModelRole.fromJson(e as Map<String, dynamic>))
+        .toList(),
+  );
 }
 
 class Bye extends ServerMessage {

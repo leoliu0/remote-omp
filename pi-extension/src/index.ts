@@ -115,6 +115,12 @@ import {
 } from "./actions/handlers.js";
 import { ensureModelRegistry } from "./actions/registry.js";
 import {
+  handleListModelRoles,
+  handleModelRoleSet,
+  loadOmpRoleApi,
+  type RoleModelRegistry,
+} from "./actions/model_roles.js";
+import {
   ensureGlobalDirs,
   LOCAL_SESSION_NAME,
   sessionAuditPath,
@@ -6276,6 +6282,39 @@ export function _routeClientMessageFrom(
         });
       }
       break;
+    // Plan/66 — omp model roles through omp's live settings singleton.
+    case "list_model_roles": {
+      const registry = ((_lastEventCtx ?? _lastCtx) as ActionCtx | null)?.modelRegistry as
+        | RoleModelRegistry
+        | undefined;
+      void loadOmpRoleApi()
+        .then((api) => handleListModelRoles(api, registry, sender, msg))
+        .catch((err) => {
+          sender.send({
+            type: "error",
+            in_reply_to: msg.id,
+            code: "internal_error",
+            message: err instanceof Error ? err.message : String(err),
+          });
+        });
+      break;
+    }
+    case "model_role_set": {
+      const registry = ((_lastEventCtx ?? _lastCtx) as ActionCtx | null)?.modelRegistry as
+        | RoleModelRegistry
+        | undefined;
+      void loadOmpRoleApi()
+        .then((api) => handleModelRoleSet(api, registry, sender, msg, _broadcastToActive))
+        .catch((err) => {
+          sender.send({
+            type: "action_error",
+            in_reply_to: msg.id,
+            action: "model_role_set",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      break;
+    }
     case "plan_mode": {
       const error = _planReview.planMode(msg.action);
       sender.send(

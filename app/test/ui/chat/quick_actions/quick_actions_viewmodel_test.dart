@@ -63,6 +63,22 @@ class _FakeActionsRepository implements IActionsRepository {
   Future<void> setPlanMode(PlanModeAction action) async {}
 
   @override
+  Future<List<WireModelRole>> listModelRoles({String? role}) async =>
+      const [];
+
+  @override
+  Future<void> setModelRole(
+    String role, {
+    String? provider,
+    String? modelId,
+    ThinkingLevel? thinking,
+  }) async {}
+
+  @override
+  Stream<List<WireModelRole>> get modelRolesStream =>
+      const Stream<List<WireModelRole>>.empty();
+
+  @override
   Future<void> setModel(String provider, String modelId) async {
     lastProvider = provider;
     lastModelId = modelId;

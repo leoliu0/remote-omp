@@ -544,4 +544,140 @@ void main() {
       s.cm.dispose();
     });
   });
+
+  group('ActionsRepository — model roles (plan 66)', () {
+    const plan = WireModelRole(
+      role: 'plan',
+      name: 'Plan',
+      description: 'Planning',
+      source: 'global',
+    );
+
+    test('listModelRoles() sends list_model_roles and resolves on the reply',
+        () async {
+      final s = await _setup();
+      final future = s.repo.listModelRoles();
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final sent = s.ch.sent.single as ListModelRoles;
+      expect(sent.toJson()['type'], 'list_model_roles');
+      s.ch.push(ModelRoles(inReplyTo: sent.id, roles: const [plan]));
+      expect(await future, [plan]);
+      s.cm.dispose();
+    });
+
+    test('setModelRole sends model_role_set and resolves on action_ok',
+        () async {
+      final s = await _setup();
+      final future = s.repo.setModelRole(
+        'plan',
+        provider: 'anthropic',
+        modelId: 'claude-opus-4-7',
+        thinking: ThinkingLevel.high,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final sent = s.ch.sent.single as ModelRoleSet;
+      expect(sent.toJson(), {
+        'type': 'model_role_set',
+        'id': sent.id,
+        'role': 'plan',
+        'provider': 'anthropic',
+        'model_id': 'claude-opus-4-7',
+        'thinking': 'high',
+      });
+      s.ch.push(ActionOk(
+        inReplyTo: sent.id,
+        action: ActionName.modelRoleSet,
+        rawAction: 'model_role_set',
+      ));
+      await future;
+      s.cm.dispose();
+    });
+
+    test('setModelRole surfaces action_error as ActionFailure', () async {
+      final s = await _setup();
+      final future = s.repo.setModelRole('task');
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final sent = s.ch.sent.single as ModelRoleSet;
+      expect(sent.toJson().containsKey('provider'), isFalse);
+      s.ch.push(ActionError(
+        inReplyTo: sent.id,
+        action: ActionName.modelRoleSet,
+        rawAction: 'model_role_set',
+        error: 'model not eligible for role task',
+      ));
+      await expectLater(
+        future,
+        throwsA(isA<ActionFailure>().having(
+            (e) => e.message, 'message', 'model not eligible for role task')),
+      );
+      s.cm.dispose();
+    });
+
+    test('listModelRoles(role:) sends a role-scoped request; the scoped reply '
+        'resolves it but does not reach modelRolesStream', () async {
+      final s = await _setup();
+      final seen = <List<WireModelRole>>[];
+      final sub = s.repo.modelRolesStream.listen(seen.add);
+      final future = s.repo.listModelRoles(role: 'plan');
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final sent = s.ch.sent.single as ListModelRoles;
+      expect(sent.toJson()['role'], 'plan');
+      s.ch.push(ModelRoles(inReplyTo: sent.id, roles: const [plan]));
+      expect(await future, [plan]);
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      expect(seen, isEmpty);
+      await sub.cancel();
+      s.cm.dispose();
+    });
+
+    test('an error frame correlated to a scoped request fails it', () async {
+      final s = await _setup();
+      final future = s.repo.listModelRoles(role: 'zzz');
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final sent = s.ch.sent.single as ListModelRoles;
+      s.ch.push(ErrorMessage(
+        inReplyTo: sent.id,
+        code: 'invalid_message',
+        message: 'unknown model role: zzz',
+      ));
+      await expectLater(
+        future,
+        throwsA(isA<ActionFailure>()
+            .having((e) => e.message, 'message', 'unknown model role: zzz')),
+      );
+      s.cm.dispose();
+    });
+
+    test('a full list_model_roles reply reaches modelRolesStream', () async {
+      final s = await _setup();
+      final seen = <List<WireModelRole>>[];
+      final sub = s.repo.modelRolesStream.listen(seen.add);
+      final future = s.repo.listModelRoles();
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final sent = s.ch.sent.single as ListModelRoles;
+      expect(sent.toJson().containsKey('role'), isFalse);
+      s.ch.push(ModelRoles(inReplyTo: sent.id, roles: const [plan]));
+      await future;
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      expect(seen, [
+        [plan],
+      ]);
+      await sub.cancel();
+      s.cm.dispose();
+    });
+
+    test('model_roles broadcasts and replies reach modelRolesStream',
+        () async {
+      final s = await _setup();
+      final seen = <List<WireModelRole>>[];
+      final sub = s.repo.modelRolesStream.listen(seen.add);
+      s.ch.push(ModelRoles(roles: const [plan]));
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      expect(seen, [
+        [plan],
+      ]);
+      await sub.cancel();
+      s.cm.dispose();
+    });
+  });
 }

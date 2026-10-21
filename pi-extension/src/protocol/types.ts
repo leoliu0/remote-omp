@@ -337,6 +337,21 @@ export type ClientMessage =
   | { type: "thinking_set"; id: string; level: ThinkingLevel }
   | { type: "list_models"; id: string }
   | { type: "reload_plugins"; id: string }
+  // Plan/66 — omp model roles (`modelRoles` in omp's config.yml). The list is
+  // answered with `model_roles`. `model_role_set` assigns a role globally
+  // (`provider/model_id[:thinking]`, as omp's TUI writes it); omitting both
+  // `provider` and `model_id` clears the role back to omp's default. Replied
+  // with action_ok / action_error (`action: "model_role_set"`).
+  // `role` asks for that one role only, with its `candidates`.
+  | { type: "list_model_roles"; id: string; role?: string }
+  | {
+      type: "model_role_set";
+      id: string;
+      role: string;
+      provider?: string;
+      model_id?: string;
+      thinking?: ThinkingLevel;
+    }
   // omp plan mode from a client, run as the terminal command would be:
   // `enter` = `/plan`; `exit` = `/plan` until omp is back to idle (answering
   // omp's "Exit plan mode?" confirm with Yes — clients ask the user first);
@@ -488,6 +503,12 @@ export type ServerMessage =
   | { type: "action_ok"; in_reply_to: string; action: ActionName }
   | { type: "action_error"; in_reply_to: string; action: ActionName; error: string }
   | { type: "models_list"; in_reply_to: string; models: WireModel[]; current?: WireModel }
+  // Plan/66 — omp model roles. Reply to `list_model_roles` (with
+  // `in_reply_to`), and broadcast without `in_reply_to` to every active owner
+  // after a successful `model_role_set`. Full snapshot in omp's role order,
+  // without `candidates`; a `list_model_roles` with `role` gets just that role
+  // with its `candidates`.
+  | { type: "model_roles"; in_reply_to?: string; roles: WireModelRole[] }
   // Running subagents + background jobs (omp's bottom activity panel).
   // Full snapshot, never a delta: replace local state with `jobs` wholesale.
   // Broadcast to active owners on change (throttled to ≤2/s), and sent to an
@@ -657,7 +678,8 @@ export type ActionName =
   | "model_set"
   | "thinking_set"
   | "reload_plugins"
-  | "plan_mode";
+  | "plan_mode"
+  | "model_role_set";
 /**
  * Plan/28 — Mirror of the SDK's `ThinkingLevel` (defined in
  * `@earendil-works/pi-agent-core/types`). Re-declared locally so the wire
@@ -703,6 +725,37 @@ export interface WireModel {
    *  models get `["off"]`. Undefined when the model's metadata is unknown —
    *  clients then offer every level. */
   thinking_levels?: ThinkingLevel[];
+}
+
+/** Plan/66 — which omp settings layer supplies a role (`getModelRoleSource`).
+ *  `default` = the role is unset and omp picks a model itself. */
+export type ModelRoleSource = "project" | "global" | "default";
+
+/** Plan/66 — one omp model role (`default`, `plan`, `task`, `smol`, custom…). */
+export interface WireModelRole {
+  /** omp role id, e.g. `"plan"`. */
+  role: string;
+  /** omp's display name (`getRoleInfo(role).name`), e.g. `"Architect"`. */
+  name: string;
+  /** One line on what omp uses the role for; `""` for custom roles. */
+  description: string;
+  /** The model the role resolves to; absent when unset or unresolvable. */
+  model?: WireModel;
+  /** Explicit thinking suffix of the role value (`…:high`), if any. */
+  thinking?: ThinkingLevel;
+  source: ModelRoleSource;
+  /** Models omp accepts for this role (`roleCandidatePool`: authenticated and
+   *  of the role's kind), as bare pairs. Only in the reply to a
+   *  `list_model_roles` with `role`, and only when the pool differs from the
+   *  `models_list` list; absent there means "the full models_list list".
+   *  Never in the full list or a broadcast. Older apps ignore it. */
+  candidates?: WireRoleCandidate[];
+}
+
+/** Plan/66 — one model eligible for a role. */
+export interface WireRoleCandidate {
+  provider: string;
+  model_id: string;
 }
 
 export type ByeReason = "peer_stop" | "session_replaced" | "shutdown";

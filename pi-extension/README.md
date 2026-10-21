@@ -158,6 +158,55 @@ interactive loop), so the app exposes only the actions that have a clean
 SDK call. The [`pi-telegram`](https://github.com/llblab/pi-telegram) adapter
 follows the same pattern.
 
+### Model roles (omp only)
+
+Under omp, the app can also change omp's **model roles** (`modelRoles` in
+`~/.omp/agent/config.yml`: `default`, `plan`, `task`, `smol`, custom roles…).
+Roles are global, exactly as when set from omp's `/model` view: a change
+applies to every running omp session and to the terminal.
+
+| Frame | Direction | Fields |
+|---|---|---|
+| `list_model_roles` | app → ext | `id`, `role?` |
+| `model_roles` | ext → app | `in_reply_to?`, `roles: [{ role, name, description, model?: WireModel, thinking?, source, candidates?: [{ provider, model_id }] }]` |
+| `model_role_set` | app → ext | `id`, `role`, `provider?`, `model_id?`, `thinking?` |
+
+- `model_roles` answers `list_model_roles` (with `in_reply_to`). After every
+  successful `model_role_set` the extension broadcasts a fresh `model_roles`
+  **without** `in_reply_to` to all connected owners. The full list and the
+  broadcast never carry `candidates`.
+- `list_model_roles` with `role` replies a `model_roles` whose `roles` holds
+  just that role, with its `candidates` (an unknown role gets an `error`).
+- `source` is omp's `getModelRoleSource(role)`: `global`, `project` or
+  `default` (unset; omp picks a model itself). `model` reuses the
+  `models_list` `WireModel`; `thinking` is the role value's `:level` suffix.
+  `candidates` is omp's `roleCandidatePool(role)` (authenticated models of the
+  role's kind) as bare `{ provider, model_id }` pairs. In a role reply it is
+  left out when the pool equals the `models_list` list (`getAvailable()`),
+  meaning "the full models_list list". Measured with ~875 chat models: the
+  full list is ~2.9 KB, a `web` role reply ~47 KB (765 pairs).
+- `model_role_set` writes `provider/model_id[:thinking]` (omp's TUI form) with
+  `settings.setModelRole`, then flushes config.yml. Omitting `provider` and
+  `model_id` clears the role. It replies `action_ok` / `action_error`
+  (`action: "model_role_set"`); errors: unknown or hidden role, model not in
+  the role's candidate pool, thinking level the model doesn't support,
+  project-scoped role (read-only from the app), half-specified model, not omp.
+- `description` comes from the extension (omp has names, no descriptions);
+  custom roles get `""`.
+
+**How the extension reaches omp's settings.** omp's extension loader maps
+imports of `@oh-my-pi/pi-coding-agent/*` (and the `@earendil-works/…` alias)
+in the extension's module graph to the modules bundled into the running omp
+binary. `src/actions/model_roles.ts` dynamically imports
+`config/settings` (`settings`, the live singleton), `config/model-roles`
+(`getKnownRoleIds`, `getRoleInfo`, `roleCandidatePool`) and
+`config/model-resolver` (`resolveModelRoleValue`, for aliases and patterns).
+It requires `isSettingsInitialized()` to be true, so a stray separate copy of
+omp's package is refused instead of edited. The YAML file is never written
+directly: omp's next save would overwrite it. Under upstream pi the imports
+fail and both frames answer with an error. These are omp internals, not its
+documented extension API; checked on omp 18.12.2.
+
 ### Images
 
 The app can attach **one image** (camera or gallery) to a message. It's

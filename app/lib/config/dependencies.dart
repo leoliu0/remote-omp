@@ -34,6 +34,7 @@ import 'package:app/pairing/qr_scanner.dart';
 import 'package:app/pairing/storage.dart';
 import 'package:app/routing/adaptive.dart';
 import 'package:app/ui/chat/attachment/viewmodels/attachment_viewmodel.dart';
+import 'package:app/ui/chat/quick_actions/viewmodels/model_roles_viewmodel.dart';
 import 'package:app/ui/chat/quick_actions/viewmodels/quick_actions_viewmodel.dart';
 import 'package:app/ui/chat/viewmodels/chat_viewmodel.dart';
 import 'package:app/ui/chat/voice/viewmodels/voice_input_viewmodel.dart';
@@ -177,6 +178,9 @@ Future<void> setupDependencies() async {
     next.addViewModel<OnboardingViewModel>(OnboardingViewModel.new);
     next.addViewModel<QuickActionsViewModel>(
       () => QuickActionsViewModel(next.get<IActionsRepository>()),
+    );
+    next.addViewModel<ModelRolesViewModel>(
+      () => ModelRolesViewModel(next.get<IActionsRepository>()),
     );
     next.addViewModel<VoiceInputViewModel>(
       () => VoiceInputViewModel(next.get<SpeechService>()),

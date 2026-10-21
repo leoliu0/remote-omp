@@ -112,6 +112,25 @@ abstract class IActionsRepository extends Repository {
   /// Synchronous cached model for the active room, if previously loaded.
   WireModel? get cachedCurrentModel;
 
+  /// Plan 66 — omp's model roles (`list_model_roles` → `model_roles`).
+  /// With [role], the reply holds only that role plus its `candidates`.
+  Future<List<WireModelRole>> listModelRoles({String? role});
+
+  /// Plan 66 — sets one omp model role (`model_role_set`). Omitting
+  /// [provider] and [modelId] clears the role back to its default. Throws
+  /// [ActionFailure] with the extension's `action_error` text.
+  Future<void> setModelRole(
+    String role, {
+    String? provider,
+    String? modelId,
+    ThinkingLevel? thinking,
+  });
+
+  /// Plan 66 — full `model_roles` snapshots (broadcasts and replies to an
+  /// unscoped `list_model_roles`), so open role lists follow changes made
+  /// from any client. Role-scoped replies only resolve their request.
+  Stream<List<WireModelRole>> get modelRolesStream;
+
   /// Snapshot of the active room's meta. Recomputed on every rooms
   /// snapshot and on every connection-status change.
   ActiveRoomMeta get activeRoomMeta;
@@ -142,6 +161,12 @@ class ActionsRepository extends Repository implements IActionsRepository {
   ActiveRoomMeta _activeRoomMeta = const ActiveRoomMeta();
   final _activeRoomMetaController =
       StreamController<ActiveRoomMeta>.broadcast();
+  final _modelRolesController =
+      StreamController<List<WireModelRole>>.broadcast();
+
+  /// Request ids of role-scoped `list_model_roles`; their one-role replies
+  /// must not reach [modelRolesStream] as a full snapshot.
+  final Set<String> _scopedRoleRequests = {};
 
   ActionsRepository(
     this._conn, {
@@ -204,6 +229,30 @@ class ActionsRepository extends Repository implements IActionsRepository {
             ModelsCatalogue(models: models, current: current),
           );
         }
+      // Plan 66 — a request the extension rejects before running it (e.g.
+      // `list_model_roles {role}` for an unknown role) gets an `error` frame
+      // correlated to our id instead of the usual reply.
+      case ErrorMessage(:final inReplyTo?, :final code, :final message):
+        _scopedRoleRequests.remove(inReplyTo);
+        final p = _pending.remove(inReplyTo);
+        if (p == null) return;
+        p.timeout.cancel();
+        if (!p.completer.isCompleted) {
+          p.completer.completeError(
+            ActionFailure(message.isEmpty ? code : message),
+          );
+        }
+      case ModelRoles(:final inReplyTo, :final roles):
+        final scoped =
+            inReplyTo != null && _scopedRoleRequests.remove(inReplyTo);
+        if (!scoped && !_modelRolesController.isClosed) {
+          _modelRolesController.add(roles);
+        }
+        if (inReplyTo == null) return;
+        final p = _pending.remove(inReplyTo);
+        if (p == null) return;
+        p.timeout.cancel();
+        if (!p.completer.isCompleted) p.completer.complete(roles);
       default:
         // All other ServerMessages are owned by SessionRepository.
         break;
@@ -376,12 +425,50 @@ class ActionsRepository extends Repository implements IActionsRepository {
     return result;
   }
 
+  @override
+  Future<List<WireModelRole>> listModelRoles({String? role}) async {
+    String? sentId;
+    try {
+      return await _dispatch<List<WireModelRole>>((id) {
+        if (role != null) {
+          sentId = id;
+          _scopedRoleRequests.add(id);
+        }
+        return ListModelRoles(id: id, role: role);
+      });
+    } finally {
+      if (sentId != null) _scopedRoleRequests.remove(sentId);
+    }
+  }
+
+  @override
+  Future<void> setModelRole(
+    String role, {
+    String? provider,
+    String? modelId,
+    ThinkingLevel? thinking,
+  }) async {
+    await _dispatch<void>(
+      (id) => ModelRoleSet(
+        id: id,
+        role: role,
+        provider: provider,
+        modelId: modelId,
+        thinking: thinking,
+      ),
+    );
+  }
+
+  @override
+  Stream<List<WireModelRole>> get modelRolesStream =>
+      _modelRolesController.stream;
+
   Future<T> _dispatch<T>(ClientMessage Function(String id) builder) async {
     final ch = _channel;
     if (ch == null) {
       throw const ActionFailure('offline');
     }
-    final id = 'act_${uuid7()}';
+    final id = '$kActionRequestIdPrefix${uuid7()}';
     final completer = Completer<dynamic>();
     final timer = Timer(_timeout, () {
       final p = _pending.remove(id);
@@ -418,6 +505,7 @@ class ActionsRepository extends Repository implements IActionsRepository {
     _modelsCache.clear();
     _lastKnownModelName.clear();
     _activeRoomMetaController.close();
+    _modelRolesController.close();
     super.dispose();
   }
 }

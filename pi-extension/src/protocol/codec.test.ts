@@ -213,3 +213,94 @@ describe("file transfer frames (plan/65)", () => {
     expect(decodeClient('{"type":"file_cancel","file_id":"f"}').type).toBe("file_cancel");
   });
 });
+
+// Plan/66 — omp model roles. Field names are the wire contract shared with
+// app/lib/protocol/protocol.dart: snake_case, exactly as in the plan.
+describe("model role frames (plan/66)", () => {
+  const opus = {
+    id: "claude-opus-5-5",
+    name: "Claude Opus 5.5",
+    provider: "anthropic",
+    reasoning: true,
+    context_window: 1_000_000,
+    vision: true,
+    thinking_levels: ["off", "auto", "low", "medium", "high", "xhigh", "max"],
+  } as const;
+  const serverFrames: ServerMessage[] = [
+    {
+      type: "model_roles",
+      in_reply_to: "r-1",
+      roles: [
+        {
+          role: "plan",
+          name: "Architect",
+          description: "Model for plan mode",
+          model: { ...opus, thinking_levels: [...opus.thinking_levels] },
+          thinking: "max",
+          source: "global",
+        },
+        {
+          role: "slow",
+          name: "Thinking",
+          description: "",
+          source: "default",
+          candidates: [
+            { provider: "anthropic", model_id: "claude-opus-5-5" },
+            { provider: "anthropic", model_id: "claude-sonnet-5-5" },
+          ],
+        },
+      ],
+    },
+    // Broadcast after a model_role_set: no in_reply_to.
+    { type: "model_roles", roles: [] },
+  ];
+  const clientFrames: ClientMessage[] = [
+    { type: "list_model_roles", id: "r-1" },
+    // On-demand candidates for one role.
+    { type: "list_model_roles", id: "r-5", role: "web" },
+    {
+      type: "model_role_set",
+      id: "r-2",
+      role: "plan",
+      provider: "anthropic",
+      model_id: "claude-opus-5-5",
+      thinking: "high",
+    },
+    { type: "model_role_set", id: "r-3", role: "task", provider: "anthropic", model_id: "claude-sonnet-5-5" },
+    // Clear: no provider / model_id.
+    { type: "model_role_set", id: "r-4", role: "task" },
+  ];
+
+  for (const frame of serverFrames) {
+    test(`ext → app ${frame.type} round-trips (${JSON.stringify(frame).length} B)`, () => {
+      const line = encodeServer(frame);
+      expect(line.endsWith("\n")).toBe(true);
+      expect(decodeServer(line)).toEqual(frame);
+    });
+  }
+
+  for (const frame of clientFrames) {
+    test(`app → ext ${frame.type} round-trips (${JSON.stringify(frame)})`, () => {
+      expect(decodeClient(encodeClient(frame))).toEqual(frame);
+    });
+  }
+
+  test("wire field names are exactly the plan's snake_case names", () => {
+    const roles = JSON.parse(encodeServer(serverFrames[0]!));
+    expect(Object.keys(roles)).toEqual(["type", "in_reply_to", "roles"]);
+    expect(Object.keys(roles.roles[0])).toEqual([
+      "role", "name", "description", "model", "thinking", "source",
+    ]);
+    expect(Object.keys(roles.roles[1].candidates[0])).toEqual(["provider", "model_id"]);
+    expect(Object.keys(JSON.parse(encodeClient(clientFrames[1]!)))).toEqual(["type", "id", "role"]);
+    expect(Object.keys(JSON.parse(encodeClient(clientFrames[2]!)))).toEqual([
+      "type", "id", "role", "provider", "model_id", "thinking",
+    ]);
+  });
+
+  test("direction is enforced", () => {
+    expect(() => decodeServer('{"type":"list_model_roles","id":"x"}')).toThrow(DecodeError);
+    expect(() => decodeServer('{"type":"model_role_set","id":"x","role":"plan"}')).toThrow(DecodeError);
+    expect(() => decodeClient('{"type":"model_roles","roles":[]}')).toThrow(DecodeError);
+  });
+});

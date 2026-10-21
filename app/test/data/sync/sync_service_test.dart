@@ -647,6 +647,32 @@ void main() {
     },
   );
 
+  test(
+    'an error frame answering an action request (act_ id) leaves the chat '
+    'and the live turn alone',
+    () async {
+      final s = await setup();
+      s.ch.push(UserInput(id: 'u1', text: 'hi'));
+      await _settle();
+      s.ch.push(AgentChunk(inReplyTo: 'u1', delta: 'partial'));
+      s.ch.push(
+        ErrorMessage(
+          inReplyTo: 'act_0193',
+          code: 'invalid_message',
+          message: 'unknown model role: zzz',
+        ),
+      );
+      await _settle();
+
+      expect(s.sync.isWorking, isTrue);
+      expect(s.sync.streaming?.buffer, 'partial');
+      final texts = messages(s.epk).map((m) => m.text);
+      expect(texts, isNot(contains(startsWith('⚠'))));
+      s.conn.dispose();
+      s.sync.dispose();
+    },
+  );
+
   test('isWorking spans the whole turn (echo → agent_done)', () async {
     final s = await setup();
     expect(s.sync.isWorking, isFalse);

@@ -22,6 +22,8 @@ const SERVER_TYPES = new Set<ServerMessage["type"]>([
   "file_chunk",
   "file_end",
   "file_cancel",
+  // Plan/66 — omp model roles (reply + broadcast).
+  "model_roles",
 ]);
 
 /** Frames the app (or web client) sends to the extension. */
@@ -47,6 +49,9 @@ const CLIENT_TYPES = new Set<ClientMessage["type"]>([
   "file_done",
   "file_error",
   "file_cancel",
+  // Plan/66 — omp model roles.
+  "list_model_roles",
+  "model_role_set",
 ]);
 
 export class DecodeError extends Error {
