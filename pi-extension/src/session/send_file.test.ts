@@ -14,6 +14,7 @@ import {
   guessMime,
   maxSendBytes,
   registerSendToPhoneTool,
+  type PhonePresence,
   type PhoneRegistry,
 } from "./send_file.js";
 
@@ -34,6 +35,8 @@ class FakePhone implements PeerChannel {
   autoAck = true;
   sender: FileSender | null = null;
   maxUnacked = 0;
+  /** Set by a delivered file_offer: like the app, chunks of an unknown file are ignored. */
+  knowsOffer = false;
   private nextSeq = 0;
   private sha = "";
 
@@ -46,9 +49,13 @@ class FakePhone implements PeerChannel {
     if (this.offline) return;
     switch (frame.type) {
       case "file_offer":
+        // The app acks every offer (a repeat too) with its current next_seq.
         this.sha = frame.sha256;
+        this.knowsOffer = true;
+        if (this.autoAck) this.reply({ type: "file_ack", file_id: frame.file_id, next_seq: this.nextSeq });
         break;
       case "file_chunk": {
+        if (!this.knowsOffer) return;
         if (this.dropOnce.delete(frame.seq)) return;
         this.maxUnacked = Math.max(this.maxUnacked, frame.seq + 1 - this.nextSeq);
         this.received.set(frame.seq, Buffer.from(frame.data, "base64"));
@@ -94,15 +101,28 @@ class FakePhone implements PeerChannel {
 function registry(phones: FakePhone[], latest: string | null = null): PhoneRegistry & {
   phones: Map<string, FakePhone>;
   latest: string | null;
+  states: Map<string, PhonePresence>;
 } {
   const map = new Map(phones.map((p) => [p.id, p]));
   return {
     phones: map,
     latest,
+    states: new Map(),
     online() { return this.phones; },
     latestInputDevice() { return this.latest; },
     deviceName(id: string) { return `Device ${id}`; },
+    presence(id: string) { return this.states.get(id) ?? "unknown"; },
   };
+}
+
+/** Relay presence change as index.ts reports it: registry first, then the sender. */
+function setPresence(reg: ReturnType<typeof registry>, sender: FileSender, id: string, online: boolean): void {
+  reg.states.set(id, online ? "online" : "offline");
+  sender.onPresence(id, online);
+}
+
+function fileIdOf(phone: FakePhone): string {
+  return (phone.frames[0] as { file_id: string }).file_id;
 }
 
 let dir: string;
@@ -323,20 +343,248 @@ describe("FileSender — resume", () => {
     expect(sha(phone.assembled())).toBe(sha(bytes));
   });
 
-  test("no ack within the resume window fails the transfer and cancels it on the phone", async () => {
+  test("a phone that missed the file_offer can start: every probe re-sends the offer first", async () => {
+    // The incident of 2026-10-22: the relay dropped the offer and every chunk.
+    const bytes = randomBytes(3 * MiB);
+    const phone = new FakePhone("p1");
+    phone.offline = true;
+    const sender = new FileSender(registry([phone], "p1"), { retransmitMs: 20, offerAckMs: 5_000 });
+    phone.sender = sender;
+    const pending = sender.send({ path: writeFile("lost.pdf", bytes) });
+    await vi.waitFor(() => expect(phone.chunks().length).toBeGreaterThan(4));
+    expect(phone.knowsOffer).toBe(false);
+    phone.offline = false;  // back, but it never saw the first offer
+    await pending;
+    expect(sha(phone.assembled())).toBe(sha(bytes));
+    // Each probe chunk follows a fresh file_offer.
+    const types = phone.frames.map((f) => f.type);
+    for (let i = 4; i < types.length; i += 1) {
+      if (types[i] === "file_chunk" && types[i - 1] !== "file_chunk" && types[i - 1] !== "file_offer") {
+        throw new Error(`probe chunk at ${i} without an offer before it: ${types.slice(0, i + 1).join(",")}`);
+      }
+    }
+    expect(types.filter((t) => t === "file_offer").length).toBeGreaterThan(1);
+  });
+
+  test("the attach probe sends file_offer before the first unacked chunk", async () => {
     const phone = new FakePhone("p1");
     phone.autoAck = false;
-    const sender = new FileSender(registry([phone], "p1"), { resumeWindowMs: 60, retransmitMs: 20 });
+    const sender = new FileSender(registry([phone], "p1"));
     phone.sender = sender;
-    const pending = sender.send({ path: writeFile("t.bin", randomBytes(2 * MiB)) });
-    await expect(pending).rejects.toMatchObject({ code: "timeout" });
+    const ac = new AbortController();
+    const pending = sender.send({ path: writeFile("a.bin", randomBytes(5 * MiB)), signal: ac.signal });
+    await vi.waitFor(() => expect(phone.chunks().length).toBe(4));
+    const before = phone.frames.length;
+    sender.onPhoneAttached("p1");
+    await vi.waitFor(() => expect(phone.frames.length).toBe(before + 2));
+    expect(phone.frames.slice(before).map((f) => f.type)).toEqual(["file_offer", "file_chunk"]);
+    expect(phone.frames.at(-1)).toMatchObject({ type: "file_chunk", seq: 0 });
+    ac.abort();
+    await expect(pending).rejects.toMatchObject({ code: "aborted" });
+  });
+});
+
+describe("FileSender — timeouts", () => {
+  test("defaults: offer ack 30 s, stall 60 s, offline grace 60 s, offline wait 20 s", () => {
+    const sender = new FileSender(registry([]));
+    expect(sender.offerAckMs).toBe(30_000);
+    expect(sender.stallMs).toBe(60_000);
+    expect(sender.offlineGraceMs).toBe(60_000);
+    expect(sender.offlineWaitMs).toBe(20_000);
+    expect(sender.retransmitMaxMs).toBeLessThan(sender.stallMs);
+    expect((sender as unknown as Record<string, unknown>)["resumeWindowMs"]).toBeUndefined();
+  });
+
+  test("no ack for the file_offer → phone_unreachable and file_cancel", async () => {
+    const phone = new FakePhone("p1");
+    phone.offline = true;  // relay drops everything, sender cannot tell
+    const sender = new FileSender(registry([phone], "p1"), { offerAckMs: 60, retransmitMs: 20 });
+    phone.sender = sender;
+    const started = Date.now();
+    const err = await sender.send({ path: writeFile("t.bin", randomBytes(2 * MiB)) }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "phone_unreachable" });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(50);
     expect(phone.frames.at(-1)).toMatchObject({ type: "file_cancel" });
     expect(sender.activeCount()).toBe(0);
   });
 
-  test("the resume window defaults to 10 minutes", () => {
-    const sender = new FileSender(registry([]));
-    expect(sender.resumeWindowMs).toBe(10 * 60_000);
+  test("an offer ack with next_seq 0 counts: the offer timer stops", async () => {
+    const phone = new FakePhone("p1");
+    phone.autoAck = false;
+    const sender = new FileSender(registry([phone], "p1"), { offerAckMs: 150, stallMs: 5_000 });
+    phone.sender = sender;
+    const ac = new AbortController();
+    const pending = sender.send({ path: writeFile("t.bin", randomBytes(2 * MiB)), signal: ac.signal });
+    await vi.waitFor(() => expect(phone.frames.length).toBeGreaterThan(0), { interval: 1 });
+    sender.handleMessage("p1", { type: "file_ack", file_id: fileIdOf(phone), next_seq: 0 });
+    await new Promise((r) => setTimeout(r, 250));
+    expect(sender.activeCount()).toBe(1);
+    ac.abort();
+    await expect(pending).rejects.toMatchObject({ code: "aborted" });
+  });
+
+  test("acks stop mid-transfer → stalled after the stall window, with file_cancel", async () => {
+    const phone = new FakePhone("p1");
+    phone.autoAck = false;
+    const sender = new FileSender(registry([phone], "p1"), { stallMs: 60, retransmitMs: 20 });
+    phone.sender = sender;
+    const pending = sender.send({ path: writeFile("s.bin", randomBytes(4 * MiB)) });
+    await vi.waitFor(() => expect(phone.chunks().length).toBeGreaterThanOrEqual(4), { interval: 1 });
+    const fileId = fileIdOf(phone);
+    sender.handleMessage("p1", { type: "file_ack", file_id: fileId, next_seq: 0 });
+    sender.handleMessage("p1", { type: "file_ack", file_id: fileId, next_seq: 1 });
+    // Probe answers that repeat the same position are not progress.
+    const timer = setInterval(() => sender.handleMessage("p1", { type: "file_ack", file_id: fileId, next_seq: 1 }), 10);
+    try {
+      const err = await pending.catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: "stalled" });
+      expect(String((err as Error).message)).toMatch(/25%/);
+    } finally {
+      clearInterval(timer);
+    }
+    expect(phone.frames.at(-1)).toMatchObject({ type: "file_cancel" });
+  });
+
+  test("no 10-minute wait: with steady acks a transfer is not cut by the stall window", async () => {
+    const phone = new FakePhone("p1");
+    const sender = new FileSender(registry([phone], "p1"), { stallMs: 200 });
+    phone.sender = sender;
+    await expect(sender.send({ path: writeFile("ok.bin", randomBytes(6 * MiB)) })).resolves.toMatchObject({ chunks: 6 });
+  });
+});
+
+describe("FileSender — relay presence", () => {
+  test("target offline per presence → waits, then phone_offline with a clear message; nothing sent", async () => {
+    const phone = new FakePhone("p1");
+    const reg = registry([phone], "p1");
+    reg.states.set("p1", "offline");
+    const sender = new FileSender(reg, { offlineWaitMs: 60 });
+    phone.sender = sender;
+    const started = Date.now();
+    const err = await sender.send({ path: writeFile("a.pdf", randomBytes(100)) }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SendFileError);
+    expect(err).toMatchObject({ code: "phone_offline" });
+    expect((err as Error).message).toBe(
+      "phone_offline: Remote Pi is not connected on the phone. Ask the user to open the app, then try again.",
+    );
+    expect(Date.now() - started).toBeGreaterThanOrEqual(50);
+    expect(phone.frames).toHaveLength(0);
+    expect(sender.activeCount()).toBe(0);
+  });
+
+  test("target offline, then peer_online within the wait → the file is sent", async () => {
+    const phone = new FakePhone("p1");
+    const reg = registry([phone], "p1");
+    reg.states.set("p1", "offline");
+    const sender = new FileSender(reg, { offlineWaitMs: 5_000 });
+    phone.sender = sender;
+    const pending = sender.send({ path: writeFile("a.pdf", randomBytes(100)) });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(phone.frames).toHaveLength(0);
+    setPresence(reg, sender, "p1", true);
+    await expect(pending).resolves.toMatchObject({ name: "a.pdf" });
+  });
+
+  test("abort during the offline wait rejects with aborted", async () => {
+    const phone = new FakePhone("p1");
+    const reg = registry([phone], "p1");
+    reg.states.set("p1", "offline");
+    const sender = new FileSender(reg, { offlineWaitMs: 5_000 });
+    const ac = new AbortController();
+    const pending = sender.send({ path: writeFile("a.pdf", randomBytes(100)), signal: ac.signal });
+    await new Promise((r) => setTimeout(r, 20));
+    ac.abort();
+    await expect(pending).rejects.toMatchObject({ code: "aborted" });
+  });
+
+  test("the latest phone offline per presence, another one online → the online one", async () => {
+    const a = new FakePhone("a");
+    const b = new FakePhone("b");
+    const reg = registry([a, b], "a");
+    reg.states.set("a", "offline");
+    reg.states.set("b", "online");
+    const sender = new FileSender(reg, { offlineWaitMs: 5_000 });
+    b.sender = sender;
+    await sender.send({ path: writeFile("t.txt", Buffer.from("hi")) });
+    expect(a.frames).toHaveLength(0);
+    expect(b.frames.length).toBeGreaterThan(0);
+  });
+
+  test("presence unknown → the attached channel is used, as before", async () => {
+    const phone = new FakePhone("p1");
+    const sender = new FileSender(registry([phone], "p1"), { offlineWaitMs: 5_000 });
+    phone.sender = sender;
+    await expect(sender.send({ path: writeFile("t.txt", Buffer.from("hi")) })).resolves.toMatchObject({ size: 2 });
+  });
+
+  test("peer_offline mid-transfer pauses; peer_online resumes with file_offer, then the first unacked chunk", async () => {
+    const bytes = randomBytes(8 * MiB);
+    const phone = new FakePhone("p1");
+    phone.autoAck = false;
+    const reg = registry([phone], "p1");
+    reg.states.set("p1", "online");
+    const sender = new FileSender(reg, { offlineGraceMs: 5_000, stallMs: 5_000 });
+    phone.sender = sender;
+    const pending = sender.send({ path: writeFile("big.pdf", bytes) });
+    await vi.waitFor(() => expect(phone.chunks().length).toBe(4));
+    const fileId = fileIdOf(phone);
+    sender.handleMessage("p1", { type: "file_ack", file_id: fileId, next_seq: 0 });
+    sender.handleMessage("p1", { type: "file_ack", file_id: fileId, next_seq: 2 });
+    await vi.waitFor(() => expect(phone.chunks().length).toBe(6));
+
+    // The phone drops: the relay discards what is still in flight.
+    phone.offline = true;
+    setPresence(reg, sender, "p1", false);
+    const pausedAt = phone.frames.length;
+    sender.handleMessage("p1", { type: "file_ack", file_id: fileId, next_seq: 3 });  // a late ack
+    await new Promise((r) => setTimeout(r, 40));
+    expect(phone.frames.length).toBe(pausedAt);  // paused: nothing sent while offline
+
+    phone.offline = false;
+    phone.autoAck = true;
+    setPresence(reg, sender, "p1", true);
+    await pending;
+    const resumed = phone.frames.slice(pausedAt);
+    expect(resumed[0]).toMatchObject({ type: "file_offer", file_id: fileId });
+    expect(resumed[1]).toMatchObject({ type: "file_chunk", seq: 3 });
+    expect(sha(phone.assembled())).toBe(sha(bytes));
+  });
+
+  test("offline longer than the grace → phone_offline with the percentage received", async () => {
+    const phone = new FakePhone("p1");
+    phone.autoAck = false;
+    const reg = registry([phone], "p1");
+    reg.states.set("p1", "online");
+    const sender = new FileSender(reg, { offlineGraceMs: 60, stallMs: 5_000 });
+    phone.sender = sender;
+    const pending = sender.send({ path: writeFile("big.pdf", randomBytes(4 * MiB)) });
+    await vi.waitFor(() => expect(phone.chunks().length).toBe(4));
+    const fileId = fileIdOf(phone);
+    sender.handleMessage("p1", { type: "file_ack", file_id: fileId, next_seq: 0 });
+    sender.handleMessage("p1", { type: "file_ack", file_id: fileId, next_seq: 2 });
+    setPresence(reg, sender, "p1", false);
+    const err = await pending.catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "phone_offline" });
+    expect((err as Error).message).toMatch(/50%/);
+    expect(phone.frames.at(-1)).toMatchObject({ type: "file_cancel" });
+    expect(sender.activeCount()).toBe(0);
+  });
+
+  test("the offer and stall timers do not run while paused", async () => {
+    const phone = new FakePhone("p1");
+    phone.autoAck = false;
+    const reg = registry([phone], "p1");
+    reg.states.set("p1", "online");
+    const sender = new FileSender(reg, { offerAckMs: 100, stallMs: 100, offlineGraceMs: 5_000 });
+    phone.sender = sender;
+    const ac = new AbortController();
+    const pending = sender.send({ path: writeFile("p.bin", randomBytes(2 * MiB)), signal: ac.signal });
+    await vi.waitFor(() => expect(phone.frames.length).toBeGreaterThan(0), { interval: 1 });
+    setPresence(reg, sender, "p1", false);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(sender.activeCount()).toBe(1);
+    ac.abort();
+    await expect(pending).rejects.toMatchObject({ code: "aborted" });
   });
 });
 

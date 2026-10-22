@@ -487,6 +487,36 @@ void main() {
     ]);
   });
 
+  test(
+    'a duplicate offer mid-transfer acks next_seq and keeps the .part',
+    () async {
+      final s = await setup();
+      final c = _chunks('d1', bytes, 4);
+      await push(s, [_offer('d1', bytes), c[0], c[1]]);
+      final part = File('${root.path}/received/d1/notes.pdf.part');
+      expect(part.lengthSync(), 8);
+      s.ch.sent.clear();
+
+      // The sender re-sends the offer before every probe or resume.
+      await push(s, [_offer('d1', bytes), _offer('d1', bytes)]);
+      expect(s.ch.fileFrames, [
+        FileAck(fileId: 'd1', nextSeq: 2),
+        FileAck(fileId: 'd1', nextSeq: 2),
+      ]);
+      expect(part.lengthSync(), 8);
+      expect(store.get('d1')!.status, ReceivedFileStatus.receiving);
+      expect(store.get('d1')!.nextSeq, 2);
+
+      // The probe chunk then lands at the same position and the file ends.
+      await push(s, [c[2], const FileEnd(fileId: 'd1', chunks: 3)]);
+      expect(store.get('d1')!.status, ReceivedFileStatus.done);
+      expect(
+        File('${root.path}/received/d1/notes.pdf').readAsBytesSync(),
+        bytes,
+      );
+    },
+  );
+
   test('names are sanitized; a path-traversal file_id is ignored', () async {
     final s = await setup();
     await push(s, [

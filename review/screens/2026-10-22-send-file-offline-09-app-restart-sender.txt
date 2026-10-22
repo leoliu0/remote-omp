@@ -1,0 +1,47 @@
+2026-10-22T05:33:19.808Z send file_offer
+2026-10-22T05:33:19.809Z send file_chunk seq=0
+2026-10-22T05:33:19.811Z send file_chunk seq=1
+2026-10-22T05:33:19.813Z send file_chunk seq=2
+2026-10-22T05:33:19.815Z send file_chunk seq=3
+2026-10-22T05:33:20.374Z onAck(nextSeq 0
+2026-10-22T05:33:20.503Z onAck(nextSeq 1
+2026-10-22T05:33:20.505Z send file_chunk seq=4
+2026-10-22T05:33:20.647Z onAck(nextSeq 2
+2026-10-22T05:33:20.647Z send file_chunk seq=5
+2026-10-22T05:33:20.772Z onAck(nextSeq 3
+2026-10-22T05:33:20.773Z send file_chunk seq=6
+2026-10-22T05:33:20.980Z onAck(nextSeq 4
+2026-10-22T05:33:20.980Z send file_chunk seq=7
+2026-10-22T05:33:21.072Z onAck(nextSeq 5
+2026-10-22T05:33:21.073Z send file_chunk seq=8
+2026-10-22T05:33:21.165Z onAck(nextSeq 6
+2026-10-22T05:33:21.166Z send file_chunk seq=9
+2026-10-22T05:33:21.278Z presence BJqmkcvP offline
+2026-10-22T05:33:21.278Z pause( 
+2026-10-22T05:33:34.119Z presence BJqmkcvP online
+2026-10-22T05:33:34.119Z resume( 
+2026-10-22T05:33:34.119Z send file_offer
+2026-10-22T05:33:34.120Z send file_chunk seq=6
+2026-10-22T05:33:34.224Z onAck(nextSeq 6
+2026-10-22T05:33:34.225Z send file_chunk seq=6
+2026-10-22T05:33:34.227Z send file_chunk seq=7
+2026-10-22T05:33:34.229Z send file_chunk seq=8
+2026-10-22T05:33:34.231Z send file_chunk seq=9
+2026-10-22T05:33:34.422Z onAck(nextSeq 6
+2026-10-22T05:33:35.899Z onAck(nextSeq 7
+2026-10-22T05:33:35.899Z send file_chunk seq=10
+2026-10-22T05:33:36.011Z onAck(nextSeq 7
+2026-10-22T05:33:36.128Z onAck(nextSeq 8
+2026-10-22T05:33:36.128Z onAck(nextSeq 9
+2026-10-22T05:33:36.128Z send file_chunk seq=11
+2026-10-22T05:33:36.130Z send file_chunk seq=12
+2026-10-22T05:33:36.237Z onAck(nextSeq 10
+2026-10-22T05:33:36.238Z send file_chunk seq=13
+2026-10-22T05:33:36.347Z onAck(nextSeq 11
+2026-10-22T05:33:36.347Z send file_chunk seq=14
+2026-10-22T05:33:36.347Z send file_end
+2026-10-22T05:33:36.758Z onAck(nextSeq 12
+2026-10-22T05:33:36.877Z onAck(nextSeq 13
+2026-10-22T05:33:36.877Z onAck(nextSeq 14
+2026-10-22T05:33:36.877Z onAck(nextSeq 15
+2026-10-22T05:33:36.994Z succeed( 

@@ -1,0 +1,24 @@
+2026-10-22T05:31:52.697Z send file_offer
+2026-10-22T05:31:52.698Z send file_chunk seq=0
+2026-10-22T05:31:52.700Z send file_chunk seq=1
+2026-10-22T05:31:52.708Z send file_chunk seq=2
+2026-10-22T05:31:52.709Z send file_chunk seq=3
+2026-10-22T05:31:53.824Z onAck(nextSeq 0
+2026-10-22T05:31:54.129Z onAck(nextSeq 1
+2026-10-22T05:31:54.130Z send file_chunk seq=4
+2026-10-22T05:31:54.210Z onAck(nextSeq 2
+2026-10-22T05:31:54.211Z onAck(nextSeq 3
+2026-10-22T05:31:54.211Z send file_chunk seq=5
+2026-10-22T05:31:54.213Z send file_chunk seq=6
+2026-10-22T05:31:54.339Z onAck(nextSeq 4
+2026-10-22T05:31:54.340Z send file_chunk seq=7
+2026-10-22T05:31:54.656Z onAck(nextSeq 5
+2026-10-22T05:31:54.656Z send file_chunk seq=8
+2026-10-22T05:31:54.832Z onAck(nextSeq 6
+2026-10-22T05:31:54.833Z send file_chunk seq=9
+2026-10-22T05:31:55.035Z onAck(nextSeq 7
+2026-10-22T05:31:55.036Z send file_chunk seq=10
+2026-10-22T05:31:55.145Z presence BJqmkcvP offline
+2026-10-22T05:31:55.146Z pause( 
+2026-10-22T05:32:55.146Z send file_cancel
+2026-10-22T05:32:55.146Z fail(err SendFileError: phone_offline: Remote Pi went offline on the phone at 48% received and did not come back within 60 s. Ask the user to open the app, then send the file again.

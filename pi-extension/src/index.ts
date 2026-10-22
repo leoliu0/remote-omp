@@ -104,6 +104,7 @@ import {
 } from "./session/ask_tool.js";
 import { formatPeerInventory } from "./session/peer_inventory.js";
 import { FileSender, registerSendToPhoneTool } from "./session/send_file.js";
+import { OwnerPresence } from "./transport/presence.js";
 import { MeshNode } from "./session/mesh_node.js";
 import {
   handleSessionCompact,
@@ -239,7 +240,30 @@ const _fileSender = new FileSender({
   online: () => _activePeers,
   latestInputDevice: () => _latestPhoneInputDevice,
   deviceName: (id) => _peerNames.get(id) ?? id.slice(0, 8),
+  presence: (id) => _ownerPresence.state(id),
 });
+
+/** Relay presence of the paired owners (`peer_online` / `peer_offline`). The
+ *  relay drops frames for an offline peer silently, and `_activePeers` rarely
+ *  sees a detach, so `send_to_phone` checks this before and during a send. */
+const _ownerPresence = new OwnerPresence((peer, online) => _fileSender.onPresence(peer, online));
+
+/** (Re)subscribes this relay connection to presence of every paired owner
+ *  (peers.json) and every attached one. Subscriptions belong to the
+ *  connection, so this runs on every connect and when a new owner attaches. */
+async function _subscribeOwnerPresence(relay: RelayClient): Promise<void> {
+  const peers = new Set<string>(_activePeers.keys());
+  try {
+    for (const record of await listPeers()) {
+      const key = _inspectPeerRecord(record)?.runtimeKey;
+      if (key) peers.add(key);
+    }
+  } catch {
+    /* peers.json unreadable: attached owners only */
+  }
+  if (_relay !== relay) return;
+  for (const frame of _ownerPresence.subscribeFrames([...peers])) relay.sendControl(frame);
+}
 
 function _deviceIdOf(channel: PlainPeerChannel): string | null {
   for (const [id, ch] of _activePeers) if (ch === channel) return id;
@@ -2351,6 +2375,7 @@ function _goIdle(byeReason?: import("./protocol/types.js").ByeReason): void {
     try { ch.detach(); } catch { /* best-effort */ }
   }
   _activePeers.clear();
+  _ownerPresence.reset();
   _peerShort = "";
   _currentTurnId = null;
   _turnActive = false;
@@ -2414,6 +2439,8 @@ function _onRelayClose(closedRelay: RelayClient): void {
     try { ch.detach(); } catch { /* best-effort */ }
   }
   _activePeers.clear();
+  // Presence was per connection: unknown until the reconnect resubscribes.
+  _ownerPresence.reset();
   _peerShort = "";
   _currentTurnId = null;
   _pendingSteers = [];
@@ -2748,6 +2775,7 @@ function _attachOwner(
   _peerNames.set(appPeerId, peerName);
   // Plan/65: a transfer to this phone resumes from its file_ack.
   _fileSender.onPhoneAttached(appPeerId);
+  if (!_ownerPresence.isSubscribed(appPeerId)) void _subscribeOwnerPresence(relay);
   _refreshFooter();
 
   _safeNotify(
@@ -2849,7 +2877,18 @@ function _installAutoListener(relay: RelayClient): () => void {
   };
 
   relay.on("message", onMsg);
-  return () => relay.off("message", onMsg);
+
+  // Relay presence control frames for the paired owners (send_to_phone).
+  const onPresenceLine = (line: string): void => {
+    if (_relay === relay) _ownerPresence.handleLine(line);
+  };
+  relay.on("message", onPresenceLine);
+  void _subscribeOwnerPresence(relay);
+
+  return () => {
+    relay.off("message", onMsg);
+    relay.off("message", onPresenceLine);
+  };
 }
 
 /**

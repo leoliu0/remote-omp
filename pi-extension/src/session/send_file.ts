@@ -13,14 +13,25 @@
  * Flow control: the relay has no backpressure, so the sender keeps at most
  * `window` (4) chunks in flight beyond the last cumulative ack.
  *
- * Resume: the relay drops frames for an offline peer. When acks stop, the
- * sender waits `retransmitMs` (doubling, capped) and then probes with the
- * first unacked chunk only. When the phone's channel is re-attached it probes
- * at once. The first ack after a probe is taken as the phone's position
- * (`next_seq`), and sending continues from there. With no ack progress for
- * `resumeWindowMs` (10 min) the transfer fails with `timeout` and a
- * best-effort `file_cancel` goes to the phone. Nothing is queued: no online
- * phone fails with `phone_offline` before any frame is sent.
+ * Presence: the relay drops frames for an offline peer without telling the
+ * sender, so the extension follows the owner's relay presence (`peer_online`
+ * / `peer_offline`, see `transport/presence.ts`). A target that is offline
+ * per presence gets `offlineWaitMs` (20 s) to come back before the send
+ * fails with `phone_offline`; nothing is queued. With no presence frames yet
+ * (`unknown`) the attached channel is used and the timers below decide.
+ *
+ * Timers: the phone acks the offer with `next_seq` 0; no ack within
+ * `offerAckMs` (30 s) fails `phone_unreachable`. After that, no ack progress
+ * for `stallMs` (60 s) fails `stalled`. Both send a best-effort `file_cancel`.
+ *
+ * Resume: when acks stop, the sender waits `retransmitMs` (doubling, capped)
+ * and probes: `file_offer` again, then the first unacked chunk only, so a
+ * phone that missed the offer can start. The phone acks a repeated offer
+ * with its current `next_seq` and keeps its `.part`; that first ack after a
+ * probe is taken as the phone's position. A re-attached channel probes at
+ * once. `peer_offline` mid-transfer pauses (no frames, no offer/stall timer);
+ * `peer_online` within `offlineGraceMs` (60 s) resumes with the same probe,
+ * otherwise the transfer fails `phone_offline` with the share received.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -34,9 +45,16 @@ import type { PeerChannel } from "../transport/peer_channel.js";
 
 export const FILE_CHUNK_BYTES = 1024 * 1024;
 export const FILE_WINDOW = 4;
-export const RESUME_WINDOW_MS = 10 * 60_000;
-export const RETRANSMIT_MS = 30_000;
-export const RETRANSMIT_MAX_MS = 120_000;
+/** A target offline per relay presence gets this long to come back. */
+export const OFFLINE_WAIT_MS = 20_000;
+/** The phone must ack the `file_offer` within this. */
+export const OFFER_ACK_MS = 30_000;
+/** No ack progress for this long fails the transfer as `stalled`. */
+export const STALL_MS = 60_000;
+/** A phone that went offline mid-transfer must be back within this. */
+export const OFFLINE_GRACE_MS = 60_000;
+export const RETRANSMIT_MS = 15_000;
+export const RETRANSMIT_MAX_MS = 30_000;
 export const DEFAULT_MAX_SEND_MIB = 256;
 
 export type SendFileErrorCode =
@@ -45,9 +63,10 @@ export type SendFileErrorCode =
   | "unreadable"
   | "too_large"
   | "phone_offline"
+  | "phone_unreachable"
+  | "stalled"
   | "aborted"
   | "cancelled"
-  | "timeout"
   | "sha_mismatch"
   | "no_space"
   | "phone_error";
@@ -105,15 +124,21 @@ export function guessMime(name: string): string {
   return MIME_BY_EXT[extname(name).toLowerCase()] ?? "application/octet-stream";
 }
 
+export type PhonePresence = "online" | "offline" | "unknown";
+
 /** The extension's view of paired phones. Implemented over `_activePeers`. */
 export interface PhoneRegistry {
-  /** Online phones, in attach order: device id → outbound channel. */
+  /** Attached phones, in attach order: device id → outbound channel. */
   online(): ReadonlyMap<string, PeerChannel>;
   /** Device id of the phone that sent the latest user input, if any. */
   latestInputDevice(): string | null;
   /** Display name for results (falls back to a short id). */
   deviceName(deviceId: string): string;
+  /** Relay presence of the owner; `unknown` before any presence frame. */
+  presence?(deviceId: string): PhonePresence;
 }
+
+const OFFLINE_MESSAGE = "Remote Pi is not connected on the phone. Ask the user to open the app, then try again.";
 
 /**
  * The phone that sent the latest user input when it is online; otherwise the
@@ -160,7 +185,10 @@ export interface SendFileProgress {
 export interface FileSenderOptions {
   chunkBytes?: number;
   window?: number;
-  resumeWindowMs?: number;
+  offlineWaitMs?: number;
+  offerAckMs?: number;
+  stallMs?: number;
+  offlineGraceMs?: number;
   retransmitMs?: number;
   retransmitMaxMs?: number;
   newId?: () => string;
@@ -199,11 +227,18 @@ class Transfer {
   resumePending = false;
   /** Probe mode: one chunk in flight until an ack arrives. */
   probe = false;
+  /** The phone acked the offer (any `file_ack`). */
+  offerAcked = false;
+  /** The phone is offline per relay presence: send nothing, wait for it. */
+  paused = false;
   settled = false;
+  private offer: ServerMessage | null = null;
   private pumping = false;
   private rtoMs: number;
   private rtoTimer: ReturnType<typeof setTimeout> | null = null;
-  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Offer-ack or stall deadline (not armed while paused). */
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
+  private offlineTimer: ReturnType<typeof setTimeout> | null = null;
   private resolveFn!: (r: SendFileResult) => void;
   private rejectFn!: (e: Error) => void;
   readonly done: Promise<SendFileResult>;
@@ -241,24 +276,53 @@ class Transfer {
   }
 
   start(offer: ServerMessage): void {
+    this.offer = offer;
     this.send(offer);
-    this.armIdle();
+    this.armWatchdog();
     void this.pump();
   }
 
-  private armIdle(): void {
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => {
-      this.send({ type: "file_cancel", file_id: this.fileId });
-      this.fail(new SendFileError(
-        "timeout",
-        `no progress from the phone for ${Math.round(this.owner.resumeWindowMs / 1000)} s`,
-      ));
-    }, this.owner.resumeWindowMs);
+  /** Share of the file the phone has acked, as a whole percentage. */
+  private percent(): number {
+    if (this.size === 0) return this.acked >= this.chunks ? 100 : 0;
+    const bytes = Math.min(this.acked * this.owner.chunkBytes, this.size);
+    return Math.floor((bytes * 100) / this.size);
+  }
+
+  private cancelAndFail(err: SendFileError): void {
+    this.send({ type: "file_cancel", file_id: this.fileId });
+    this.fail(err);
+  }
+
+  private armWatchdog(): void {
+    this.clearWatchdog();
+    if (this.settled || this.paused) return;
+    if (!this.offerAcked) {
+      this.watchdog = setTimeout(() => {
+        this.cancelAndFail(new SendFileError(
+          "phone_unreachable",
+          `the phone did not answer the file offer within ${Math.round(this.owner.offerAckMs / 1000)} s; ` +
+            "nothing was received. Ask the user to open Remote Pi on the phone, then try again.",
+        ));
+      }, this.owner.offerAckMs);
+    } else {
+      this.watchdog = setTimeout(() => {
+        this.cancelAndFail(new SendFileError(
+          "stalled",
+          `no progress from the phone for ${Math.round(this.owner.stallMs / 1000)} s ` +
+            `(${this.percent()}% received); the transfer was cancelled.`,
+        ));
+      }, this.owner.stallMs);
+    }
+  }
+
+  private clearWatchdog(): void {
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.watchdog = null;
   }
 
   private armRto(): void {
-    if (this.rtoTimer || this.settled) return;
+    if (this.rtoTimer || this.settled || this.paused) return;
     this.rtoTimer = setTimeout(() => {
       this.rtoTimer = null;
       this.onRetransmitTimeout();
@@ -276,10 +340,15 @@ class Transfer {
     this.startProbe();
   }
 
-  /** Go back to the first unacked chunk with a window of one. */
+  /**
+   * Re-sends the offer, then goes back to the first unacked chunk with a
+   * window of one. The offer lets a phone that never saw it start; a phone
+   * that has it answers with its `next_seq`.
+   */
   startProbe(): void {
-    if (this.settled) return;
+    if (this.settled || this.paused) return;
     this.clearRto();
+    if (this.offer) this.send(this.offer);
     if (this.acked < this.chunks) {
       this.nextToSend = this.acked;
       this.probe = true;
@@ -293,9 +362,41 @@ class Transfer {
     }
   }
 
+  /** The phone went offline per relay presence. */
+  pause(): void {
+    if (this.settled || this.paused) return;
+    this.paused = true;
+    this.clearRto();
+    this.clearWatchdog();
+    this.offlineTimer = setTimeout(() => {
+      this.offlineTimer = null;
+      this.cancelAndFail(new SendFileError(
+        "phone_offline",
+        `Remote Pi went offline on the phone at ${this.percent()}% received and did not come back within ` +
+          `${Math.round(this.owner.offlineGraceMs / 1000)} s. Ask the user to open the app, then send the file again.`,
+      ));
+    }, this.owner.offlineGraceMs);
+  }
+
+  /** The phone is back (presence or a re-attached channel): probe at once. */
+  resume(): void {
+    if (this.settled) return;
+    if (this.paused) {
+      this.paused = false;
+      if (this.offlineTimer) clearTimeout(this.offlineTimer);
+      this.offlineTimer = null;
+      this.rtoMs = this.owner.retransmitMs;
+      this.armWatchdog();
+    }
+    this.startProbe();
+  }
+
   onAck(nextSeq: number): void {
     if (this.settled || !Number.isInteger(nextSeq) || nextSeq < 0) return;
     const n = Math.min(nextSeq, this.chunks);
+    const before = this.acked;
+    const firstAck = !this.offerAcked;
+    this.offerAcked = true;
     if (this.resumePending) {
       // The phone reports where it is after a gap: continue from there.
       this.resumePending = false;
@@ -303,21 +404,21 @@ class Transfer {
       this.acked = n;
       this.nextToSend = n;
       if (n < this.chunks) this.endSent = false;
-      this.progress();
     } else if (n > this.acked) {
       this.acked = n;
       if (this.nextToSend < n) this.nextToSend = n;
-      this.progress();
-    } else {
+    } else if (!firstAck) {
       return;  // duplicate / stale ack
     }
+    this.progress(firstAck || this.acked > before);
     void this.pump();
   }
 
-  private progress(): void {
+  /** `advanced`: the offer was acked or `acked` grew (resets the stall timer). */
+  private progress(advanced: boolean): void {
     this.rtoMs = this.owner.retransmitMs;
     this.clearRto();
-    this.armIdle();
+    if (advanced) this.armWatchdog();
     if (this.nextToSend > this.acked || this.endSent) this.armRto();
     try {
       this.onProgress?.({
@@ -333,17 +434,17 @@ class Transfer {
   }
 
   private async pump(): Promise<void> {
-    if (this.pumping || this.settled) return;
+    if (this.pumping || this.settled || this.paused) return;
     this.pumping = true;
     try {
-      while (!this.settled && this.channel()) {
+      while (!this.settled && !this.paused && this.channel()) {
         const limit = this.probe ? 1 : this.owner.window;
         if (this.nextToSend < this.chunks && this.nextToSend - this.acked < limit) {
           const seq = this.nextToSend;
           this.nextToSend += 1;
           const data = await this.readChunk(seq);
           if (this.settled) return;
-          if (!this.send({ type: "file_chunk", file_id: this.fileId, seq, data })) {
+          if (this.paused || !this.send({ type: "file_chunk", file_id: this.fileId, seq, data })) {
             // Phone went away mid-read: resend this chunk once it is back.
             if (this.nextToSend > seq) this.nextToSend = seq;
             return;
@@ -399,8 +500,9 @@ class Transfer {
   private cleanup(): void {
     this.settled = true;
     this.clearRto();
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = null;
+    this.clearWatchdog();
+    if (this.offlineTimer) clearTimeout(this.offlineTimer);
+    this.offlineTimer = null;
     this.owner.forget(this.fileId);
     void this.fh.close().catch(() => undefined);
   }
@@ -409,11 +511,16 @@ class Transfer {
 export class FileSender {
   readonly chunkBytes: number;
   readonly window: number;
-  readonly resumeWindowMs: number;
+  readonly offlineWaitMs: number;
+  readonly offerAckMs: number;
+  readonly stallMs: number;
+  readonly offlineGraceMs: number;
   readonly retransmitMs: number;
   readonly retransmitMaxMs: number;
   private readonly newId: () => string;
   private readonly transfers = new Map<string, Transfer>();
+  /** `send` calls waiting for a phone to come back (presence or attach). */
+  private readonly waiters = new Set<() => void>();
 
   constructor(
     readonly phones: PhoneRegistry,
@@ -421,7 +528,10 @@ export class FileSender {
   ) {
     this.chunkBytes = opts.chunkBytes ?? FILE_CHUNK_BYTES;
     this.window = opts.window ?? FILE_WINDOW;
-    this.resumeWindowMs = opts.resumeWindowMs ?? RESUME_WINDOW_MS;
+    this.offlineWaitMs = opts.offlineWaitMs ?? OFFLINE_WAIT_MS;
+    this.offerAckMs = opts.offerAckMs ?? OFFER_ACK_MS;
+    this.stallMs = opts.stallMs ?? STALL_MS;
+    this.offlineGraceMs = opts.offlineGraceMs ?? OFFLINE_GRACE_MS;
     this.retransmitMs = opts.retransmitMs ?? RETRANSMIT_MS;
     this.retransmitMaxMs = Math.max(opts.retransmitMaxMs ?? RETRANSMIT_MAX_MS, this.retransmitMs);
     this.newId = opts.newId ?? randomUUID;
@@ -435,6 +545,58 @@ export class FileSender {
   /** @internal Transfer bookkeeping. */
   forget(fileId: string): void {
     this.transfers.delete(fileId);
+  }
+
+  private presenceOf(deviceId: string): PhonePresence {
+    return this.phones.presence?.(deviceId) ?? "unknown";
+  }
+
+  /**
+   * The target among attached phones that are not offline per presence. A
+   * phone that is attached but offline gets `offlineWaitMs` to come back;
+   * with no attached phone at all the send fails at once.
+   */
+  private async pickTarget(signal: AbortSignal | undefined): Promise<string> {
+    const deadline = Date.now() + this.offlineWaitMs;
+    for (;;) {
+      const attached = this.phones.online();
+      const eligible = new Map<string, PeerChannel>();
+      for (const [id, ch] of attached) {
+        if (this.presenceOf(id) !== "offline") eligible.set(id, ch);
+      }
+      const target = chooseTargetPhone(eligible, this.phones.latestInputDevice());
+      if (target !== null) return target;
+      const remaining = deadline - Date.now();
+      if (attached.size === 0 || remaining <= 0) throw new SendFileError("phone_offline", OFFLINE_MESSAGE);
+      await this.waitForChange(remaining, signal);
+    }
+  }
+
+  /** Resolves on the next presence change or attach, or after `ms`. */
+  private waitForChange(ms: number, signal: AbortSignal | undefined): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const finish = (): void => {
+        clearTimeout(timer);
+        this.waiters.delete(finish);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const wake = (): void => {
+        finish();
+        resolve();
+      };
+      const onAbort = (): void => {
+        finish();
+        reject(new SendFileError("aborted", "the tool call was aborted"));
+      };
+      const timer = setTimeout(wake, ms);
+      this.waiters.add(wake);
+      if (signal?.aborted) onAbort();
+      else signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  private wakeWaiters(): void {
+    for (const wake of [...this.waiters]) wake();
   }
 
   /**
@@ -465,14 +627,7 @@ export class FileSender {
       );
     }
 
-    const pickTarget = (): string => {
-      const target = chooseTargetPhone(this.phones.online(), this.phones.latestInputDevice());
-      if (target === null) {
-        throw new SendFileError("phone_offline", "no paired phone is online; nothing was sent");
-      }
-      return target;
-    };
-    pickTarget();  // fail fast before hashing a large file
+    await this.pickTarget(signal);  // fail fast before hashing a large file
 
     let fh: FileHandle;
     let sha256: string;
@@ -488,7 +643,7 @@ export class FileSender {
     }
     let deviceId: string;
     try {
-      deviceId = pickTarget();  // re-check: hashing can take a while
+      deviceId = await this.pickTarget(signal);  // re-check: hashing can take a while
     } catch (err) {
       await fh.close().catch(() => undefined);
       throw err;
@@ -560,8 +715,22 @@ export class FileSender {
   /** The phone's channel was (re-)attached: probe so it reports `next_seq`. */
   onPhoneAttached(deviceId: string): void {
     for (const t of this.transfers.values()) {
-      if (t.deviceId === deviceId) t.startProbe();
+      if (t.deviceId === deviceId) t.resume();
     }
+    this.wakeWaiters();
+  }
+
+  /**
+   * Relay presence of an owner changed (transitions only). Offline pauses its
+   * transfers; online resumes a paused one at once.
+   */
+  onPresence(deviceId: string, online: boolean): void {
+    for (const t of this.transfers.values()) {
+      if (t.deviceId !== deviceId) continue;
+      if (!online) t.pause();
+      else if (t.paused) t.resume();
+    }
+    this.wakeWaiters();
   }
 }
 
@@ -597,7 +766,9 @@ export function registerSendToPhoneTool(
       "nothing opens or installs without the user's tap. Use it only when the user asks for a file on " +
       "their phone. To show an image, `read` it instead: it displays in the chat on the phone and web. " +
       "Returns when the phone confirms receipt. " +
-      `Limit ${DEFAULT_MAX_SEND_MIB} MiB per file by default. Fails with phone_offline when no phone is online.`,
+      `Limit ${DEFAULT_MAX_SEND_MIB} MiB per file by default. Fails within about 20 s with phone_offline when ` +
+      "Remote Pi is not connected on the phone, and with phone_unreachable or stalled when the phone stops " +
+      "answering; then tell the user instead of retrying in a loop.",
     parameters: SendToPhoneParams,
     execute: async (_toolCallId, params, signal, onUpdate, ctx) => {
       const cwd = ctx && typeof (ctx as { cwd?: unknown }).cwd === "string"

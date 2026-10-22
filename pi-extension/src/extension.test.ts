@@ -8071,6 +8071,107 @@ describe("plan/65 send_to_phone + phone presence", () => {
     }
   });
 
+  test("subscribes to relay presence for paired owners on connect and again after a relay reconnect", async () => {
+    _knownPeers.push({ name: "Phone", remote_epk: OWNER_STANDARD_FIXTURE, paired_at: new Date().toISOString() });
+    vi.useFakeTimers();
+    try {
+      captureHandler("remote-pi");
+      await _connectForTest(makeMockCtx());
+      await vi.advanceTimersByTimeAsync(0);
+      const frames = (r: MockRelay) => r.sendControl.mock.calls.map((c) => c[0] as { type: string; peers?: string[] })
+        .filter((f) => f.type === "subscribe_presence" || f.type === "presence_check");
+      const first = relayInstances.at(-1)!;
+      expect(frames(first)).toEqual([
+        { type: "subscribe_presence", peers: [OWNER_STANDARD_FIXTURE] },
+        { type: "presence_check", peers: [OWNER_STANDARD_FIXTURE] },
+      ]);
+
+      first.emit("close");
+      await vi.advanceTimersByTimeAsync(1_000);
+      const second = relayInstances.at(-1)!;
+      expect(second).not.toBe(first);
+      expect(frames(second)).toEqual([
+        { type: "subscribe_presence", peers: [OWNER_STANDARD_FIXTURE] },
+        { type: "presence_check", peers: [OWNER_STANDARD_FIXTURE] },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a newly paired owner is added to the presence subscription", async () => {
+    await _pairForTest(OWNER_STANDARD_FIXTURE);
+    await vi.waitFor(() => expect(relayRef.current!.sendControl).toHaveBeenCalledWith(
+      { type: "subscribe_presence", peers: [OWNER_STANDARD_FIXTURE] },
+    ));
+  });
+
+  test("send_to_phone fails with phone_offline within 20 s when relay presence says the phone is offline", async () => {
+    await _pairForTest(OWNER_STANDARD_FIXTURE);
+    const h = harness();
+    await phoneSays(OWNER_STANDARD_FIXTURE, "send me the pdf");
+    await vi.waitFor(() => expect(relayRef.current!.sendControl).toHaveBeenCalledWith(
+      { type: "subscribe_presence", peers: [OWNER_STANDARD_FIXTURE] },
+    ));
+    relayRef.current!.emit("message", JSON.stringify({ peer: OWNER_STANDARD_FIXTURE, since_ts: 1, type: "peer_offline" }));
+    const dir = mkdtempSync(join(tmpdir(), "rp-send-"));
+    writeFileSync(join(dir, "big.pdf"), "pdf bytes");
+    const tool = h.tools.find((t) => t.name === "send_to_phone")!;
+    const sendsBefore = relayRef.current!.send.mock.calls.length;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const started = Date.now();
+      let err: unknown = null;
+      void tool.execute("c", { path: join(dir, "big.pdf") }).catch((e: unknown) => { err = e; });
+      for (let i = 0; i < 40 && err === null; i += 1) {
+        await new Promise<void>((r) => setImmediate(r));
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+      expect(String(err)).toContain(
+        "phone_offline: Remote Pi is not connected on the phone. Ask the user to open the app, then try again.",
+      );
+      // 20 s wait (+ the fake clock may run ahead while stat runs under load).
+      expect(Date.now() - started).toBeLessThan(30_000);
+      const fileFrames = relayRef.current!.send.mock.calls.slice(sendsBefore)
+        .map((c) => decodeSentCt(c[0] as string))
+        .filter((d) => d.inner.type.startsWith("file_"));
+      expect(fileFrames).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("send_to_phone waits for peer_online after peer_offline, then sends", async () => {
+    await _pairForTest(OWNER_STANDARD_FIXTURE);
+    const h = harness();
+    await phoneSays(OWNER_STANDARD_FIXTURE, "send me the notes");
+    await vi.waitFor(() => expect(relayRef.current!.sendControl).toHaveBeenCalledWith(
+      { type: "subscribe_presence", peers: [OWNER_STANDARD_FIXTURE] },
+    ));
+    relayRef.current!.emit("message", JSON.stringify({ type: "peer_offline", peer: OWNER_STANDARD_FIXTURE }));
+    const dir = mkdtempSync(join(tmpdir(), "rp-send-"));
+    try {
+      writeFileSync(join(dir, "notes.txt"), "hello");
+      const tool = h.tools.find((t) => t.name === "send_to_phone")!;
+      const sendsBefore = relayRef.current!.send.mock.calls.length;
+      const fileFrames = () => relayRef.current!.send.mock.calls.slice(sendsBefore)
+        .map((c) => decodeSentCt(c[0] as string))
+        .filter((d) => d.inner.type.startsWith("file_"));
+      const pending = tool.execute("c", { path: join(dir, "notes.txt") });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(fileFrames()).toHaveLength(0);
+      relayRef.current!.emit("message", JSON.stringify({ type: "peer_online", peer: OWNER_STANDARD_FIXTURE }));
+      await vi.waitFor(() => expect(fileFrames().some((d) => d.inner.type === "file_end")).toBe(true));
+      const fileId = fileFrames()[0]!.inner["file_id"] as string;
+      fromPhone(OWNER_STANDARD_FIXTURE, { type: "file_ack", file_id: fileId, next_seq: 1 });
+      fromPhone(OWNER_STANDARD_FIXTURE, { type: "file_done", file_id: fileId });
+      await expect(pending).resolves.toMatchObject({ details: { name: "notes.txt" } });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("send_to_phone with no phone online fails with phone_offline", async () => {
     const h = harness();
     const dir = mkdtempSync(join(tmpdir(), "rp-send-"));

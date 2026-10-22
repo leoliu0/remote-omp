@@ -238,7 +238,13 @@ it cancels the transfer when the tool call is aborted.
 
 The target is the phone that sent the latest user input. If that phone is
 offline, the target is the other online phone. When no phone is online the
-tool fails with `phone_offline` and nothing is queued.
+tool fails with `phone_offline` and nothing is queued. "Online" follows the
+relay's presence for the owner: the extension sends `subscribe_presence` and
+`presence_check` for its paired owners on every relay (re)connect and tracks
+`peer_online` / `peer_offline`. A target that is offline there gets 20 s to
+come back; then the tool fails with `phone_offline: Remote Pi is not connected
+on the phone. Ask the user to open the app, then try again.` Before the first
+presence frame the attached channel is used and the timeouts below apply.
 
 The file travels as chunked frames over the normal peer channel, so the relay
 does not change:
@@ -252,12 +258,18 @@ does not change:
 | `file_done` / `file_error` | app → ext | `file_id`, `reason?` (`sha_mismatch`, `no_space`, `cancelled`) |
 | `file_cancel` | either | `file_id` |
 
-The sender keeps at most 4 chunks in flight beyond the last `file_ack`. When
-acks stop, it probes with the first unacked chunk (after 30 s, doubling up to
-120 s), and a re-attached phone is probed at once. The phone answers with
-`file_ack`, and the transfer continues from that `next_seq`. With no progress
-for 10 minutes the transfer fails with `timeout` and the extension sends
-`file_cancel`. Receivers ignore unknown fields on `file_*` frames.
+The sender keeps at most 4 chunks in flight beyond the last `file_ack`. The
+phone acks the offer with `next_seq` 0; with no ack within 30 s the transfer
+fails with `phone_unreachable`. Once acks flow, 60 s without ack progress
+fails it with `stalled`. Both send `file_cancel`. When acks stop, the sender
+probes (after 15 s, doubling up to 30 s): it re-sends `file_offer`, then the
+first unacked chunk, so a phone that missed the offer can start; a
+re-attached phone is probed at once. The phone answers a repeated offer with
+`file_ack` and its current `next_seq` (keeping its `.part`), and the transfer
+continues from there. A `peer_offline` for the target pauses the transfer; a
+`peer_online` within 60 s resumes it with the same probe, otherwise it fails
+with `phone_offline` and the share the phone received. Receivers ignore
+unknown fields on `file_*` frames.
 
 The per-file cap is 256 MiB. Set **`REMOTE_PI_MAX_SEND_MIB`** to change it
 (for example `REMOTE_PI_MAX_SEND_MIB=512`).

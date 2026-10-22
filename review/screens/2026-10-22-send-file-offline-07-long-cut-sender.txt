@@ -1,0 +1,24 @@
+2026-10-22T05:29:57.572Z send file_offer
+2026-10-22T05:29:57.574Z send file_chunk seq=0
+2026-10-22T05:29:57.576Z send file_chunk seq=1
+2026-10-22T05:29:57.578Z send file_chunk seq=2
+2026-10-22T05:29:57.580Z send file_chunk seq=3
+2026-10-22T05:29:58.070Z onAck(nextSeq 0
+2026-10-22T05:29:58.268Z onAck(nextSeq 1
+2026-10-22T05:29:58.269Z send file_chunk seq=4
+2026-10-22T05:29:58.360Z onAck(nextSeq 2
+2026-10-22T05:29:58.361Z send file_chunk seq=5
+2026-10-22T05:29:58.774Z onAck(nextSeq 3
+2026-10-22T05:29:58.775Z send file_chunk seq=6
+2026-10-22T05:29:58.871Z onAck(nextSeq 4
+2026-10-22T05:29:58.872Z onAck(nextSeq 5
+2026-10-22T05:29:58.872Z send file_chunk seq=7
+2026-10-22T05:29:58.875Z send file_chunk seq=8
+2026-10-22T05:29:59.009Z onAck(nextSeq 6
+2026-10-22T05:29:59.010Z send file_chunk seq=9
+2026-10-22T05:30:14.009Z send file_offer
+2026-10-22T05:30:14.010Z send file_chunk seq=6
+2026-10-22T05:30:44.011Z send file_offer
+2026-10-22T05:30:44.012Z send file_chunk seq=6
+2026-10-22T05:30:59.009Z send file_cancel
+2026-10-22T05:30:59.009Z fail(err SendFileError: stalled: no progress from the phone for 60 s (41% received); the transfer was cancelled.

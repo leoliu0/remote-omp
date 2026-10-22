@@ -1,0 +1,39 @@
+2026-10-22T05:28:54.161Z send file_offer
+2026-10-22T05:28:54.162Z send file_chunk seq=0
+2026-10-22T05:28:54.164Z send file_chunk seq=1
+2026-10-22T05:28:54.166Z send file_chunk seq=2
+2026-10-22T05:28:54.168Z send file_chunk seq=3
+2026-10-22T05:28:54.643Z onAck(nextSeq 0
+2026-10-22T05:28:55.189Z onAck(nextSeq 1
+2026-10-22T05:28:55.190Z send file_chunk seq=4
+2026-10-22T05:28:55.337Z onAck(nextSeq 2
+2026-10-22T05:28:55.338Z send file_chunk seq=5
+2026-10-22T05:28:55.449Z onAck(nextSeq 3
+2026-10-22T05:28:55.449Z send file_chunk seq=6
+2026-10-22T05:28:55.831Z onAck(nextSeq 4
+2026-10-22T05:28:55.831Z send file_chunk seq=7
+2026-10-22T05:28:55.922Z onAck(nextSeq 5
+2026-10-22T05:28:55.923Z onAck(nextSeq 6
+2026-10-22T05:28:55.924Z send file_chunk seq=8
+2026-10-22T05:28:55.926Z send file_chunk seq=9
+2026-10-22T05:28:56.053Z onAck(nextSeq 7
+2026-10-22T05:28:56.054Z send file_chunk seq=10
+2026-10-22T05:28:56.394Z onAck(nextSeq 8
+2026-10-22T05:28:56.395Z send file_chunk seq=11
+2026-10-22T05:29:11.395Z send file_offer
+2026-10-22T05:29:11.395Z send file_chunk seq=8
+2026-10-22T05:29:37.768Z onAck(nextSeq 9
+2026-10-22T05:29:37.768Z send file_chunk seq=9
+2026-10-22T05:29:37.771Z send file_chunk seq=10
+2026-10-22T05:29:37.773Z send file_chunk seq=11
+2026-10-22T05:29:37.776Z send file_chunk seq=12
+2026-10-22T05:29:39.540Z onAck(nextSeq 10
+2026-10-22T05:29:39.541Z send file_chunk seq=13
+2026-10-22T05:29:39.639Z onAck(nextSeq 11
+2026-10-22T05:29:39.640Z send file_chunk seq=14
+2026-10-22T05:29:39.640Z send file_end
+2026-10-22T05:29:39.785Z onAck(nextSeq 12
+2026-10-22T05:29:39.920Z onAck(nextSeq 13
+2026-10-22T05:29:40.061Z onAck(nextSeq 14
+2026-10-22T05:29:40.144Z onAck(nextSeq 15
+2026-10-22T05:29:40.232Z succeed( 

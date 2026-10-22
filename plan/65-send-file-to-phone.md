@@ -29,9 +29,10 @@ What exists today (scout reports, 2026-10-19):
 | `file_cancel` | either | `file_id` |
 
 - **Flow control:** the sender keeps at most 4 chunks in flight beyond the last `file_ack`. The relay has no backpressure, so the sender must pace itself.
-- **Resume:** if the phone drops and reconnects within 10 minutes, it sends `file_ack` with its `next_seq` and the sender continues from there. After that the transfer fails, and the tool reports it.
+- **Resume:** if the phone drops and reconnects within 60 s, the sender re-sends `file_offer` and then the first unacked chunk; the phone answers with `file_ack` and its `next_seq` and the sender continues from there. Every probe starts with the offer, so a phone that missed it can still start. After 60 s offline the transfer fails with `phone_offline` and the share received, and the tool reports it. (Revised 2026-10-22, see below.)
+- **Timeouts:** the phone acks the offer with `next_seq` 0 within 30 s, else `phone_unreachable`. Once acks flow, 60 s without ack progress fails `stalled`. Both send `file_cancel`.
 - **Cap:** 256 MiB per file, set by `REMOTE_PI_MAX_SEND_MIB`.
-- **Target phone:** the phone that sent the latest user input. If that phone is offline, the target is the only other online phone. If no phone is online, the tool fails with `phone_offline` and the agent says so. Nothing is queued.
+- **Target phone:** the phone that sent the latest user input. If that phone is offline, the target is the only other online phone. "Online" follows the relay's presence frames for the owner (`subscribe_presence`, `peer_online` / `peer_offline`); a target that is offline there gets 20 s to come back. If no phone is online, the tool fails with `phone_offline` and the agent says so. Nothing is queued.
 
 **Agent tool `send_to_phone({ path, caption? })`.** It checks that the file exists, is a regular file and is under the cap. It returns when the app sends `file_done`, with `{name, size, device}`, or when the transfer fails. The transfer is cancelled on abort. The tool description tells the agent to use it for finished files the user should open on the phone, not for files the agent is still working on.
 
@@ -43,6 +44,8 @@ What exists today (scout reports, 2026-10-19):
 - The chat shows a file card with name, size, a progress bar during transfer and the caption. Actions are Open (`open_filex` through a FileProvider), Share (`share_plus`) and Save to Downloads (MediaStore, which needs no permission on API 34).
 - APKs also get **Install**: `REQUEST_INSTALL_PACKAGES` plus `ACTION_VIEW` through the FileProvider. Android's own confirmation always runs, and nothing opens or installs without a tap.
 - Received files can be cleared in Settings → Storage.
+
+**Revision 2026-10-22 (resume and timeouts).** A 16.5 MB PDF sent while the phone had been off the relay for 20 minutes blocked the agent for 10 minutes and ended in `timeout`. The relay drops frames for an offline peer silently, `_activePeers` still held the phone, and a probe re-sent only the first unacked chunk, which a phone that never got the offer cannot use. The extension now subscribes to relay presence for its paired owners (again after each relay reconnect), fails fast or waits 20 s when the target is offline, pauses on `peer_offline` mid-transfer, resumes on `peer_online` within 60 s, starts every probe with `file_offer`, and replaces the 10-minute window with the 30 s offer-ack and 60 s stall timeouts above. The app already answers a repeated offer with its `next_seq` and keeps the `.part`.
 
 ## Steps with acceptance criteria
 

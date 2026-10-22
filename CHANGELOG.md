@@ -26,6 +26,7 @@ and 27 (see [`plan/`](plan/) directory for design history).
 
 ### Fixed
 
+- `send_to_phone` no longer blocks the agent for 10 minutes when the phone is not connected. It checks the relay's presence for the phone and fails within 20 s if Remote Pi is closed, the phone must acknowledge the file within 30 s, and a transfer that stops making progress for 60 s fails with the percentage received. A phone that drops and returns within 60 s resumes where it stopped, including when it missed the file's announcement.
 - `/remote-pi` in a folder with no setup no longer crashes with `t?.trim is not a function`; the setup prompt opens.
 - The app now shows images that tools return, such as a `read` of a png or webp, in every tool display mode, as the terminal does. In brief mode the picture sits under the tool pill, and those `read` calls are no longer hidden. With tool calls hidden, only the picture shows. The full card shows the picture instead of its base64 text. The extension already sent the image; only the app changed.
 - TeX Guard's patch review now also opens on the app, with the diff, and Yes or No there answers it; whichever of terminal and app answers first wins. Any extension with a terminal-only prompt can do the same through the new `remote-pi:confirm` events (see `pi-extension/README.md`).

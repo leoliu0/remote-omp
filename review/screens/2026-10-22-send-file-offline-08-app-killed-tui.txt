@@ -1,0 +1,9 @@
+  └─ path="big.pdf", caption="app killed"
+ phone_offline: Remote Pi went offline on the phone at 48% received and did not come back within 60 s. Ask the user to open the app, then send the file again.
+ ⟨Ctrl+O: Expand⟩
+The call failed. I didn't retry. The exact error text was:
+phone_offline: Remote Pi went offline on the phone at 48% received and did not come back within 60 s. Ask the user to open the app, then send the file again.
+Please open the Remote Pi app on the phone before the next attempt.
+╭── 󰵗   Sonnet 5.5 · 󰪟 low   …-49fd-be73-5b6dd7092a39/scratchpad/work  󰙺 0.08 ─2%─────────────────────────────────────󰁨──────────────────────────────────────1M─ 󰈦 PDF: Send big.pdf to phone ──╮
+╰─                                                                                                                                                                                                    ─╯
+🟢 relay 📡 local (1) 📱 BJqmkcvP
