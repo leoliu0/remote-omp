@@ -41,6 +41,8 @@ enum VoiceHint {
 
 class InputBar extends StatefulWidget {
   final bool disabled; // offline or no peer
+  /// Focus the field when the bar first appears.
+  final bool autofocus;
   final bool streaming; // show cancel instead of send
   final void Function(String text) onSend;
   final VoidCallback? onCancel;
@@ -71,25 +73,31 @@ class InputBar extends StatefulWidget {
   /// Optional user message history for Up/Down arrow cycling (oldest to newest).
   final List<WireSkill> dynamicSkills;
   final List<String> messageHistory;
+
   /// Initial draft text to populate in the composer.
   final String initialText;
   final String? activeModel;
   final String? activeThinking;
+
   /// Goal Mode status: 'active' | 'paused' | 'idle' | null.
   final String? goalStatus;
+
   /// Loop Mode status: 'active' | 'running' | 'paused' | 'waiting' | 'idle' | null.
   final String? loopStatus;
+
   /// omp plan mode of the session (latest `plan_state`; null = unknown).
   final PlanState? planState;
 
   /// Dispatches a `plan_mode` action (exit already confirmed by the user when
   /// a plan exists). Null disables the plan button (no channel).
   final void Function(PlanModeAction action)? onPlanMode;
+
   /// Fired whenever the typed composer text changes.
   final void Function(String text)? onDraftChanged;
   const InputBar({
     super.key,
     required this.onSend,
+    this.autofocus = false,
     this.onCancel,
     this.onOpenQuickActions,
     this.onStartAudio,
@@ -122,8 +130,9 @@ class _InputBarState extends State<InputBar> {
   /// How far left the press must slide to arm slide-to-cancel (logical px).
   static const double _cancelThreshold = 90;
 
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.initialText);
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialText,
+  );
   // Owns the field's focus so we can intercept hardware Enter on its OWN
   // node (the primary/leaf focus). An ancestor Focus runs too late: the
   // FocusManager dispatches leaf→root, so the field's multiline newline
@@ -190,8 +199,9 @@ class _InputBarState extends State<InputBar> {
       _historyIndex = -1;
       _navigatingHistory = true;
       _controller.text = _savedDraft;
-      _controller.selection =
-          TextSelection.collapsed(offset: _savedDraft.length);
+      _controller.selection = TextSelection.collapsed(
+        offset: _savedDraft.length,
+      );
       _navigatingHistory = false;
       _savedDraft = '';
       setState(() {});
@@ -290,11 +300,7 @@ class _InputBarState extends State<InputBar> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      LucideIcons.arrowDown,
-                      size: 13,
-                      color: colors.accent,
-                    ),
+                    Icon(LucideIcons.arrowDown, size: 13, color: colors.accent),
                     const SizedBox(width: 2),
                     Text(
                       _historyIndex > 0 ? 'Newer' : 'Clear',
@@ -313,24 +319,33 @@ class _InputBarState extends State<InputBar> {
       ),
     );
   }
+
   @override
   void initState() {
     super.initState();
     if (widget.initialText.isNotEmpty) {
-      _controller.selection =
-          TextSelection.collapsed(offset: widget.initialText.length);
+      _controller.selection = TextSelection.collapsed(
+        offset: widget.initialText.length,
+      );
     }
     _controller.addListener(_onTextChange);
+    if (widget.autofocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !widget.disabled) _focusNode.requestFocus();
+      });
+    }
     _subscribeTranscripts();
   }
+
   @override
   void didUpdateWidget(InputBar old) {
     super.didUpdateWidget(old);
     if (old.initialText != widget.initialText &&
         widget.initialText != _controller.text) {
       _controller.text = widget.initialText;
-      _controller.selection =
-          TextSelection.collapsed(offset: widget.initialText.length);
+      _controller.selection = TextSelection.collapsed(
+        offset: widget.initialText.length,
+      );
       _empty = widget.initialText.trim().isEmpty;
     }
     if (!identical(old.voice, widget.voice)) {
@@ -363,6 +378,7 @@ class _InputBarState extends State<InputBar> {
     }
     widget.onDraftChanged?.call(_controller.text);
   }
+
   @override
   void dispose() {
     _transcriptSub?.cancel();
@@ -395,6 +411,7 @@ class _InputBarState extends State<InputBar> {
     _controller.clear();
     widget.onSetQueued?.call(text);
   }
+
   void _editQueued(QueuedMsg item) {
     if (!item.editable) return;
     widget.onClearQueued?.call(item.id);
@@ -559,11 +576,7 @@ class _InputBarState extends State<InputBar> {
         !visionBlocked &&
         !hasImage;
     final showQuickActions =
-        _empty &&
-        !hasImage &&
-        canInteract &&
-        !showStrip &&
-        hasQuickActions;
+        _empty && !hasImage && canInteract && !showStrip && hasQuickActions;
 
     final showQueueButton =
         widget.streaming &&
@@ -607,11 +620,17 @@ class _InputBarState extends State<InputBar> {
                       ? () => widget.onClearQueued?.call(item.id)
                       : null,
                 ),
-              if (_buildHistoryBar(context) != null)
-                _buildHistoryBar(context)!,
-              if (canInteract && filterSlashCommands(_controller.text, widget.dynamicSkills).isNotEmpty)
+              if (_buildHistoryBar(context) != null) _buildHistoryBar(context)!,
+              if (canInteract &&
+                  filterSlashCommands(
+                    _controller.text,
+                    widget.dynamicSkills,
+                  ).isNotEmpty)
                 SlashCommandMenu(
-                  items: filterSlashCommands(_controller.text, widget.dynamicSkills),
+                  items: filterSlashCommands(
+                    _controller.text,
+                    widget.dynamicSkills,
+                  ),
                   onSelect: (cmd) {
                     _controller.text = '/${cmd.name} ';
                     _controller.selection = TextSelection.collapsed(
@@ -673,10 +692,7 @@ class _InputBarState extends State<InputBar> {
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
-                    borderSide: BorderSide(
-                      color: colors.accent,
-                      width: 1.2,
-                    ),
+                    borderSide: BorderSide(color: colors.accent, width: 1.2),
                   ),
                 ),
               ),
@@ -984,10 +1000,7 @@ class _AttachButton extends StatelessWidget {
 }
 
 class _HistoryRecallButton extends StatelessWidget {
-  const _HistoryRecallButton({
-    required this.enabled,
-    required this.onTap,
-  });
+  const _HistoryRecallButton({required this.enabled, required this.onTap});
 
   final bool enabled;
   final VoidCallback onTap;
@@ -1014,6 +1027,7 @@ class _HistoryRecallButton extends StatelessWidget {
     );
   }
 }
+
 class _GoalModeQuickButton extends StatelessWidget {
   const _GoalModeQuickButton({
     required this.enabled,
@@ -1045,10 +1059,7 @@ class _GoalModeQuickButton extends StatelessWidget {
       iconWidget = Container(
         width: 22,
         height: 22,
-        decoration: BoxDecoration(
-          color: colors.accent,
-          shape: BoxShape.circle,
-        ),
+        decoration: BoxDecoration(color: colors.accent, shape: BoxShape.circle),
         child: Icon(LucideIcons.target, size: 13, color: colors.surface),
       );
     } else if (isPaused) {
@@ -1058,7 +1069,9 @@ class _GoalModeQuickButton extends StatelessWidget {
           Icon(
             LucideIcons.target,
             size: 18,
-            color: enabled ? colors.accent : colors.muted.withValues(alpha: 0.35),
+            color: enabled
+                ? colors.accent
+                : colors.muted.withValues(alpha: 0.35),
           ),
           Positioned(
             right: -2,
@@ -1097,6 +1110,7 @@ class _GoalModeQuickButton extends StatelessWidget {
     );
   }
 }
+
 class _PlanModeQuickButton extends StatelessWidget {
   const _PlanModeQuickButton({
     required this.enabled,
@@ -1124,10 +1138,7 @@ class _PlanModeQuickButton extends StatelessWidget {
       PlanStatus.review => Container(
         width: 22,
         height: 22,
-        decoration: BoxDecoration(
-          color: colors.accent,
-          shape: BoxShape.circle,
-        ),
+        decoration: BoxDecoration(color: colors.accent, shape: BoxShape.circle),
         child: Icon(LucideIcons.fileCheck, size: 13, color: colors.surface),
       ),
       PlanStatus.active => Icon(
@@ -1194,10 +1205,7 @@ class _LoopModeQuickButton extends StatelessWidget {
       iconWidget = Container(
         width: 22,
         height: 22,
-        decoration: BoxDecoration(
-          color: colors.accent,
-          shape: BoxShape.circle,
-        ),
+        decoration: BoxDecoration(color: colors.accent, shape: BoxShape.circle),
         child: Icon(LucideIcons.repeat, size: 13, color: colors.surface),
       );
     } else if (isPaused) {
@@ -1207,7 +1215,9 @@ class _LoopModeQuickButton extends StatelessWidget {
           Icon(
             LucideIcons.repeat,
             size: 18,
-            color: enabled ? colors.accent : colors.muted.withValues(alpha: 0.35),
+            color: enabled
+                ? colors.accent
+                : colors.muted.withValues(alpha: 0.35),
           ),
           Positioned(
             right: -2,
@@ -1252,11 +1262,7 @@ class _QuickActionsChip extends StatelessWidget {
   final String? thinking;
   final VoidCallback onTap;
 
-  const _QuickActionsChip({
-    this.model,
-    this.thinking,
-    required this.onTap,
-  });
+  const _QuickActionsChip({this.model, this.thinking, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -1267,7 +1273,9 @@ class _QuickActionsChip extends StatelessWidget {
     if (model != null && model!.isNotEmpty) {
       final clean = model!.split('/').last;
       // Short model name so composer action/submit buttons always fit comfortably
-      final shortModel = clean.length > 7 ? clean.substring(0, 6) + '..' : clean;
+      final shortModel = clean.length > 7
+          ? clean.substring(0, 6) + '..'
+          : clean;
       label = thinking != null ? '$shortModel·$thinking' : shortModel;
     }
 
@@ -1286,7 +1294,11 @@ class _QuickActionsChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(LucideIcons.slidersHorizontal, size: 12, color: colors.muted),
+              Icon(
+                LucideIcons.slidersHorizontal,
+                size: 12,
+                color: colors.muted,
+              ),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 80),
                 child: Text(
@@ -1395,10 +1407,7 @@ class _TranscribingStrip extends StatelessWidget {
         const SizedBox(width: 10),
         Text(
           'transcribing…',
-          style: context.typo.mono.copyWith(
-            fontSize: 12,
-            color: colors.muted2,
-          ),
+          style: context.typo.mono.copyWith(fontSize: 12, color: colors.muted2),
         ),
       ],
     );
@@ -1651,11 +1660,7 @@ class _QueueButton extends StatelessWidget {
                 borderRadius: BorderRadius.circular(19),
               ),
               alignment: Alignment.center,
-              child: Icon(
-                LucideIcons.listPlus,
-                color: colors.accent,
-                size: 20,
-              ),
+              child: Icon(LucideIcons.listPlus, color: colors.accent, size: 20),
             ),
           ),
         ),

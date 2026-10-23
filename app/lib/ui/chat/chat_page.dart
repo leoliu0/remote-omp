@@ -68,9 +68,19 @@ class ChatPage extends StatefulWidget {
   State<ChatPage> createState() => _ChatPageState();
 }
 
+/// A phone held sideways: wider than tall and short. Tablets in landscape keep
+/// the full layout.
+bool _phoneLandscape(BuildContext context) {
+  final size = MediaQuery.sizeOf(context);
+  return size.width > size.height && size.height < 500;
+}
+
 class _ChatPageState extends State<ChatPage> {
   final ScrollController _scrollController = ScrollController();
   bool _showScrollToBottom = false;
+  // Landscape gives the screen to the transcript; the composer shows only
+  // after the floating keyboard button opens it.
+  bool _landscapeComposer = false;
 
   @override
   void initState() {
@@ -113,13 +123,15 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     final vm = context.watch<ChatViewModel>();
     final state = vm.state;
+    final landscape = _phoneLandscape(context);
+    final showComposer = !landscape || _landscapeComposer;
 
     final scaffold = Scaffold(
       backgroundColor: context.colors.bg,
       body: SafeArea(
         child: Column(
           children: [
-            _buildTopBar(context, state),
+            if (!landscape) _buildTopBar(context, state),
             // Pairing revocation is the only banner kept — it's a hard
             // failure (can't proceed without re-pairing), red, with an
             // explicit action. Plain offline / Pi-gone / presence-off
@@ -130,25 +142,38 @@ class _ChatPageState extends State<ChatPage> {
             Expanded(
               child: Stack(
                 children: [
-                  Positioned.fill(
-                    child: _buildBody(context, state, vm),
-                  ),
+                  Positioned.fill(child: _buildBody(context, state, vm)),
                   Positioned(
-                    right: 16,
+                    right: landscape ? 64 : 16,
                     bottom: 12,
                     child: _ScrollToBottomButton(
                       visible: _showScrollToBottom,
                       onPressed: () => _scrollToBottom(animate: true),
                     ),
                   ),
+                  if (landscape)
+                    Positioned(
+                      right: 16,
+                      bottom: 12,
+                      child: _ComposerToggleButton(
+                        open: _landscapeComposer,
+                        onPressed: () => setState(
+                          () => _landscapeComposer = !_landscapeComposer,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
-            if (state is ChatReady && state.todo.isNotEmpty)
+            if (!landscape && state is ChatReady && state.todo.isNotEmpty)
               TodoPanel(phases: state.todo, working: state.isWorking),
-            if (state is ChatReady && state.activity.isNotEmpty)
+            if (!landscape && state is ChatReady && state.activity.isNotEmpty)
               ActivityPanel(jobs: state.activity),
-            _buildInput(context, state, vm),
+            if (showComposer)
+              KeyedSubtree(
+                key: const Key('chat_composer'),
+                child: _buildInput(context, state, vm),
+              ),
           ],
         ),
       ),
@@ -529,31 +554,41 @@ class _ChatPageState extends State<ChatPage> {
                 final tool = m.tool.toLowerCase();
                 String truncate(String s, [int max = 35]) {
                   final clean = s.trim().replaceAll(RegExp(r'\s+'), ' ');
-                  return clean.length <= max ? clean : '${clean.substring(0, max)}…';
+                  return clean.length <= max
+                      ? clean
+                      : '${clean.substring(0, max)}…';
                 }
+
                 workingLabel = switch (tool) {
-                  'read' => args?['path'] is String
-                      ? 'Reading ${truncate(args!['path'] as String)}'
-                      : 'Reading file…',
-                  'bash' => args?['command'] is String
-                      ? 'Running: ${truncate(args!['command'] as String)}'
-                      : 'Running command…',
-                  'edit' => args?['path'] is String
-                      ? 'Editing ${truncate(args!['path'] as String)}'
-                      : 'Editing file…',
-                  'write' => args?['path'] is String
-                      ? 'Writing ${truncate(args!['path'] as String)}'
-                      : 'Writing file…',
-                  'grep' => args?['pattern'] is String
-                      ? 'Searching "${truncate(args!['pattern'] as String)}"'
-                      : 'Searching files…',
-                  'glob' => args?['path'] is String
-                      ? 'Finding: ${truncate(args!['path'] as String)}'
-                      : 'Finding files…',
+                  'read' =>
+                    args?['path'] is String
+                        ? 'Reading ${truncate(args!['path'] as String)}'
+                        : 'Reading file…',
+                  'bash' =>
+                    args?['command'] is String
+                        ? 'Running: ${truncate(args!['command'] as String)}'
+                        : 'Running command…',
+                  'edit' =>
+                    args?['path'] is String
+                        ? 'Editing ${truncate(args!['path'] as String)}'
+                        : 'Editing file…',
+                  'write' =>
+                    args?['path'] is String
+                        ? 'Writing ${truncate(args!['path'] as String)}'
+                        : 'Writing file…',
+                  'grep' =>
+                    args?['pattern'] is String
+                        ? 'Searching "${truncate(args!['pattern'] as String)}"'
+                        : 'Searching files…',
+                  'glob' =>
+                    args?['path'] is String
+                        ? 'Finding: ${truncate(args!['path'] as String)}'
+                        : 'Finding files…',
                   'task' => 'Running subagents…',
-                  'eval' => args?['title'] is String
-                      ? 'Evaluating: ${truncate(args!['title'] as String)}'
-                      : 'Evaluating code…',
+                  'eval' =>
+                    args?['title'] is String
+                        ? 'Evaluating: ${truncate(args!['title'] as String)}'
+                        : 'Evaluating code…',
                   'hub' => 'Coordinating mesh agents…',
                   'todo' => 'Updating tasks…',
                   'ask' => 'Waiting for user input…',
@@ -648,6 +683,8 @@ class _ChatPageState extends State<ChatPage> {
     final draft = prefs.getDraft(peerEpk, roomId);
 
     return InputBar(
+      // Opened from the landscape button: ready to type at once.
+      autofocus: _landscapeComposer && _phoneLandscape(context),
       initialText: draft,
       onDraftChanged: (text) => prefs.setDraft(peerEpk, roomId, text),
       disabled:
@@ -685,7 +722,9 @@ class _ChatPageState extends State<ChatPage> {
       // empty) caption. Attach-button gating by vision / already-attached is
       // internal to InputBar; the host only gates by channel availability.
       attachment: context.read<AttachmentViewModel>(),
-      onOpenQuickActions: actionsEnabled ? () => showQuickActionsSheet(context) : null,
+      onOpenQuickActions: actionsEnabled
+          ? () => showQuickActionsSheet(context)
+          : null,
       onOpenAttach: actionsEnabled
           ? () => _openAttach(context, context.read<AttachmentViewModel>())
           : null,
@@ -854,7 +893,8 @@ class _MessageList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasActiveBubble = (streaming != null &&
+    final hasActiveBubble =
+        (streaming != null &&
             AssistantContent.hasContent(
               streaming!.buffer,
               showThinking: showThinking,
@@ -867,7 +907,13 @@ class _MessageList extends StatelessWidget {
     return ListView.separated(
       controller: controller,
       reverse: true,
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
+      // Phone landscape: the last line ends above the floating composer button.
+      padding: EdgeInsets.fromLTRB(
+        16,
+        18,
+        16,
+        _phoneLandscape(context) ? 62 : 12,
+      ),
       itemCount: totalCount,
       separatorBuilder: (context, idx) => const SizedBox(height: 14),
       itemBuilder: (_, i) {
@@ -896,10 +942,10 @@ class _MessageList extends StatelessWidget {
             ToolEvent() when toolDisplay == ToolCallDisplay.hidden =>
               ToolResultImages(toolResultImages(msg)),
             ToolEvent() => ToolRequestCard(
-                tool: msg,
-                onDecide: onDecide,
-                brief: toolDisplay != ToolCallDisplay.full,
-              ),
+              tool: msg,
+              onDecide: onDecide,
+              brief: toolDisplay != ToolCallDisplay.full,
+            ),
             CompactionMsg() => CompactionBubble(msg),
             FileMsg() => fileCard?.call(msg) ?? FileCard(file: msg.file),
           },
@@ -909,14 +955,59 @@ class _MessageList extends StatelessWidget {
   }
 }
 
+/// Landscape only: shows or hides the composer, which landscape hides so the
+/// transcript gets the screen.
+class _ComposerToggleButton extends StatelessWidget {
+  const _ComposerToggleButton({required this.open, required this.onPressed});
+
+  final bool open;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return Material(
+      color: Colors.transparent,
+      child: Tooltip(
+        message: open ? 'Hide composer' : 'Show composer',
+        child: InkWell(
+          key: const Key('chat_landscape_compose'),
+          onTap: onPressed,
+          customBorder: const CircleBorder(),
+          child: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: colors.surface,
+              border: Border.all(color: colors.border),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.2),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Center(
+              child: Icon(
+                open ? LucideIcons.keyboardOff : LucideIcons.keyboard,
+                size: 18,
+                color: colors.muted,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ScrollToBottomButton extends StatelessWidget {
   final bool visible;
   final VoidCallback onPressed;
 
-  const _ScrollToBottomButton({
-    required this.visible,
-    required this.onPressed,
-  });
+  const _ScrollToBottomButton({required this.visible, required this.onPressed});
 
   @override
   Widget build(BuildContext context) {
@@ -1079,10 +1170,7 @@ class _InfoRow extends StatelessWidget {
           const SizedBox(height: 2),
           SelectableText(
             value,
-            style: context.typo.mono.copyWith(
-              fontSize: 13,
-              color: colors.text,
-            ),
+            style: context.typo.mono.copyWith(fontSize: 13, color: colors.text),
           ),
         ],
       ),
