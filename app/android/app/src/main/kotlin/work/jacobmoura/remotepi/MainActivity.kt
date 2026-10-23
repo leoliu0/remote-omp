@@ -4,12 +4,14 @@ import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Intent
 import android.provider.MediaStore
+import android.util.Log
 import android.view.View
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.editing.TextInputPlugin
 import java.io.File
 
 class MainActivity : FlutterActivity() {
@@ -55,7 +57,9 @@ class MainActivity : FlutterActivity() {
      * Flutter's ImeSyncDeferringInsetsCallback swallows insets while an IME
      * animation runs and applies the last ones in onEnd. Without onEnd it
      * keeps the keyboard height. Hand the FlutterView the current insets
-     * directly (as that callback does), only while the keyboard is hidden.
+     * directly (as that callback does), only while the keyboard is hidden,
+     * and clear the callback's stuck "animating" flag, which otherwise keeps
+     * swallowing later insets (a rotation's included).
      */
     private fun resyncInsets(): Boolean {
         val view = findViewById<View>(FLUTTER_VIEW_ID) ?: return false
@@ -63,8 +67,35 @@ class MainActivity : FlutterActivity() {
         if (WindowInsetsCompat.toWindowInsetsCompat(insets, view).isVisible(WindowInsetsCompat.Type.ime())) {
             return false
         }
+        clearStuckImeAnimation(view)
         view.onApplyWindowInsets(insets)
         return true
+    }
+
+    /** Best effort: R8 renames FlutterView's fields, so they are found by type. */
+    private fun clearStuckImeAnimation(view: View) {
+        try {
+            val pluginField = view.javaClass.declaredFields
+                .firstOrNull { it.type == TextInputPlugin::class.java } ?: return
+            pluginField.isAccessible = true
+            val plugin = pluginField.get(view) ?: return
+            val callbackClass = Class.forName("io.flutter.plugin.editing.ImeSyncDeferringInsetsCallback")
+            val callbackField = TextInputPlugin::class.java.declaredFields
+                .firstOrNull { it.type == callbackClass } ?: return
+            callbackField.isAccessible = true
+            val callback = callbackField.get(plugin) ?: return
+            val animating = callbackClass.declaredFields
+                .firstOrNull { it.name == "animating" && it.type == Boolean::class.javaPrimitiveType } ?: return
+            animating.isAccessible = true
+            if (animating.getBoolean(callback)) {
+                animating.setBoolean(callback, false)
+                Log.i("RemotePi", "cleared a stuck IME animation")
+            }
+        } catch (e: ReflectiveOperationException) {
+            Log.w("RemotePi", "could not clear the IME animation flag", e)
+        } catch (e: SecurityException) {
+            Log.w("RemotePi", "could not clear the IME animation flag", e)
+        }
     }
 
     private fun receivedFile(path: String): File? {

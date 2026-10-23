@@ -25,6 +25,7 @@ import 'package:app/ui/chat/widgets/plan_review_sheet.dart';
 import 'package:app/ui/settings/settings_sheet.dart';
 import 'package:app_settings/app_settings.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
@@ -81,6 +82,11 @@ class _ChatPageState extends State<ChatPage> {
   // Landscape gives the screen to the transcript; the composer shows only
   // after the floating keyboard button opens it.
   bool _landscapeComposer = false;
+  // Fullscreen: the top-bar button locks landscape and hides the system bars;
+  // the exit button in landscape locks portrait again. Any lock is released
+  // when the page goes away.
+  bool _fullscreen = false;
+  bool _orientationLocked = false;
 
   @override
   void initState() {
@@ -92,8 +98,43 @@ class _ChatPageState extends State<ChatPage> {
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    if (_orientationLocked) SystemChrome.setPreferredOrientations(const []);
+    if (_fullscreen) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     super.dispose();
   }
+
+  void _enterFullscreen() {
+    setState(() {
+      _fullscreen = true;
+      _orientationLocked = true;
+    });
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  }
+
+  void _exitFullscreen() {
+    setState(() {
+      _fullscreen = false;
+      _orientationLocked = true;
+      _landscapeComposer = false;
+    });
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
+  }
+
+  /// In fullscreen, Back leaves fullscreen before it leaves the chat.
+  Widget _fullscreenBack(Widget child) => PopScope(
+    canPop: !_fullscreen,
+    onPopInvokedWithResult: (didPop, _) {
+      if (!didPop) _exitFullscreen();
+    },
+    child: child,
+  );
 
   void _onScroll() {
     if (!_scrollController.hasClients) return;
@@ -125,6 +166,10 @@ class _ChatPageState extends State<ChatPage> {
     final state = vm.state;
     final landscape = _phoneLandscape(context);
     final showComposer = !landscape || _landscapeComposer;
+    // Landscape with the keyboard up leaves the transcript no height: the
+    // floating buttons would sit clipped over the composer.
+    final floatButtons =
+        landscape && MediaQuery.viewInsetsOf(context).bottom == 0;
 
     final scaffold = Scaffold(
       backgroundColor: context.colors.bg,
@@ -151,7 +196,18 @@ class _ChatPageState extends State<ChatPage> {
                       onPressed: () => _scrollToBottom(animate: true),
                     ),
                   ),
-                  if (landscape)
+                  if (floatButtons)
+                    Positioned(
+                      right: 16,
+                      top: 12,
+                      child: _RoundButton(
+                        key: const Key('chat_exit_fullscreen'),
+                        icon: LucideIcons.minimize2,
+                        tooltip: 'Portrait',
+                        onPressed: _exitFullscreen,
+                      ),
+                    ),
+                  if (floatButtons)
                     Positioned(
                       right: 16,
                       bottom: 12,
@@ -187,31 +243,33 @@ class _ChatPageState extends State<ChatPage> {
     // instead of a dead end.
     final ready = state is ChatReady ? state : null;
     final uiRequest = ready?.pendingUiRequest;
-    if (uiRequest == null) return scaffold;
+    if (uiRequest == null) return _fullscreenBack(scaffold);
     final plan = uiRequest.plan;
-    return Stack(
-      children: [
-        scaffold,
-        Positioned.fill(
-          // Keyed by request id: a new flow must get a fresh State — question
-          // ids repeat across flows (e.g. "goal"), so reusing the State would
-          // leak old selections/custom text into the new modal.
-          child: plan != null
-              ? PlanReviewSheet(
-                  key: ValueKey(uiRequest.id),
-                  request: uiRequest,
-                  plan: plan,
-                  error: ready?.pendingUiError,
-                  onRespond: vm.respondExtensionUi,
-                )
-              : ExtensionUiSheet(
-                  key: ValueKey(uiRequest.id),
-                  request: uiRequest,
-                  error: ready?.pendingUiError,
-                  onRespond: vm.respondExtensionUi,
-                ),
-        ),
-      ],
+    return _fullscreenBack(
+      Stack(
+        children: [
+          scaffold,
+          Positioned.fill(
+            // Keyed by request id: a new flow must get a fresh State — question
+            // ids repeat across flows (e.g. "goal"), so reusing the State would
+            // leak old selections/custom text into the new modal.
+            child: plan != null
+                ? PlanReviewSheet(
+                    key: ValueKey(uiRequest.id),
+                    request: uiRequest,
+                    plan: plan,
+                    error: ready?.pendingUiError,
+                    onRespond: vm.respondExtensionUi,
+                  )
+                : ExtensionUiSheet(
+                    key: ValueKey(uiRequest.id),
+                    request: uiRequest,
+                    error: ready?.pendingUiError,
+                    onRespond: vm.respondExtensionUi,
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -349,6 +407,14 @@ class _ChatPageState extends State<ChatPage> {
           // nav hints, so the bar is stable from frame 1. The dialog needs the
           // loaded PeerRecord; we read it at tap time (loaded within ms of
           // mount for the connection) and no-op in the unlikely pre-load tap.
+          // Phones only: turns the phone sideways for the landscape layout.
+          if (MediaQuery.sizeOf(context).shortestSide < 600)
+            IconButton(
+              key: const Key('chat_fullscreen'),
+              icon: Icon(LucideIcons.maximize2, size: 18, color: colors.muted2),
+              tooltip: 'Full screen',
+              onPressed: _enterFullscreen,
+            ),
           IconButton(
             icon: Icon(LucideIcons.info, size: 18, color: colors.muted2),
             tooltip: 'Session info',
@@ -964,14 +1030,35 @@ class _ComposerToggleButton extends StatelessWidget {
   final VoidCallback onPressed;
 
   @override
+  Widget build(BuildContext context) => _RoundButton(
+    key: const Key('chat_landscape_compose'),
+    icon: open ? LucideIcons.keyboardOff : LucideIcons.keyboard,
+    tooltip: open ? 'Hide composer' : 'Show composer',
+    onPressed: onPressed,
+  );
+}
+
+/// A 38 px floating circle over the landscape transcript.
+class _RoundButton extends StatelessWidget {
+  const _RoundButton({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
   Widget build(BuildContext context) {
     final colors = context.colors;
     return Material(
       color: Colors.transparent,
       child: Tooltip(
-        message: open ? 'Hide composer' : 'Show composer',
+        message: tooltip,
         child: InkWell(
-          key: const Key('chat_landscape_compose'),
           onTap: onPressed,
           customBorder: const CircleBorder(),
           child: Container(
@@ -989,13 +1076,7 @@ class _ComposerToggleButton extends StatelessWidget {
                 ),
               ],
             ),
-            child: Center(
-              child: Icon(
-                open ? LucideIcons.keyboardOff : LucideIcons.keyboard,
-                size: 18,
-                color: colors.muted,
-              ),
-            ),
+            child: Center(child: Icon(icon, size: 18, color: colors.muted)),
           ),
         ),
       ),

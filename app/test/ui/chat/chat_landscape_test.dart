@@ -21,6 +21,7 @@ import 'package:app/ui/chat/widgets/input_bar.dart';
 import 'package:app/ui/chat/viewmodels/chat_viewmodel.dart';
 import 'package:app/ui/chat/voice/viewmodels/voice_input_viewmodel.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -151,6 +152,93 @@ void main() {
       });
     },
   );
+
+  // Fullscreen: the top-bar button turns a phone sideways (landscape lock,
+  // system bars hidden); the exit button in landscape turns it back. Records
+  // the SystemChrome calls, since the test surface itself never rotates.
+  List<MethodCall> recordSystemChrome(WidgetTester tester) {
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method.startsWith('SystemChrome.set')) calls.add(call);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    return calls;
+  }
+
+  const fullscreenKey = Key('chat_fullscreen');
+  const exitKey = Key('chat_exit_fullscreen');
+
+  testWidgets('the fullscreen button locks landscape and hides the bars', (
+    tester,
+  ) async {
+    final calls = recordSystemChrome(tester);
+    await withChat(tester, const Size(1080, 2400), () async {
+      expect(find.byKey(exitKey), findsNothing);
+      await tester.tap(find.byKey(fullscreenKey));
+      await tester.pump();
+      expect(
+        calls.map((c) => '${c.method} ${c.arguments}'),
+        containsAll([
+          'SystemChrome.setEnabledSystemUIMode SystemUiMode.immersiveSticky',
+          'SystemChrome.setPreferredOrientations [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]',
+        ]),
+      );
+      calls.clear();
+    });
+    // Leaving the page releases the lock and brings the bars back.
+    expect(
+      calls.map((c) => '${c.method} ${c.arguments}'),
+      containsAll([
+        'SystemChrome.setPreferredOrientations []',
+        'SystemChrome.setEnabledSystemUIMode SystemUiMode.edgeToEdge',
+      ]),
+    );
+  });
+
+  testWidgets('the exit button in landscape locks portrait and shows the bars', (
+    tester,
+  ) async {
+    final calls = recordSystemChrome(tester);
+    await withChat(tester, const Size(2400, 1080), () async {
+      expect(find.byKey(fullscreenKey), findsNothing);
+      await tester.tap(find.byKey(exitKey));
+      await tester.pump();
+      expect(
+        calls.map((c) => '${c.method} ${c.arguments}'),
+        containsAll([
+          'SystemChrome.setEnabledSystemUIMode SystemUiMode.edgeToEdge',
+          'SystemChrome.setPreferredOrientations [DeviceOrientation.portraitUp]',
+        ]),
+      );
+    });
+  });
+
+  testWidgets('landscape with the keyboard up hides the floating buttons', (
+    tester,
+  ) async {
+    tester.view.viewInsets = const FakeViewPadding(bottom: 600);
+    addTearDown(tester.view.resetViewInsets);
+    await withChat(tester, const Size(2400, 1080), () async {
+      expect(find.byKey(exitKey), findsNothing);
+      expect(find.byKey(composeKey), findsNothing);
+    });
+  });
+
+  testWidgets('a tablet has no fullscreen button', (tester) async {
+    await withChat(tester, const Size(1600, 2560), () async {
+      expect(find.text('My Project'), findsOneWidget);
+      expect(find.byKey(fullscreenKey), findsNothing);
+    });
+  });
 
   // The landscape button opens the composer with `autofocus`, so one tap is
   // enough to type.

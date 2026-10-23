@@ -12,19 +12,26 @@ import 'package:flutter/widgets.dart';
 /// bottom inset after the keyboard closes: a black band under the input bar
 /// until restart. Once a bottom inset has settled (or the app resumes with
 /// one), this asks `MainActivity` to re-apply the real window insets; it does
-/// nothing there while the keyboard is actually visible.
+/// nothing there while the keyboard is actually visible. The stuck animation
+/// also swallows a rotation's insets, so a rotation resyncs too.
 class KeyboardInsetGuard with WidgetsBindingObserver {
   KeyboardInsetGuard({
     MethodChannel? channel,
     double Function()? bottomInset,
+    bool Function()? landscape,
     bool? isAndroid,
     this.delay = const Duration(milliseconds: 700),
   }) : _channel = channel ?? const MethodChannel('remote_pi/window'),
        _bottomInset = bottomInset ?? _currentBottomInset,
-       _isAndroid = isAndroid ?? Platform.isAndroid;
+       _landscape = landscape ?? _currentLandscape,
+       _isAndroid = isAndroid ?? Platform.isAndroid {
+    _wasLandscape = _landscape();
+  }
 
   final MethodChannel _channel;
   final double Function() _bottomInset;
+  final bool Function() _landscape;
+  late bool _wasLandscape;
   final bool _isAndroid;
   final Duration delay;
   Timer? _timer;
@@ -32,6 +39,13 @@ class KeyboardInsetGuard with WidgetsBindingObserver {
   static double _currentBottomInset() {
     final views = WidgetsBinding.instance.platformDispatcher.views;
     return views.isEmpty ? 0 : views.first.viewInsets.bottom;
+  }
+
+  static bool _currentLandscape() {
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (views.isEmpty) return false;
+    final size = views.first.physicalSize;
+    return size.width > size.height;
   }
 
   void start() {
@@ -58,7 +72,10 @@ class KeyboardInsetGuard with WidgetsBindingObserver {
   }
 
   Future<void> _check() async {
-    if (_bottomInset() <= 0) return;
+    final landscape = _landscape();
+    final rotated = landscape != _wasLandscape;
+    _wasLandscape = landscape;
+    if (_bottomInset() <= 0 && !rotated) return;
     try {
       await _channel.invokeMethod<bool>('resyncInsets');
     } on MissingPluginException {

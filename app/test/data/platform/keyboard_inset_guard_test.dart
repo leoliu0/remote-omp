@@ -80,6 +80,29 @@ void main() {
     });
   });
 
+  // While the IME animation is stuck, Flutter also swallows the insets of a
+  // rotation: back in portrait the page kept landscape's top padding, so the
+  // top bar sat under the status bar. A rotation resyncs with no bottom inset.
+  test('a rotation resyncs even with no bottom inset', () {
+    fakeAsync((async) {
+      var landscape = true;
+      final g = KeyboardInsetGuard(
+        channel: channel,
+        bottomInset: () => 0,
+        landscape: () => landscape,
+        isAndroid: true,
+      );
+      landscape = false;
+      g.didChangeMetrics();
+      async.elapse(const Duration(seconds: 1));
+      expect(calls, ['resyncInsets']);
+      // Same orientation again: nothing to resync.
+      g.didChangeMetrics();
+      async.elapse(const Duration(seconds: 1));
+      expect(calls, ['resyncInsets']);
+    });
+  });
+
   test('does nothing off Android', () {
     fakeAsync((async) {
       final g = KeyboardInsetGuard(channel: channel, bottomInset: () => 780, isAndroid: false);
