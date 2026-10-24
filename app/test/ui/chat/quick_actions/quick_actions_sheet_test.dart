@@ -309,6 +309,19 @@ void main() {
     expect(find.text('new boom'), findsOneWidget);
   });
 
+  // On a phone held sideways (432 px tall) the sheet scrolls, and the model
+  // row sat below the fold, so the selector looked gone. Model and thinking
+  // come first.
+  testWidgets('model row is on screen without scrolling in phone landscape',
+      (tester) async {
+    tester.view.physicalSize = const Size(2400, 1080);
+    tester.view.devicePixelRatio = 2.5;
+    addTearDown(tester.view.reset);
+    await _openSheet(tester);
+    final row = tester.getRect(find.byKey(const Key('qa-model-row')));
+    expect(row.bottom, lessThanOrEqualTo(432));
+  });
+
   testWidgets('thinking segment forwards level to repo', (tester) async {
     final s = await _openSheet(tester);
     await tester.tap(find.byKey(const Key('qa-thinking-medium')));

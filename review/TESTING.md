@@ -1018,3 +1018,15 @@ Existing stored duplicates are not purged by this fix.
 - Observations: before the last change the Portrait and keyboard buttons sat clipped over the composer with the keyboard up in landscape (`-03`); they now hide then (widget test only, not re-run on the surface). The Portrait button covers the end of the transcript's top visible line. After Portrait the chat stays locked to portrait until it is left, so turning the phone does nothing there.
 - Cleanup: pairing revoked, omp exited, `pm clear`, rotation 1/0, scratch dirs removed; real `config.yml` and `peers.json` unchanged.
 - Not verified: the user's phone (SM-S948B) and its freeze.
+
+### 2026-10-24 - App: model and thinking first in Quick actions ("Model selector gone")
+- Cause: in phone landscape the Quick actions sheet shows only its top part and scrolls; the Model row sat below the fold (451 px on a 432 px screen), so the selector looked gone.
+- Change: `app/lib/ui/chat/quick_actions/widgets/quick_actions_sheet.dart` puts the Model and Thinking rows first, the other actions below.
+- Tests (regression first): `model row is on screen without scrolling in phone landscape` failed before (451 > 432). App 966 passed, `flutter analyze` unchanged at 10 old issues.
+- Surface (`RemotePi_Pixel`, x86_64 release from the working tree, scratch omp 18.12.6 paired by paste code, live relay):
+  1. Portrait: Model (Opus 5.5) and Thinking (xhi) at the top ([portrait](screens/2026-10-24-quick-actions-01-portrait.png)).
+  2. Fullscreen, keyboard closed: the Model row shows without scrolling (`-02`, `-03`); the picker opens (`-04`, `-05`); picking Claude Sonnet 5.5 changed the sheet label and the omp footer ([after pick](screens/2026-10-24-quick-actions-06-landscape-after-pick.png)); Opus 5.5 set back.
+  3. Thinking `high` applied in the sheet and the omp footer (`-07`); Opus 5.5 / xhi restored (`-08`). No FATAL or Flutter exceptions in logcat.
+- Observations: in landscape the model picker shows about 2 model rows at a time (search works). A black band on the left edge in landscape, likely the camera cutout inset.
+- Cleanup: pairing revoked, omp exited, `pm clear`, rotation 1/0, scratch removed; real `config.yml` and `peers.json` unchanged.
+- Not verified: the user's phone (SM-S948B).

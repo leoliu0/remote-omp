@@ -1,0 +1,4 @@
+[remote-pi] Owner attached: peer=36pzYa5/, name=Android device (1 active)
+╭── 󰵗   Sonnet 5.5 · 󰪣 high   …-49fd-be73-5b6dd7092a39/scratchpad/work  󰙺 ──1%─────────────────────────────────────────────────────󰁨────────────────────────────────────────────────────────1M───╮
+╰─                                                                                                                                                                                                    ─╯
+🟢 relay 📡 local (1) 📱 36pzYa5/

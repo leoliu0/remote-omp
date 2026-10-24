@@ -141,6 +141,22 @@ class _QuickActionsSheetBodyState extends State<QuickActionsSheetBody> {
             const SizedBox(height: 6),
             const _SheetTitle(text: 'Quick actions'),
             const _Divider(),
+            // Model and thinking first: a phone held sideways shows only the
+            // top of this sheet.
+            _ModelRow(
+              currentLabel: vm.currentModel?.name ?? vm.currentModelName,
+              busy: busyAction == ActionName.modelSet,
+              onTap: () => _openModelPicker(vm),
+            ),
+            const _Divider(),
+            _ThinkingRow(
+              current: vm.currentThinking,
+              busy: busyAction == ActionName.thinkingSet,
+              disabled: vm.currentModel?.reasoning == false,
+              levels: vm.supportedThinkingLevels,
+              onPick: (level) => _onThinking(vm, level),
+            ),
+            const _Divider(),
             _ActionTile(
               key: const Key('qa-compact'),
               icon: LucideIcons.shrink,
@@ -190,20 +206,6 @@ class _QuickActionsSheetBodyState extends State<QuickActionsSheetBody> {
               subtitle: 'Reload extensions, skills, and tools on the Pi.',
               busy: busyAction == ActionName.reloadPlugins,
               onTap: () => _onReloadPlugins(vm),
-            ),
-            const _Divider(),
-            _ModelRow(
-              currentLabel: vm.currentModel?.name ?? vm.currentModelName,
-              busy: busyAction == ActionName.modelSet,
-              onTap: () => _openModelPicker(vm),
-            ),
-            const _Divider(),
-            _ThinkingRow(
-              current: vm.currentThinking,
-              busy: busyAction == ActionName.thinkingSet,
-              disabled: vm.currentModel?.reasoning == false,
-              levels: vm.supportedThinkingLevels,
-              onPick: (level) => _onThinking(vm, level),
             ),
             const SizedBox(height: 18),
             ],
