@@ -12,6 +12,9 @@ import 'package:flutter_test/flutter_test.dart';
 class _FakeSpeechService implements SpeechService {
   SpeechAvailability availability = const SpeechReady('en_US');
   String transcript = 'hello world';
+  @override
+  String? lastError;
+  Object? startError;
 
   final StreamController<double> _level = StreamController<double>.broadcast();
   int startCalls = 0;
@@ -35,6 +38,7 @@ class _FakeSpeechService implements SpeechService {
     startCalls++;
     startedLocale = localeId;
     startedMax = maxDuration;
+    if (startError != null) throw startError!;
   }
 
   @override
@@ -53,6 +57,60 @@ class _FakeSpeechService implements SpeechService {
 }
 
 void main() {
+  // A failing recognizer (no network, no offline model) used to end as an
+  // empty transcript, so the mic silently did nothing.
+  group('recognizer failures', () {
+    Future<List<String>> run(_FakeSpeechService svc) async {
+      final vm = VoiceInputViewModel(svc);
+      final failures = <String>[];
+      final sub = vm.failures.listen(failures.add);
+      await vm.startRecording();
+      await vm.stopAndTranscribe();
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+      expect(vm.state, const VoiceIdle());
+      vm.dispose();
+      return failures;
+    }
+
+    test('an error with no transcript is reported', () async {
+      final svc = _FakeSpeechService()
+        ..transcript = ''
+        ..lastError = 'error_network';
+      expect(await run(svc), ['error_network']);
+    });
+
+    test(
+      'silence (no_match / speech_timeout) stays a quiet no-op (#12)',
+      () async {
+        for (final code in ['error_no_match', 'error_speech_timeout']) {
+          final svc = _FakeSpeechService()
+            ..transcript = ''
+            ..lastError = code;
+          expect(await run(svc), isEmpty);
+        }
+      },
+    );
+
+    test('an error after some text keeps the text, no report', () async {
+      final svc = _FakeSpeechService()..lastError = 'error_client';
+      expect(await run(svc), isEmpty);
+    });
+
+    test('a listen that throws is reported and leaves the mic idle', () async {
+      final svc = _FakeSpeechService()..startError = Exception('busy');
+      final vm = VoiceInputViewModel(svc);
+      final failures = <String>[];
+      final sub = vm.failures.listen(failures.add);
+      await vm.startRecording();
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.state, const VoiceIdle());
+      expect(failures, ['listen_failed']);
+      await sub.cancel();
+      vm.dispose();
+    });
+  });
+
   group('startRecording', () {
     test('start → VoiceRecording, with the resolved locale + cap', () async {
       final svc = _FakeSpeechService();

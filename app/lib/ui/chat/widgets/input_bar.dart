@@ -62,6 +62,10 @@ class InputBar extends StatefulWidget {
   /// settings deep-link.
   final void Function(VoiceHint hint)? onVoiceHint;
 
+  /// A voice session failed with this recognizer error code (e.g.
+  /// `error_network`), for the host page to explain.
+  final void Function(String code)? onVoiceError;
+
   /// Plan/30 — image-attachment ViewModel (preview state + model vision).
   /// Null in tests / when attachments aren't wired.
   final AttachmentViewModel? attachment;
@@ -106,6 +110,7 @@ class InputBar extends StatefulWidget {
     this.onClearQueued,
     this.voice,
     this.onVoiceHint,
+    this.onVoiceError,
     this.attachment,
     this.onOpenAttach,
     this.messageHistory = const [],
@@ -145,6 +150,7 @@ class _InputBarState extends State<InputBar> {
   // (the permission prompt ended the hold), the recording is discarded.
   bool _holding = false;
   StreamSubscription<String>? _transcriptSub;
+  StreamSubscription<String>? _failureSub;
   final List<String> _localHistory = [];
   int _historyIndex = -1;
   String _savedDraft = '';
@@ -350,12 +356,16 @@ class _InputBarState extends State<InputBar> {
     }
     if (!identical(old.voice, widget.voice)) {
       _transcriptSub?.cancel();
+      _failureSub?.cancel();
       _subscribeTranscripts();
     }
   }
 
   void _subscribeTranscripts() {
     _transcriptSub = widget.voice?.transcripts.listen(_onTranscript);
+    _failureSub = widget.voice?.failures.listen((code) {
+      if (mounted) widget.onVoiceError?.call(code);
+    });
   }
 
   void _onTranscript(String text) {
@@ -382,6 +392,7 @@ class _InputBarState extends State<InputBar> {
   @override
   void dispose() {
     _transcriptSub?.cancel();
+    _failureSub?.cancel();
     _controller.removeListener(_onTextChange);
     _controller.dispose();
     _focusNode.dispose();

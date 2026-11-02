@@ -783,6 +783,7 @@ class _ChatPageState extends State<ChatPage> {
       // so a read() is enough here.
       voice: context.read<VoiceInputViewModel>(),
       onVoiceHint: (hint) => _handleVoiceHint(context, hint),
+      onVoiceError: (code) => _showVoiceError(context, code),
       // Plan/30 — image attachments. takeImageForSend() reads + clears the
       // attached image so the inline image rides along with the (optionally
       // empty) caption. Attach-button gating by vision / already-attached is
@@ -916,6 +917,35 @@ class _ChatPageState extends State<ChatPage> {
           ),
         );
     }
+  }
+
+  /// The phone's speech recognizer failed; say why instead of doing nothing.
+  static void _showVoiceError(BuildContext context, String code) {
+    final message = switch (code) {
+      'error_network' ||
+      'error_network_timeout' ||
+      'error_server' ||
+      'error_server_disconnected' =>
+        "Voice input couldn't reach the phone's speech service (network). "
+            'It may need Google servers, which can be blocked here.',
+      'error_language_unavailable' || 'error_language_not_supported' =>
+        "The phone has no offline speech model for this language. Download "
+            'one in the speech recognition settings (Google: Offline speech '
+            'recognition).',
+      'error_busy' => 'The speech service is busy. Try again.',
+      'error_permission' => 'The speech service has no microphone permission.',
+      'listen_failed' => "Voice input couldn't start the speech service.",
+      _ => 'Voice input failed ($code).',
+    };
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 6),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   static String _inferSessionName(List<ChatMessage> msgs) {

@@ -48,6 +48,11 @@ abstract class SpeechService extends Service {
   /// Abort capture and discard any accumulated transcript.
   Future<void> cancel();
 
+  /// The recognizer's error code during the current or last session (e.g.
+  /// `error_network`, `error_language_unavailable`), or null. Cleared by
+  /// [start].
+  String? get lastError;
+
   /// Release the sound-level stream. Owned by the app lifecycle (the service
   /// is a singleton); ViewModels must NOT call this.
   @override
@@ -104,18 +109,36 @@ final class SpeechUnsupported extends SpeechAvailability {
 /// The plugin is reached through the [SttPlugin] seam so the locale-resolution
 /// / cap / transcript-accumulation logic is unit-testable without a device.
 class SpeechToTextService implements SpeechService {
-  SpeechToTextService([SttPlugin? plugin, SoundLevelScale? levelScale])
-    : _plugin = plugin ?? SttPluginImpl(),
-      _levelScale = levelScale ?? SoundLevelScale.forPlatform();
+  SpeechToTextService([
+    SttPlugin? plugin,
+    SoundLevelScale? levelScale,
+    this.localesTimeout = const Duration(milliseconds: 1500),
+  ]) : _plugin = plugin ?? SttPluginImpl(),
+       _levelScale = levelScale ?? SoundLevelScale.forPlatform() {
+    _errorSub = _plugin.errors.listen((code) => _lastError = code);
+  }
 
   final SttPlugin _plugin;
   final SoundLevelScale _levelScale;
+
+  /// How long [init] waits for the recognizer's language list.
+  final Duration localesTimeout;
   final StreamController<double> _levelController =
       StreamController<double>.broadcast();
 
   /// Latest recognized words (partial or final). Reset on each [start].
   String _transcript = '';
   bool _initialized = false;
+  String? _lastError;
+  late final StreamSubscription<String> _errorSub;
+
+  /// Resolved locale per preferred locale, kept for the app run: the
+  /// ViewModel is per chat page, and a hanging locales() would otherwise cost
+  /// [localesTimeout] on every chat's first hold.
+  final Map<String, SpeechReady> _ready = {};
+
+  @override
+  String? get lastError => _lastError;
 
   @override
   Stream<double> get soundLevel => _levelController.stream;
@@ -133,10 +156,22 @@ class SpeechToTextService implements SpeechService {
     }
     _initialized = true;
 
-    final supported = await _plugin.locales();
     final preferred = _normalize(preferredLocaleId ?? _platformLocaleId());
+    final cached = _ready[preferred];
+    if (cached != null) return cached;
+    final List<String> supported;
+    try {
+      supported = await _plugin.locales().timeout(localesTimeout);
+    } on TimeoutException {
+      // speech_to_text 7.4 never answers locales() on Android 13+ when the
+      // on-device recognizer is missing or its language check fails (e.g.
+      // Google unreachable). Try the phone's locale; a listen that fails
+      // then reports its error instead of the mic doing nothing.
+      return _ready[preferred] = SpeechReady(preferred);
+    }
     final resolved = _resolveLocale(preferred, supported);
-    return resolved == null ? const SpeechUnsupported() : SpeechReady(resolved);
+    if (resolved == null) return const SpeechUnsupported();
+    return _ready[preferred] = SpeechReady(resolved);
   }
 
   @override
@@ -145,6 +180,7 @@ class SpeechToTextService implements SpeechService {
     required Duration maxDuration,
   }) async {
     _transcript = '';
+    _lastError = null;
     await _plugin.listen(
       localeId: localeId,
       listenFor: maxDuration,
@@ -175,6 +211,7 @@ class SpeechToTextService implements SpeechService {
 
   @override
   void dispose() {
+    _errorSub.cancel();
     if (!_levelController.isClosed) _levelController.close();
   }
 
@@ -217,7 +254,6 @@ class SpeechToTextService implements SpeechService {
         firstWhere((s) => s == 'en_US') ??
         firstWhere((s) => s.split('_').first == 'en');
   }
-
 }
 
 /// Maps the plugin's raw `onSoundLevelChange` value to the `0..1` envelope the
@@ -276,6 +312,9 @@ abstract class SttPlugin {
 
   Future<bool> hasPermission();
 
+  /// Error codes the recognizer reports (`SpeechRecognitionError.errorMsg`).
+  Stream<String> get errors;
+
   /// Recognition locale ids supported on this device (e.g. `pt_BR`, `en_US`).
   Future<List<String>> locales();
 
@@ -299,13 +338,16 @@ class SttPluginImpl implements SttPlugin {
     : _stt = plugin ?? stt.SpeechToText();
 
   final stt.SpeechToText _stt;
+  final StreamController<String> _errors = StreamController<String>.broadcast();
+
+  @override
+  Stream<String> get errors => _errors.stream;
 
   @override
   Future<bool> initialize() => _stt.initialize(
-    // The error stream is consulted by the service only as a backstop for
-    // the "listed locale, no on-device model" case; swallow here so a
-    // transient error during init doesn't throw into the ViewModel.
-    onError: (SpeechRecognitionError _) {},
+    // Forwarded, never thrown: the ViewModel reports a failed session (no
+    // network, no on-device model) instead of a silent empty transcript.
+    onError: (SpeechRecognitionError e) => _errors.add(e.errorMsg),
   );
 
   @override

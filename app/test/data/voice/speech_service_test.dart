@@ -1,6 +1,7 @@
 // Plan 29 — SpeechToTextService locale resolution + transcript / cancel /
 // level behavior, exercised through the SttPlugin seam (no device).
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:app/data/voice/speech_service.dart';
@@ -18,6 +19,10 @@ class _FakeSttPlugin implements SttPlugin {
 
   SttResultCallback? _onResult;
   SttLevelCallback? _onLevel;
+  final _errors = StreamController<String>.broadcast(sync: true);
+
+  @override
+  Stream<String> get errors => _errors.stream;
 
   @override
   Future<bool> initialize() async => initializeResult;
@@ -25,8 +30,18 @@ class _FakeSttPlugin implements SttPlugin {
   @override
   Future<bool> hasPermission() async => permission;
 
+  /// When set, `locales()` never answers — speech_to_text 7.4 on Android 13+
+  /// when the on-device recognizer is missing or its language check fails.
+  bool localesHang = false;
+  int localesCalls = 0;
+
   @override
-  Future<List<String>> locales() async => localeList;
+  Future<List<String>> locales() {
+    localesCalls++;
+    return localesHang
+        ? Completer<List<String>>().future
+        : Future.value(localeList);
+  }
 
   @override
   Future<void> listen({
@@ -51,6 +66,7 @@ class _FakeSttPlugin implements SttPlugin {
   void emitResult(String words, {bool isFinal = false}) =>
       _onResult?.call(words, isFinal);
   void emitLevel(double level) => _onLevel?.call(level);
+  void emitError(String code) => _errors.add(code);
 }
 
 void main() {
@@ -111,6 +127,42 @@ void main() {
       },
     );
 
+    // The hang left init() pending forever: the mic did nothing, with no
+    // message. Past the timeout it tries the phone's locale; a listen that
+    // then fails reports its error.
+    test(
+      'a locales() that never answers falls back to the preferred locale',
+      () async {
+        final plugin = _FakeSttPlugin()..localesHang = true;
+        final service = SpeechToTextService(
+          plugin,
+          null,
+          const Duration(milliseconds: 20),
+        );
+        final a = await service
+            .init(preferredLocaleId: 'en-AU')
+            .timeout(const Duration(seconds: 2));
+        expect(a, const SpeechReady('en_AU'));
+      },
+    );
+
+    // The ViewModel is per chat page, so each chat re-inits; a hanging
+    // lookup must cost its timeout once per app run, not once per chat.
+    test('the resolved locale is reused; locales() is asked once', () async {
+      final plugin = _FakeSttPlugin()..localesHang = true;
+      final service = SpeechToTextService(
+        plugin,
+        null,
+        const Duration(milliseconds: 20),
+      );
+      await service.init(preferredLocaleId: 'en_AU');
+      final again = await service
+          .init(preferredLocaleId: 'en_AU')
+          .timeout(const Duration(milliseconds: 10));
+      expect(again, const SpeechReady('en_AU'));
+      expect(plugin.localesCalls, 1);
+    });
+
     test('unsupported when initialize fails but permission granted', () async {
       final plugin = _FakeSttPlugin()
         ..initializeResult = false
@@ -140,6 +192,29 @@ void main() {
       expect(text, 'hello world');
       expect(plugin.stopCalls, 1);
     });
+
+    // The recognizer's errors used to be swallowed, so a failing service
+    // (no network, no offline model) looked like silence: nothing happened.
+    test(
+      'a recognizer error is kept for the session; start clears it',
+      () async {
+        final plugin = _FakeSttPlugin();
+        final service = SpeechToTextService(plugin);
+        await service.init(preferredLocaleId: 'en_US');
+        await service.start(
+          localeId: 'en_US',
+          maxDuration: const Duration(seconds: 60),
+        );
+        plugin.emitError('error_network');
+        expect(await service.stop(), '');
+        expect(service.lastError, 'error_network');
+        await service.start(
+          localeId: 'en_US',
+          maxDuration: const Duration(seconds: 60),
+        );
+        expect(service.lastError, isNull);
+      },
+    );
 
     test('empty/silent capture resolves to empty string (#12)', () async {
       final plugin = _FakeSttPlugin();
@@ -235,8 +310,9 @@ void main() {
 
   group('SoundLevelScale', () {
     test('forPlatform picks appropriate scale for host OS', () {
-      final expected =
-          (Platform.isIOS || Platform.isMacOS) ? SoundLevelScale.darwin : SoundLevelScale.android;
+      final expected = (Platform.isIOS || Platform.isMacOS)
+          ? SoundLevelScale.darwin
+          : SoundLevelScale.android;
       expect(SoundLevelScale.forPlatform(), expected);
     });
 

@@ -44,6 +44,15 @@ class VoiceInputViewModel extends ViewModel<VoiceInputState> {
       StreamController<String>.broadcast();
   Stream<String> get transcripts => _transcripts.stream;
 
+  /// Recognizer error codes for sessions that produced no text (or
+  /// `listen_failed` when capture could not start). Silence stays a quiet
+  /// no-op (#12), so `error_no_match` / `error_speech_timeout` are not sent.
+  final StreamController<String> _failures =
+      StreamController<String>.broadcast();
+  Stream<String> get failures => _failures.stream;
+
+  static const _silence = {'error_no_match', 'error_speech_timeout'};
+
   /// Resolve permission + on-device locale, caching the outcome. Idempotent:
   /// once [SpeechReady] is reached it short-circuits. On failure the state is
   /// updated to the matching [VoiceUnavailable] so the UI reacts.
@@ -83,7 +92,13 @@ class VoiceInputViewModel extends ViewModel<VoiceInputState> {
         }
       });
 
-      await _service.start(localeId: _localeId!, maxDuration: maxDuration);
+      try {
+        await _service.start(localeId: _localeId!, maxDuration: maxDuration);
+      } catch (_) {
+        _stopTimers();
+        if (!_failures.isClosed) _failures.add('listen_failed');
+        return;
+      }
       emit(VoiceRecording(elapsed: _elapsed, level: _level));
 
       _ticker = Timer.periodic(_tickInterval, (_) {
@@ -112,6 +127,10 @@ class VoiceInputViewModel extends ViewModel<VoiceInputState> {
     final text = await _service.stop();
     emit(const VoiceIdle());
     if (!_transcripts.isClosed) _transcripts.add(text);
+    final error = _service.lastError;
+    if (text.isEmpty && error != null && !_silence.contains(error)) {
+      if (!_failures.isClosed) _failures.add(error);
+    }
     return text;
   }
 
@@ -140,6 +159,7 @@ class VoiceInputViewModel extends ViewModel<VoiceInputState> {
       _service.cancel();
     }
     _transcripts.close();
+    _failures.close();
     super.dispose();
   }
 }

@@ -12,6 +12,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 class _FakeSpeechService implements SpeechService {
+  @override
+  String? lastError;
   SpeechAvailability availability = const SpeechReady('en_US');
   String transcript = 'hello from voice';
   final StreamController<double> _level = StreamController<double>.broadcast();
@@ -123,6 +125,34 @@ void main() {
     expect(find.byKey(const Key('recording-strip')), findsNothing);
     expect(find.text('hello from voice'), findsNothing);
     expect(find.byIcon(LucideIcons.mic600), findsOneWidget);
+  });
+
+  testWidgets('a failed session reports the recognizer error', (tester) async {
+    svc
+      ..transcript = ''
+      ..lastError = 'error_network';
+    final errors = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: InputBar(
+              onSend: (_) {},
+              voice: vm,
+              onVoiceHint: hints.add,
+              onVoiceError: errors.add,
+            ),
+          ),
+        ),
+      ),
+    );
+    final gesture = await startHold(tester);
+    await gesture.up();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    expect(errors, ['error_network']);
   });
 
   testWidgets('a plain tap nudges with the hold-to-talk hint', (tester) async {
