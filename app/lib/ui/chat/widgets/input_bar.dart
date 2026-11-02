@@ -597,11 +597,20 @@ class _InputBarState extends State<InputBar> {
         !showStrip &&
         widget.onSetQueued != null;
 
+    // During a working turn with an empty composer, the main action stays the
+    // mic so a steering message can be dictated; Stop moves beside it.
+    final micWhileStreaming =
+        widget.streaming &&
+        !hasContent &&
+        widget.voice != null &&
+        !voiceUnsupported &&
+        canInteract;
+
     // During a working turn with typed content, the main action sends steering;
     // keep a compact Stop affordance beside it so cancellation remains reachable.
     final showInlineStop =
         widget.streaming &&
-        hasContent &&
+        (hasContent || micWhileStreaming) &&
         canInteract &&
         !showStrip &&
         widget.onCancel != null;
@@ -802,7 +811,7 @@ class _InputBarState extends State<InputBar> {
                     const SizedBox(width: 8),
                   ],
                   _ComposerActionButton(
-                    streaming: widget.streaming,
+                    streaming: widget.streaming && !micWhileStreaming,
                     hasContent: hasContent,
                     disabled: widget.disabled,
                     onSendText: _submit,

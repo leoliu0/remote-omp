@@ -1043,3 +1043,13 @@ Existing stored duplicates are not purged by this fix.
   - A, on-device recognizer blanked with a settings overlay: the app falls back to Google's speech service, which here has its own English model; holds show the recording view (`-fix-02` … `-fix-05`), silence returns NO_SPEECH_DETECTED (quiet by design). After a cold start the first hold waited ~3.4 s before recording (`-fix-06` … `-fix-09`); the timeout is now 1.5 s and paid once per app run (unit-tested, not re-run on the surface).
 - Not verified: the user's phone; real speech to text on the emulator (the en-US pack waits for Wi-Fi; the emulator has only mobile data, `-11`, `-12`).
 - Cleanup: pairing revoked, `pm clear`, networking and rotation restored, scratch dirs and worktree removed; real `config.yml` and `peers.json` unchanged. The scratch omp joined the local mesh, so the user's live sessions were listed in the app; none was opened.
+
+### 2026-11-02 - App: the mic stays while the agent is running ("Can the voice work when it's running? It just types")
+- Change: `app/lib/ui/chat/widgets/input_bar.dart`. While a turn runs and the composer is empty, the main button was Stop only; it is now the hold-to-talk mic with the compact inline Stop (`input-bar-inline-stop`) beside it. Without voice (no ViewModel, or recognition unsupported) it stays Stop. Dictated text fills the field, then the existing steering send / queue / inline Stop apply.
+- Tests (regression first): `while streaming the mic stays, with Stop beside it` failed before (no mic). App 975 passed, `flutter analyze` unchanged at 10 old issues.
+- Surface (`RemotePi_Pixel`, x86_64 release from the working tree, scratch omp paired by paste code, live relay; on-device recognizer blanked so Google's recognizer with its English model ran, a spoken clip fed into the emulator mic):
+  1. While the agent worked: mic plus red inline Stop (`2026-11-02-voice-streaming-01`, `-06`).
+  2. Hold: recording strip with a live waveform (`-02`); release: the field held "please also list the files in the current folder" with queue, steering send and inline Stop (`-03`, `-04`); sent as steering, it reached omp and the agent listed the folder (`-05`).
+  3. Inline Stop on a new turn aborted `sleep 90`; the header went back to online (`-07`).
+- Cleanup: pairing revoked, `pm clear`, overlay removed, scratch removed; real `config.yml` and `peers.json` unchanged.
+- Not verified: the user's phone.

@@ -155,6 +155,42 @@ void main() {
     expect(errors, ['error_network']);
   });
 
+  // While the agent works, the empty composer's button used to be Stop only,
+  // so the user could only type a steering message. The mic stays, with a
+  // compact Stop beside it.
+  testWidgets('while streaming the mic stays, with Stop beside it', (
+    tester,
+  ) async {
+    var cancels = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: InputBar(
+              onSend: (_) {},
+              onCancel: () => cancels++,
+              streaming: true,
+              voice: vm,
+              onVoiceHint: hints.add,
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.byIcon(LucideIcons.mic600), findsOneWidget);
+    await tester.tap(find.byKey(const Key('input-bar-inline-stop')));
+    expect(cancels, 1);
+
+    final gesture = await startHold(tester);
+    expect(find.byKey(const Key('recording-strip')), findsOneWidget);
+    await gesture.up();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('hello from voice'), findsOneWidget);
+  });
+
   testWidgets('a plain tap nudges with the hold-to-talk hint', (tester) async {
     await pumpBar(tester);
     await tester.tap(find.byIcon(LucideIcons.mic600));
