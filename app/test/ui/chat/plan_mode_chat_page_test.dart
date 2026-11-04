@@ -61,6 +61,8 @@ class _FakeChatViewModel extends ChangeNotifier implements ChatViewModel {
   @override
   List<WireSkill> get dynamicSkills => const [];
   @override
+  List<String>? get promptHistory => null;
+  @override
   String? get cancelTargetId => null;
   @override
   List<QueuedMsg> get queuedMessages => const [];

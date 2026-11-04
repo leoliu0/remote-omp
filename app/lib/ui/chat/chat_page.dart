@@ -737,11 +737,13 @@ class _ChatPageState extends State<ChatPage> {
         !isPeerOffline &&
         !isPresenceOffline;
 
+    // The Pi's prompt list reaches past the transcript's event window.
     final messageHistory = isReady
-        ? [
-            for (final m in state.messages)
-              if (m is UserMsg && m.text.trim().isNotEmpty) m.text.trim(),
-          ]
+        ? vm.promptHistory ??
+              [
+                for (final m in state.messages)
+                  if (m is UserMsg && m.text.trim().isNotEmpty) m.text.trim(),
+              ]
         : const <String>[];
     final prefs = context.read<Preferences>();
     final peerEpk = vm.activePeer?.remoteEpk ?? prefs.selectedPeerEpk;

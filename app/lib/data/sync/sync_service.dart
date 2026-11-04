@@ -180,6 +180,12 @@ class SyncService extends Service {
   Stream<List<WireSkill>> get dynamicSkillsStream => _skillsController.stream;
   List<WireSkill> get dynamicSkills => _dynamicSkills;
 
+  /// The active session's recent prompts for the composer's history recall
+  /// (latest `session_history` plus live echoes). Null until a Pi that sends
+  /// them answers a sync; the transcript is the fallback then.
+  List<String>? get promptHistory => _promptHistory;
+  List<String>? _promptHistory;
+
   /// True while the active session's agent is producing a reply (whole turn).
   bool get isWorking => _working;
   Stream<bool> get workingStream => _workingController.stream;
@@ -203,6 +209,7 @@ class SyncService extends Service {
     // the Pi, and Home keeps showing it via the relay's per-room
     // `meta.working` broadcast.
     _resetTurnState();
+    _promptHistory = null;
     _indexLoaded = false;
     _activeEpk = epk;
     _activeRoomId = room;
@@ -636,6 +643,9 @@ class SyncService extends Service {
               if (item.id != id) item,
           ]);
         }
+        if (_promptHistory != null && text.trim().isNotEmpty) {
+          _promptHistory = [..._promptHistory!, text];
+        }
         // ignore: discarded_futures
         _upsertUserEcho(
           id,
@@ -739,7 +749,8 @@ class SyncService extends Service {
           _conn.switchTo(peer);
         }
 
-      case SessionHistory():
+      case SessionHistory(:final prompts):
+        _promptHistory = prompts;
         // ignore: discarded_futures
         _applyHistory(msg);
 

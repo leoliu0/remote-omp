@@ -2033,6 +2033,8 @@ let _lockedName: string | null = null;
 // runs without restarting the extension. The value is also clamped against
 // the client-provided `limit` (server is authoritative).
 const SYNC_LIMIT_DEFAULT = 200;
+// Prompts sent beside the event window for the composer's history recall.
+const SYNC_PROMPTS_LIMIT = 100;
 function _getSyncLimit(): number {
   const raw = process.env["REMOTE_PI_SYNC_LIMIT"];
   const parsed = raw ? parseInt(raw, 10) : NaN;
@@ -6412,6 +6414,9 @@ function _handleSessionSync(
   const allEvents = _mapAgentMessagesToEvents(_messageBuffer);
   const slice = effectiveLimit > 0 ? allEvents.slice(-effectiveLimit) : [];
   const truncated = allEvents.length > effectiveLimit;
+  const prompts = allEvents
+    .flatMap((e) => (e.type === "user_input" && e.text.trim() ? [e.text] : []))
+    .slice(-SYNC_PROMPTS_LIMIT);
 
   sender.send({
     type: "session_history",
@@ -6420,6 +6425,7 @@ function _handleSessionSync(
     events: slice,
     eos: true,
     truncated,
+    prompts,
   });
   // The activity panel is live state, not history: resend it after the
   // client substitutes its timeline.
@@ -6483,6 +6489,7 @@ function _resetSessionForNew(inReplyTo: string): void {
     events: [],
     eos: true,
     truncated: false,
+    prompts: [],
   });
 }
 

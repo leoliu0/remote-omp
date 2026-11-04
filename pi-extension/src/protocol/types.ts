@@ -487,6 +487,9 @@ export type ServerMessage =
       events: SessionHistoryEvent[];
       eos: boolean;
       truncated: boolean;
+      // The session's most recent prompts (oldest first), whatever the
+      // `events` window holds: the composer's history recall reads these.
+      prompts?: string[];
     }
   | {
       type: "skills_list";

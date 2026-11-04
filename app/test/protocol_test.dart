@@ -489,6 +489,22 @@ void main() {
       expect(evt.image?.data, 'QUJD');
     });
 
+    test('session_history prompts decode; absent from an older Pi', () {
+      Map<String, dynamic> frame([List<String>? prompts]) => {
+        'type': 'session_history',
+        'in_reply_to': 'sync1',
+        'session_started_at': 0,
+        'eos': true,
+        'events': const <Object>[],
+        'prompts': ?prompts,
+      };
+      final withPrompts =
+          ServerMessage.fromJson(frame(['a', 'b'])) as SessionHistory;
+      expect(withPrompts.prompts, ['a', 'b']);
+      final older = ServerMessage.fromJson(frame()) as SessionHistory;
+      expect(older.prompts, isNull);
+    });
+
     test('WireModel.vision roundtrips and defaults to false', () {
       const m = WireModel(
         id: 'claude-opus-4-7',

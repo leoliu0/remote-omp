@@ -1384,6 +1384,29 @@ void main() {
       s.sync.dispose();
     });
 
+    // Composer history used to come from the synced transcript only, whose
+    // 200-event window held about 5 prompts after a few tool-heavy turns.
+    test('session_history prompts feed composer history; an echo appends', () async {
+      final s = await setup();
+      addTearDown(s.conn.dispose);
+      addTearDown(s.sync.dispose);
+      expect(s.sync.promptHistory, isNull);
+
+      s.ch.push(SessionHistory(
+        inReplyTo: 'sync-1',
+        sessionStartedAt: 0,
+        events: const [],
+        eos: true,
+        prompts: const ['one', 'two'],
+      ));
+      await _settle();
+      expect(s.sync.promptHistory, ['one', 'two']);
+
+      s.ch.push(UserInput(id: 'u3', text: 'three'));
+      await _settle();
+      expect(s.sync.promptHistory, ['one', 'two', 'three']);
+    });
+
     test('SessionHistory with empty events does not wipe existing local history', () async {
       final s = await setup();
       // Populate local message history

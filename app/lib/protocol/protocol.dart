@@ -1410,12 +1410,17 @@ class SessionHistory extends ServerMessage {
   final List<SessionHistoryEvent> events;
   final bool eos;
   final bool truncated;
+
+  /// The session's most recent prompts, oldest first, beyond the `events`
+  /// window. Null from a Pi that predates the field.
+  final List<String>? prompts;
   SessionHistory({
     required this.inReplyTo,
     required this.sessionStartedAt,
     required this.events,
     required this.eos,
     this.truncated = false,
+    this.prompts,
   });
 
   factory SessionHistory.fromJson(Map<String, dynamic> j) => SessionHistory(
@@ -1427,6 +1432,7 @@ class SessionHistory extends ServerMessage {
     eos: j['eos'] as bool,
     // Tolerate absence during the protocol transition window.
     truncated: (j['truncated'] as bool?) ?? false,
+    prompts: (j['prompts'] as List<dynamic>?)?.cast<String>(),
   );
 }
 

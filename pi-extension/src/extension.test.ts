@@ -4249,6 +4249,46 @@ describe("session sync", () => {
     delete process.env["REMOTE_PI_SYNC_LIMIT"];
   });
 
+  // The composer's history recall used to see only the prompts inside the
+  // event window; a few tool-heavy turns pushed all but ~5 out of it.
+  test("prompts carry the session's recent prompts beyond the event window", async () => {
+    process.env["REMOTE_PI_SYNC_LIMIT"] = "4";
+    await _pairForTest("peer-ss-prompts");
+
+    const ts = 1_700_000_000_000;
+    _setSessionStartedAtForTest(ts);
+    const messages: Array<{ role: string; content: unknown; timestamp: number }> = [];
+    for (let turn = 0; turn < 120; turn++) {
+      messages.push({ role: "user", content: `prompt ${turn}`, timestamp: ts + turn * 10 });
+      for (let k = 1; k <= 3; k++) {
+        messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: `step ${turn}.${k}` }],
+          timestamp: ts + turn * 10 + k,
+        });
+      }
+    }
+    messages.push({ role: "user", content: "   ", timestamp: ts + 5_000 });
+    _setMessageBufferForTest(messages);
+
+    const sendsBefore = relayRef.current!.send.mock.calls.length;
+    routeClientMessage(
+      { type: "session_sync", id: "req-prompts" },
+      { abort: () => undefined },
+    );
+
+    const h = (relayRef.current!.send.mock.calls.slice(sendsBefore).map((c) => c[0] as string))
+      .map(decodeSentCt)
+      .find((d) => d.inner.type === "session_history")!;
+    expect((h.inner["events"] as unknown[]).length).toBe(4);
+    const prompts = h.inner["prompts"] as string[];
+    expect(prompts).toHaveLength(100);
+    expect(prompts[0]).toBe("prompt 20");
+    expect(prompts[99]).toBe("prompt 119");
+
+    delete process.env["REMOTE_PI_SYNC_LIMIT"];
+  });
+
   test("mapping: assistant with TextContent + ToolCall → 2 events", () => {
     const ts = 1_700_000_000_000;
     const events = _mapAgentMessagesToEvents([
