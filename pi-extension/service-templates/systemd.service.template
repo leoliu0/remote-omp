@@ -6,7 +6,10 @@ After=default.target
 [Service]
 Type=simple
 ExecStart={NODE} {SUPERVISOR}
-Restart=on-failure
+# always, not on-failure: a supervisor that exits cleanly (a stray SIGTERM, or
+# another supervisor holding the control socket) must come back too — it is
+# what keeps the machine reachable (plan/67). `systemctl --user stop` still stops it.
+Restart=always
 RestartSec=5s
 StandardOutput=journal
 StandardError=journal

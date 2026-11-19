@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { daemonIdForCwd } from "./id.js";
 import { defaultAgentName } from "../session/local_config.js";
+import { isHarness, type Harness } from "./harness.js";
 
 /**
  * The global daemon registry: which working directories are promoted to
@@ -37,6 +38,16 @@ export interface DaemonEntry {
    * (cwd only) fall back to `defaultAgentName(cwd)`.
    */
   name?: string;
+  /** CLI this daemon runs. Entries written before plan/67 have none and run pi. */
+  harness?: Harness;
+}
+
+/** A registry entry as the supervisor consumes it: id derived, defaults filled. */
+export interface DaemonRecord {
+  id: string;
+  cwd: string;
+  name: string;
+  harness: Harness;
 }
 
 export interface DaemonRegistry {
@@ -81,6 +92,8 @@ export function loadRegistry(): DaemonRegistry {
         const rawName = (item as { name?: unknown }).name;
         const entry: DaemonEntry = { cwd };
         if (typeof rawName === "string" && rawName.length > 0) entry.name = rawName;
+        const rawHarness = (item as { harness?: unknown }).harness;
+        if (isHarness(rawHarness)) entry.harness = rawHarness;
         daemons.push(entry);
       }
     }
@@ -100,7 +113,7 @@ export function saveRegistry(reg: DaemonRegistry): void {
  * present). Returns the derived id + normalized cwd so the caller can
  * report it back to the user.
  */
-export function addDaemon(rawCwd: string, name?: string): { id: string; cwd: string; name: string } {
+export function addDaemon(rawCwd: string, name?: string, harness: Harness = "pi"): DaemonRecord {
   const cwd = normalizeCwd(rawCwd);
   const reg = loadRegistry();
   if (reg.daemons.some((d) => d.cwd === cwd)) {
@@ -109,9 +122,9 @@ export function addDaemon(rawCwd: string, name?: string): { id: string; cwd: str
   // Always persist a name (the registry is the source of truth now that the
   // supervisor injects config via env instead of a local config file).
   const resolvedName = name?.trim() || defaultAgentName(cwd);
-  reg.daemons.push({ cwd, name: resolvedName });
+  reg.daemons.push({ cwd, name: resolvedName, harness });
   saveRegistry(reg);
-  return { id: daemonIdForCwd(cwd), cwd, name: resolvedName };
+  return { id: daemonIdForCwd(cwd), cwd, name: resolvedName, harness };
 }
 
 /**
@@ -130,13 +143,14 @@ export function removeDaemon(id: string): { removed: boolean; cwd?: string } {
 
 /** Snapshot of all registered daemons with derived ids. Order matches the
  *  file's insertion order — first-registered first. */
-export function listDaemons(): Array<{ id: string; cwd: string; name: string }> {
+export function listDaemons(): DaemonRecord[] {
   return loadRegistry().daemons.map((d) => ({
     id: daemonIdForCwd(d.cwd),
     cwd: d.cwd,
     // Legacy entries (cwd only) fall back to the folder-derived name so a
     // daemon is never nameless. New entries already carry an explicit name.
     name: d.name ?? defaultAgentName(d.cwd),
+    harness: d.harness ?? "pi",
   }));
 }
 

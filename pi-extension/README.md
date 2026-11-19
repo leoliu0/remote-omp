@@ -560,7 +560,7 @@ real name to the peer.
 
 | Command | Description |
 |---|---|
-| `/remote-pi create <cwd> [--name X]` | Register a folder as a daemon |
+| `/remote-pi create <cwd> [--name X] [--harness pi\|omp]` | Register a folder as a daemon |
 | `/remote-pi remove <id>` | Unregister a daemon (local config preserved) |
 | `/remote-pi daemons` | List registered daemons + state |
 | `/remote-pi daemon start` | Start every registered daemon |
@@ -667,6 +667,33 @@ remote-pi create ~/Movies --name "Video Editor"
 
 # 3. Start it (supervisor spawns `pi --mode rpc` for this folder).
 remote-pi daemon start
+```
+
+`--harness omp` runs the daemon on [oh-my-pi](https://github.com/can1357/oh-my-pi)
+instead of Pi. Without the flag `create` uses `REMOTE_PI_HARNESS`, else the
+harness you ran the command from, else `pi`.
+
+### Staying reachable with every session closed
+
+A registered daemon is the door that stays open when no terminal is. Only the
+supervisor ends it, and only when you say so on the machine (`remote-pi daemon
+stop`, `remove`, `uninstall`):
+
+- A daemon that exits by itself is started again — a crash, a `kill`, or the
+  app's **Quit session** (which then comes back as a fresh session). Retries
+  back off (1 s, 5 s, 30 s, then every 5 min) and never stop.
+- The supervisor is restarted by systemd/launchd whenever it exits, and starts
+  at boot. On Linux run `loginctl enable-linger $USER` once so it starts
+  without anyone logging in.
+- Daemons get the environment of a new terminal: at start the supervisor reads
+  it from your login shell (`$SHELL -ilc env`), so API keys and proxies
+  exported in your rc files apply.
+
+One always-on agent for the whole machine:
+
+```bash
+remote-pi install
+remote-pi create ~ --name always-on
 ```
 
 Now you can:

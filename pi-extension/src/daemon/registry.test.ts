@@ -133,6 +133,17 @@ describe("addDaemon", () => {
     expect(onDisk.daemons).toHaveLength(1);
     expect(onDisk.daemons[0]!.cwd).toBe(realpathSync(tmp));
   });
+
+  test("keeps the harness a daemon was registered with", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "pi-harness-"));
+    addDaemon(tmp, "door", "omp");
+    expect(listDaemons()[0]).toMatchObject({ name: "door", harness: "omp" });
+  });
+
+  test("entries without a (valid) harness run pi, as before the field existed", () => {
+    saveRegistry({ daemons: [{ cwd: "/tmp/a" }, { cwd: "/tmp/b", harness: "nonsense" as never }] });
+    expect(listDaemons().map((d) => d.harness)).toEqual(["pi", "pi"]);
+  });
 });
 
 describe("removeDaemon", () => {
@@ -171,8 +182,8 @@ describe("listDaemons", () => {
     addDaemon(b);
     const out = listDaemons();
     expect(out).toEqual([
-      { id: daemonIdForCwd(realpathSync(a)), cwd: realpathSync(a), name: defaultAgentName(realpathSync(a)) },
-      { id: daemonIdForCwd(realpathSync(b)), cwd: realpathSync(b), name: defaultAgentName(realpathSync(b)) },
+      { id: daemonIdForCwd(realpathSync(a)), cwd: realpathSync(a), name: defaultAgentName(realpathSync(a)), harness: "pi" },
+      { id: daemonIdForCwd(realpathSync(b)), cwd: realpathSync(b), name: defaultAgentName(realpathSync(b)), harness: "pi" },
     ]);
   });
 
@@ -181,7 +192,7 @@ describe("listDaemons", () => {
     const cwd = realpathSync(dir);
     saveRegistry({ daemons: [{ cwd }] }); // pre-name-field shape
     const out = listDaemons();
-    expect(out).toEqual([{ id: daemonIdForCwd(cwd), cwd, name: defaultAgentName(cwd) }]);
+    expect(out).toEqual([{ id: daemonIdForCwd(cwd), cwd, name: defaultAgentName(cwd), harness: "pi" }]);
   });
 
   test("empty registry yields []", () => {

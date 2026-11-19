@@ -161,6 +161,12 @@ Estas decisões foram **propositalmente adiadas**. Quando alguém quiser fechar,
 - **Unchanged:** Flutter, native owner signing identity, relay wire protocol, personal relay configuration, and existing terminal command semantics. No approval for a Kotlin rewrite, new workspace authorization protocol, or removal of authentication.
 - **Evidence boundary:** the 1.2.40 phone recovery and cold restart are recorded in `review/TESTING.md`; native secure-storage enumeration failure remains a hypothesis. SQLite is selected for atomic data/membership updates, not as proof that Hive or Flutter caused that native failure.
 
+## Always-on door (decided 2026-11-19 — plan 67)
+
+- **A daemon stays optional, but a registered one is permanent.** The user asked for control "all the time", including after closing every session. The plan-26 supervisor is the door; no second daemon was added (plan 63 stands). Only local commands end a supervised daemon (`remote-pi daemon stop|remove`, `uninstall`); the app's Quit session restarts it as a fresh session.
+- **Daemons run the user's harness.** Each registry entry records `pi` or `omp`.
+- **This revises** the "Sem daemon no MVP" row only for users who opt in with `remote-pi install`; with no daemon registered, behaviour is unchanged.
+
 ## Como atualizar este arquivo
 
 - **Decisão nova fechada em conversa** → adicione bullet na seção certa

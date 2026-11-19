@@ -99,11 +99,13 @@ in the unit/plist environment (PATH, HOME) — re-run `remote-pi install`.
 
 ---
 
-## 3. A specific daemon stays `crashed`
+## 3. A specific daemon keeps crashing
 
-`remote-pi daemon status` shows one row with `state=crashed` and a
-restart count near 4 (the supervisor gives up after exponential
-backoff: 1s, 5s, 30s, 5min).
+`remote-pi daemon status` shows one row flipping between `crashed` and
+`running` with a growing restart count. The supervisor never gives up on a
+registered daemon: it retries after 1s, 5s, 30s, then every 5min, and starts
+the ladder over once a run has lasted a minute. To make it stay down, stop it:
+`remote-pi daemon stop <id>`.
 
 ### Step 1 — read the daemon's stderr
 

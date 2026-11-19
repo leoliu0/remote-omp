@@ -19,6 +19,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Supervisor, SupervisorAlreadyRunningError } from "../daemon/supervisor.js";
+import { loginShellEnv } from "../daemon/shell_env.js";
 
 const HELP_TEXT = `pi-supervisord — Remote Pi daemon supervisor
 
@@ -66,6 +67,16 @@ async function main(): Promise<void> {
   const here = fileURLToPath(import.meta.url);
   const distRoot = dirname(dirname(here));  // dist/bin → dist
   const extensionPath = join(distRoot, "index.js");
+
+  // A service manager starts us with a bare environment. Daemons are the
+  // user's terminal agent without the terminal, so give them what a new
+  // terminal would have: API keys, proxies, PATH (plan/67). POSIX shells only.
+  const shell = process.env["SHELL"];
+  if (process.platform !== "win32" && shell) {
+    const env = await loginShellEnv({ shell });
+    if (env) Object.assign(process.env, env);
+    else process.stderr.write(`[pi-supervisord] could not read the environment from ${shell}; using the service environment\n`);
+  }
 
   const supervisor = new Supervisor({ extensionPath });
   await supervisor.start();

@@ -4,9 +4,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DaemonState } from "./control_protocol.js";
 import { defaultAgentName, loadLocalConfig, type LocalConfig } from "../session/local_config.js";
+import type { Harness } from "./harness.js";
 
 /**
- * Wrapper around a `pi --mode rpc -e <extension>` child process for the
+ * Wrapper around a `<harness> --mode rpc -e <extension>` child process for the
  * supervisor.
  *
  * Lifecycle:
@@ -16,15 +17,17 @@ import { defaultAgentName, loadLocalConfig, type LocalConfig } from "../session/
  *   - The child's stdout (Pi RPC events) is currently consumed line-by-line
  *     and ignored — wave 2 only needs fire-and-forget. Later waves can
  *     surface the events back through the supervisor's status op.
- *   - Exit/crash fires `exit` event with `{code, signal, isCrash}` so the
- *     supervisor can decide whether to auto-restart.
+ *   - Every exit fires an `exit` event with `{code, signal, requested, uptimeMs}`;
+ *     the supervisor respawns unless it requested the exit itself (plan 67).
  *
  * Each `RpcChild` instance maps 1:1 to a registry entry (single cwd).
  * The supervisor owns the map of these and addresses them by `id`.
  */
 
 export interface RpcChildOptions {
-  /** Path to the `pi` binary. Defaults to "pi" (must be on PATH). */
+  /** Which CLI to run; decides the argv (see `rpcSpawnArgs`). Defaults to "pi". */
+  harness?: Harness;
+  /** Path to the harness binary. Defaults to the harness name (must be on PATH). */
   piBin?: string;
   /** Absolute path to the remote-pi `dist/index.js` to load as -e. */
   extensionPath: string;
@@ -48,8 +51,11 @@ export interface RpcChildOptions {
 export interface RpcChildExitEvent {
   code: number | null;
   signal: NodeJS.Signals | null;
-  /** True when exit was not clean (non-zero or signal). */
-  isCrash: boolean;
+  /** True when the exit was asked for through `stop()`. Anything else — a
+   *  crash, or the harness quitting by itself — is not the supervisor's doing. */
+  requested: boolean;
+  /** How long the process ran; 0 when it never started. */
+  uptimeMs: number;
 }
 
 export const EXIT_DAEMON_FRESH_SESSION = 42;
@@ -170,7 +176,8 @@ function parseGetStateResponse(line: string): { id?: string; isStreaming?: boole
 }
 
 /**
- * CLI args for the daemon's `pi --mode rpc` child.
+ * CLI args for the daemon's `--mode rpc` child. pi and omp share the RPC
+ * protocol but not their flags.
  *
  * `--continue` is the key bit: it resumes the **most recent** session for the
  * cwd (`SessionManager.continueRecent`, non-interactive — unlike `--resume`
@@ -179,6 +186,8 @@ function parseGetStateResponse(line: string): { id?: string; isStreaming?: boole
  * restart REUSES the one session; the app's `/new` (session_new) still rolls
  * it over to a fresh one, which the next restart then continues. First boot
  * (no prior session) just creates the first one.
+ *
+ * pi only:
  *
  * `--name <sessionName>`, when given, pins the session's display name to the
  * daemon's identity (its `agent_name`) so every restart shows up under the
@@ -196,18 +205,29 @@ function parseGetStateResponse(line: string): { id?: string; isStreaming?: boole
  * the correct non-interactive stance. (Does NOT affect the separate "extension
  * loaded twice" conflict, which comes from the extension being BOTH installed
  * in ~/.pi/agent/extensions or cwd/.pi/extensions AND passed via `-e`.)
+ *
+ * omp only:
+ *
+ * `--allow-home`: started in `~`, omp moves itself to a temp dir unless told
+ * otherwise. A daemon must run in the folder it was registered for — the relay
+ * room and the cwd lock are derived from it.
  */
-export function rpcSpawnArgs(
-  extensionPath: string,
-  sessionName?: string,
-  useContinue = true,
-): string[] {
+export function rpcSpawnArgs(o: {
+  harness: Harness;
+  extensionPath: string;
+  sessionName?: string;
+  useContinue?: boolean;
+}): string[] {
+  const resume = o.useContinue === false ? [] : ["--continue"];
+  if (o.harness === "omp") {
+    return ["--mode", "rpc", "--allow-home", ...resume, "-e", o.extensionPath];
+  }
   return [
     "--mode", "rpc",
     "--approve",
-    ...(useContinue ? ["--continue"] : []),
-    ...(sessionName ? ["--name", sessionName] : []),
-    "-e", extensionPath,
+    ...resume,
+    ...(o.sessionName ? ["--name", o.sessionName] : []),
+    "-e", o.extensionPath,
   ];
 }
 
@@ -219,8 +239,8 @@ export class RpcChild extends EventEmitter {
   /** True while a deliberate `stop()` is in flight. The process dies by
    *  signal (SIGTERM/SIGKILL), which would otherwise look like a crash and
    *  trip the supervisor's auto-restart — re-spawning a daemon the operator
-   *  just stopped/removed. Gating `isCrash` on this makes a deliberate stop a
-   *  clean exit (no restart). Reset on every `spawn()`. */
+   *  just stopped/removed. Reported as `requested` on the exit event. Reset on
+   *  every `spawn()`. */
   private _stopping = false;
   /** Next spawn should create a fresh session instead of --continue. */
   private forceFreshSessionOnNextSpawn = false;
@@ -252,11 +272,12 @@ export class RpcChild extends EventEmitter {
    */
   spawn(): void {
     if (this.child) return;
-    this._stopping = false;  // fresh start — a later signal IS a real crash
+    this._stopping = false;  // fresh start — a later exit is not ours
     this._busy = false;
     this._state = "starting";
 
-    const piTarget = resolvePiSpawn(this.opts.piBin ?? "pi");
+    const harness = this.opts.harness ?? "pi";
+    const piTarget = resolvePiSpawn(this.opts.piBin ?? harness);
     // Name the (single) daemon session after the daemon's configured identity,
     // so it shows up stably instead of an auto-generated name on each restart.
     // Prefer the supervisor-injected config; fall back to the on-disk file.
@@ -266,13 +287,19 @@ export class RpcChild extends EventEmitter {
     this.forceFreshSessionOnNextSpawn = false;
     // On Windows `prefixArgs` carries pi's cli.js (we spawn node directly); on
     // POSIX it's empty and `command` is `pi` itself.
-    const args = [...piTarget.prefixArgs, ...rpcSpawnArgs(this.opts.extensionPath, sessionName, useContinue)];
+    const args = [
+      ...piTarget.prefixArgs,
+      ...rpcSpawnArgs({ harness, extensionPath: this.opts.extensionPath, sessionName, useContinue }),
+    ];
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       ...this.opts.env,
       // Mandatory daemon marker — `_cmdRoot` in index.ts can use this to
       // bail early if local config is missing (no wizard in RPC mode).
       REMOTE_PI_DAEMON: "1",
+      // A daemon that registers another daemon from its shell (`remote-pi
+      // create`) defaults to its own harness.
+      REMOTE_PI_HARNESS: harness,
       // Inject the daemon config inline so the child needs no config file.
       ...(this.opts.config ? { REMOTE_PI_DIRECT_CONFIG: JSON.stringify(this.opts.config) } : {}),
     };
@@ -297,14 +324,19 @@ export class RpcChild extends EventEmitter {
       // sees daemon logs (with cwd prefix for disambiguation).
       process.stderr.write(`[${this.opts.cwd}] ${chunk.toString()}`);
     });
-    child.on("exit", (code, signal) => this._onExit(code, signal));
+    child.on("exit", (code, signal) => {
+      if (this.child === child) this._onExit(code, signal);
+    });
     child.on("error", (err) => {
-      // spawn() itself failed (e.g. `pi` binary not found).
-      this._state = "crashed";
+      // Only a failed spawn (no pid, e.g. the binary is not on PATH) ends the
+      // child here; Node emits no `exit` for it. A live child that errors
+      // still reports through `exit`.
+      if (this.child !== child || child.pid !== undefined) return;
       process.stderr.write(
         `[remote-pi-supervisord] spawn failed for ${this.opts.cwd}: ${String(err)}\n`,
       );
-      this.emit("exit", { code: null, signal: null, isCrash: true });
+      this._startedAt = null;
+      this._onExit(null, null);
     });
 
     this.emit("spawn", { pid: child.pid });
@@ -407,14 +439,16 @@ export class RpcChild extends EventEmitter {
   }
 
   private _onExit(code: number | null, signal: NodeJS.Signals | null): void {
-    // Daemon app-action `/new`: child exits with a private code, supervisor
-    // restarts it, and the next spawn omits --continue once to create a fresh
-    // session. Later restarts go back to --continue.
-    if (code === EXIT_DAEMON_FRESH_SESSION) this.forceFreshSessionOnNextSpawn = true;
-    // A deliberate stop() kills by signal — not a crash, so the supervisor
-    // must NOT auto-restart it. Only an UNexpected exit counts as a crash.
-    const isCrash = !this._stopping && (code !== 0 || signal !== null);
-    this._state = isCrash ? "crashed" : "stopped";
+    const requested = this._stopping;
+    // The session itself asked to end — the app's `/new` (private code) or its
+    // "quit session" (`/exit`, a clean exit nobody here requested): the next
+    // spawn omits --continue once to create a fresh session. Later restarts go
+    // back to --continue.
+    if (code === EXIT_DAEMON_FRESH_SESSION || (code === 0 && !requested)) {
+      this.forceFreshSessionOnNextSpawn = true;
+    }
+    const uptimeMs = this._startedAt !== null ? Date.now() - this._startedAt : 0;
+    this._state = requested || code === 0 ? "stopped" : "crashed";
     this.child = null;
     this._startedAt = null;
     this._busy = false;
@@ -423,7 +457,7 @@ export class RpcChild extends EventEmitter {
       p.resolve(false);
     }
     this._statePending.clear();
-    this.emit("exit", { code, signal, isCrash } satisfies RpcChildExitEvent);
+    this.emit("exit", { code, signal, requested, uptimeMs } satisfies RpcChildExitEvent);
   }
 
   /** Bumps the restart counter — called by the supervisor when it

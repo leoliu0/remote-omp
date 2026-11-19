@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { addDaemon, listDaemons, migrateRegistryNames, removeDaemon } from "./registry.js";
+import { addDaemon, listDaemons, migrateRegistryNames, removeDaemon, type DaemonRecord } from "./registry.js";
 import { daemonIdForCwd } from "./id.js";
 import { defaultAgentName, type LocalConfig } from "../session/local_config.js";
 import { ipcAddress, usesNamedPipe } from "../session/ipc.js";
@@ -34,11 +34,12 @@ import { appendCronLog, readCronLog, type CronResult } from "./cron_log.js";
  * Central process that owns the daemon fleet (plan/26).
  *
  * Responsibilities:
- *   - Spawn one `pi --mode rpc` child per registry entry. Track them in
- *     `_children: Map<id, RpcChild>`.
- *   - Auto-restart crashed children with exponential backoff
- *     (1s, 5s, 30s, 5min). Give up after 4 attempts to avoid log spam
- *     when the agent is misconfigured.
+ *   - Spawn one `<harness> --mode rpc` child per registry entry. Track them in
+ *     `children: Map<id, ChildSlot>`.
+ *   - Own each daemon's lifetime (plan/67): a child that exits for any reason
+ *     the supervisor did not request — a crash, or the harness quitting by
+ *     itself — is respawned, with a capped backoff, for as long as the
+ *     registry lists it.
  *   - Listen on `~/.pi/remote/supervisor.sock` for `ControlRequest`s from
  *     the `remote-pi` CLI. Each connection: 1 request → 1 reply → close.
  *   - Graceful shutdown on SIGTERM/SIGINT: stop all children + unlink
@@ -52,10 +53,14 @@ import { appendCronLog, readCronLog, type CronResult } from "./cron_log.js";
 
 const SUPERVISOR_SOCK_NAME = "supervisor.sock";
 
-/** Backoff schedule for auto-restart after a crash. After exhausting, the
- *  child stays in `crashed` state until manual `restart_all` or fresh
- *  registry add. Keeps logs sane when the agent dies on every boot. */
-const RESTART_BACKOFFS_MS = [1_000, 5_000, 30_000, 5 * 60_000];
+/** Delay before respawning a daemon that exited on its own, by consecutive
+ *  attempt; the last value repeats for as long as it keeps failing. The
+ *  backoff only spaces retries out — a registered daemon is never abandoned. */
+const RESTART_BACKOFFS_MS: readonly number[] = [1_000, 5_000, 30_000, 5 * 60_000];
+
+/** A run at least this long counts as healthy: the next exit starts the
+ *  backoff over instead of continuing where a past crash loop left off. */
+const STABLE_UPTIME_MS = 60_000;
 
 function supervisorSockPath(): string {
   const root = process.env["REMOTE_PI_HOME"] || homedir();
@@ -98,8 +103,13 @@ export interface SupervisorOptions {
    *  spawned `pi`. Defaults to the location relative to where this file
    *  is bundled (so the supervisor finds itself). */
   extensionPath: string;
-  /** Override the `pi` binary path. Defaults to "pi" on PATH. */
+  /** Override the harness binary for every daemon. Defaults to the daemon's
+   *  harness name (`pi` / `omp`) on PATH. */
   piBin?: string;
+  /** Test seam: replaces `RESTART_BACKOFFS_MS`. */
+  restartBackoffsMs?: readonly number[];
+  /** Test seam: replaces `STABLE_UPTIME_MS`. */
+  stableUptimeMs?: number;
 }
 
 /** Pure decision for `fireJob` (plan/39) — picks the action from the daemon's
@@ -286,7 +296,7 @@ export class Supervisor {
         already.push(entry.id);
         continue;
       }
-      this._spawnEntry(entry.id, entry.cwd);
+      this._spawnEntry(entry);
       started.push(entry.id);
     }
     return { ok: true, data: { started, already_running: already } };
@@ -303,7 +313,7 @@ export class Supervisor {
     if (slot && slot.child.state === "running") {
       return { ok: true, data: { id, state: slot.child.state, started: false } };
     }
-    this._spawnEntry(entry.id, entry.cwd, entry.name);
+    this._spawnEntry(entry);
     const state = this.children.get(id)?.child.state ?? "starting";
     return { ok: true, data: { id, state, started: true } };
   }
@@ -312,13 +322,10 @@ export class Supervisor {
     const stopped: string[] = [];
     const already: string[] = [];
     for (const [id, slot] of this.children) {
+      this._cancelRestart(slot);
       if (slot.child.state !== "running") {
         already.push(id);
         continue;
-      }
-      if (slot.restartTimer !== null) {
-        clearTimeout(slot.restartTimer);
-        slot.restartTimer = null;
       }
       await slot.child.stop();
       stopped.push(id);
@@ -328,18 +335,16 @@ export class Supervisor {
 
   /** Stop a single registered daemon by id. Idempotent: a daemon that isn't
    *  running returns `stopped: false`. Unknown id → ok:false. Mirrors the
-   *  per-id semantics of `_opStart`. Cancels any pending restart backoff so a
-   *  deliberate stop stays stopped. */
+   *  per-id semantics of `_opStart`. Cancels any pending restart backoff —
+   *  also for a daemon that is down between retries — so a deliberate stop
+   *  stays stopped. */
   private async _opStop(id: string): Promise<ControlReply<unknown>> {
     const entry = listDaemons().find((d) => d.id === id);
     if (!entry) return { ok: false, error: `no daemon with id ${id}` };
     const slot = this.children.get(id);
+    if (slot) this._cancelRestart(slot);
     if (!slot || slot.child.state !== "running") {
       return { ok: true, data: { id, state: slot?.child.state ?? "stopped", stopped: false } };
-    }
-    if (slot.restartTimer !== null) {
-      clearTimeout(slot.restartTimer);
-      slot.restartTimer = null;
     }
     await slot.child.stop();
     return { ok: true, data: { id, state: slot.child.state, stopped: true } };
@@ -352,13 +357,10 @@ export class Supervisor {
     if (!entry) return { ok: false, error: `no daemon with id ${id}` };
     const slot = this.children.get(id);
     if (slot && slot.child.state === "running") {
-      if (slot.restartTimer !== null) {
-        clearTimeout(slot.restartTimer);
-        slot.restartTimer = null;
-      }
+      this._cancelRestart(slot);
       await slot.child.stop();
     }
-    this._spawnEntry(entry.id, entry.cwd, entry.name);
+    this._spawnEntry(entry);
     const state = this.children.get(id)?.child.state ?? "starting";
     return { ok: true, data: { id, state, restarted: true } };
   }
@@ -396,10 +398,7 @@ export class Supervisor {
     // entry is gone.
     const slot = this.children.get(id);
     if (slot) {
-      if (slot.restartTimer !== null) {
-        clearTimeout(slot.restartTimer);
-        slot.restartTimer = null;
-      }
+      this._cancelRestart(slot);
       await slot.child.stop();
       this.children.delete(id);
     }
@@ -535,7 +534,7 @@ export class Supervisor {
         if (!entry) {
           result = "skipped_down";
         } else {
-          this._spawnEntry(entry.id, entry.cwd, entry.name);
+          this._spawnEntry(entry);
           const woke = this.children.get(job.daemon_id);
           result = woke && woke.child.sendPrompt(job.prompt) ? "woke_and_delivered" : "deliver_failed";
         }
@@ -554,15 +553,22 @@ export class Supervisor {
 
   private _spawnAllFromRegistry(): void {
     for (const entry of listDaemons()) {
-      this._spawnEntry(entry.id, entry.cwd, entry.name);
+      this._spawnEntry(entry);
     }
   }
 
-  private _spawnEntry(id: string, cwd: string, name?: string): void {
+  private _cancelRestart(slot: ChildSlot): void {
+    if (slot.restartTimer === null) return;
+    clearTimeout(slot.restartTimer);
+    slot.restartTimer = null;
+  }
+
+  private _spawnEntry(entry: DaemonRecord): void {
+    const { id, cwd } = entry;
     // Clean up any prior slot (e.g. crashed + waiting for backoff).
     const existing = this.children.get(id);
     if (existing) {
-      if (existing.restartTimer !== null) clearTimeout(existing.restartTimer);
+      this._cancelRestart(existing);
       // If somehow the child is still alive, stop it first so we don't
       // leak. Fire-and-forget — caller doesn't await.
       if (existing.child.state === "running") void existing.child.stop();
@@ -572,10 +578,11 @@ export class Supervisor {
     // no per-cwd config file needed. The daemon scopes by (cwd, name) like any
     // agent (plan/38); relay on.
     const config: LocalConfig = {
-      agent_name: name ?? defaultAgentName(cwd),
+      agent_name: entry.name,
       auto_start_relay: true,
     };
     const childOpts: RpcChildOptions = {
+      harness: entry.harness,
       extensionPath: this.opts.extensionPath,
       cwd,
       config,
@@ -585,19 +592,17 @@ export class Supervisor {
     const slot: ChildSlot = { id, cwd, child, restartTimer: null, restartAttempt: 0 };
     this.children.set(id, slot);
 
-    child.on("exit", (evt: RpcChildExitEvent) => this._onChildExit(id, evt));
+    child.on("exit", (evt: RpcChildExitEvent) => this._onChildExit(slot, evt));
     child.spawn();
   }
 
-  private _onChildExit(id: string, evt: RpcChildExitEvent): void {
-    if (this.shuttingDown) return;
-    const slot = this.children.get(id);
-    if (!slot) return;
+  private _onChildExit(slot: ChildSlot, evt: RpcChildExitEvent): void {
+    // A slot replaced by a newer spawn of the same daemon no longer decides.
+    if (this.shuttingDown || this.children.get(slot.id) !== slot) return;
 
-    if (!evt.isCrash) {
-      // Clean shutdown (e.g. via `stop_all`). Don't auto-restart.
-      return;
-    }
+    // The supervisor asked for this exit (stop / restart / unregister): the
+    // daemon stays down until the supervisor starts it again.
+    if (evt.requested) return;
 
     if (evt.code === EXIT_DAEMON_FRESH_SESSION || evt.code === EXIT_DAEMON_RESTART) {
       // App-triggered daemon `/new` or `/restart`: intentional recycle, not a
@@ -608,21 +613,20 @@ export class Supervisor {
       return;
     }
 
-    // Crash: schedule restart with backoff. After exhausting the schedule
-    // we give up and stay in `crashed`.
-    if (slot.restartAttempt >= RESTART_BACKOFFS_MS.length) {
-      process.stderr.write(
-        `[remote-pi-supervisord] giving up restart for ${id} after ${slot.restartAttempt} attempts\n`,
-      );
-      return;
-    }
-    const delay = RESTART_BACKOFFS_MS[slot.restartAttempt]!;
+    // Any other exit — a crash, or the harness quitting by itself (the app's
+    // "quit session" is a clean exit 0) — must not cost the daemon: the
+    // registry says it runs, and only the supervisor may end it (plan/67).
+    // Retry for as long as it is registered.
+    const backoffs = this.opts.restartBackoffsMs ?? RESTART_BACKOFFS_MS;
+    if (evt.uptimeMs >= (this.opts.stableUptimeMs ?? STABLE_UPTIME_MS)) slot.restartAttempt = 0;
+    const delay = backoffs[Math.min(slot.restartAttempt, backoffs.length - 1)]!;
+    slot.restartAttempt += 1;
     process.stderr.write(
-      `[remote-pi-supervisord] scheduling restart of ${id} in ${delay}ms (attempt ${slot.restartAttempt + 1})\n`,
+      `[remote-pi-supervisord] ${slot.id} exited (code=${evt.code} signal=${evt.signal}); ` +
+      `restart in ${delay}ms (attempt ${slot.restartAttempt})\n`,
     );
     slot.restartTimer = setTimeout(() => {
       slot.restartTimer = null;
-      slot.restartAttempt += 1;
       slot.child.noteRestart();
       slot.child.spawn();
     }, delay);

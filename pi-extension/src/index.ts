@@ -129,7 +129,8 @@ import {
   skillsDir,
 } from "./session/global_config.js";
 import { acquireCwdLock, type AcquiredLock } from "./session/cwd_lock.js";
-import { addDaemon, listDaemons, removeDaemon } from "./daemon/registry.js";
+import { addDaemon, listDaemons, removeDaemon, type DaemonRecord } from "./daemon/registry.js";
+import { resolveHarness } from "./daemon/harness.js";
 import { callSupervisor, supervisorOnline, SupervisorOfflineError } from "./daemon/client.js";
 import type { ControlRequest, DaemonInfo } from "./daemon/control_protocol.js";
 import { EXIT_DAEMON_FRESH_SESSION, EXIT_DAEMON_RESTART } from "./daemon/rpc_child.js";
@@ -4991,7 +4992,7 @@ async function _cmdWeb(arg: string, ctx: Pick<ExtensionContext, "ui">): Promise<
 // ── Daemon registry commands (plan/26 Wave 1) ─────────────────────────────────
 
 /**
- * `/remote-pi create [<cwd>] [--name <name>]`
+ * `/remote-pi create [<cwd>] [--name <name>] [--harness pi|omp]`
  *
  * Promotes a folder to a daemon entry in `~/.pi/remote/daemons.json`. The
  * cwd is **always normalized to an absolute realpath** before storage —
@@ -4999,31 +5000,37 @@ async function _cmdWeb(arg: string, ctx: Pick<ExtensionContext, "ui">): Promise<
  * canonical entry. Relative paths resolve against the Pi process's
  * current working directory, not the slash-command's `ctx.cwd`.
  *
- * Side effects on the cwd's local config (`<cwd>/.pi/remote-pi/config.json`):
- *   - If the config doesn't exist: created with `auto_start_relay=true`
- *     (mandatory for daemons) and `agent_name` from `--name` if provided.
- *   - If the config already exists: left untouched. Re-running `create`
- *     on an existing daemon is idempotent at this layer; the registry
- *     itself rejects duplicate cwds.
+ * `--harness` picks the CLI the daemon runs (plan/67). Without it: the
+ * `REMOTE_PI_HARNESS` environment variable, else the harness this command is
+ * running inside, else pi.
  */
 async function _cmdCreate(arg: string, ctx: Pick<ExtensionContext, "ui">): Promise<void> {
-  // Parse `[cwd] [--name "value with spaces" | --name word]` in any order.
-  // The first non-flag token is the cwd; the rest of the line after
-  // `--name` (quoted or unquoted) is the display name.
+  // Parse `[cwd] [--name "value with spaces" | --name word] [--harness word]`
+  // in any order. The first non-flag token is the cwd; the rest of the line
+  // after `--name` (quoted or unquoted) is the display name.
   const nameMatch = arg.match(/--name\s+"([^"]+)"|--name\s+(\S+)/);
   const name = nameMatch ? (nameMatch[1] ?? nameMatch[2]) : undefined;
-  const cwdRaw = arg.replace(/--name\s+"[^"]+"|--name\s+\S+/, "").trim();
+  const harnessFlag = arg.match(/--harness\s+(\S+)/)?.[1];
+  const cwdRaw = arg
+    .replace(/--name\s+"[^"]+"|--name\s+\S+/, "")
+    .replace(/--harness\s+\S+/, "")
+    .trim();
   if (!cwdRaw) {
     ctx.ui.notify(
-      "[remote-pi] Usage: /remote-pi create <absolute-or-relative-cwd> [--name \"Display name\"]",
+      "[remote-pi] Usage: /remote-pi create <absolute-or-relative-cwd> [--name \"Display name\"] [--harness pi|omp]",
       "warning",
     );
     return;
   }
 
-  let result: { id: string; cwd: string; name: string };
+  let result: DaemonRecord;
   try {
-    result = addDaemon(cwdRaw, name);
+    const harness = resolveHarness({
+      flag: harnessFlag,
+      env: process.env["REMOTE_PI_HARNESS"],
+      argv1: process.argv[1],
+    });
+    result = addDaemon(cwdRaw, name, harness);
   } catch (err) {
     ctx.ui.notify(`[remote-pi] create failed: ${String(err)}`, "error");
     return;
@@ -5035,7 +5042,7 @@ async function _cmdCreate(arg: string, ctx: Pick<ExtensionContext, "ui">): Promi
   // daemon. The cwd needs no init folder.
 
   ctx.ui.notify(
-    `[remote-pi] Daemon registered: id=${result.id} name="${result.name}" cwd=${result.cwd}`,
+    `[remote-pi] Daemon registered: id=${result.id} name="${result.name}" harness=${result.harness} cwd=${result.cwd}`,
     "info",
   );
 

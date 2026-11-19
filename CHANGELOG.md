@@ -46,6 +46,12 @@ and 27 (see [`plan/`](plan/) directory for design history).
 - Web client: on wide screens the chat has a session sidebar on the left with the same tabs, grouping and status badges as Home. One click switches session. It collapses to a rail of avatars, and that choice is remembered. Home keeps its tab after you leave a chat.
 ### Added
 
+#### Always-on door (plan/67)
+- A registered daemon now stays up until you stop it on the machine. The supervisor restarts a daemon that crashes, is killed, or is closed with the app's Quit session (it returns as a fresh session). Retries back off to every 5 minutes and no longer stop after four attempts. `remote-pi daemon stop` during a retry wait now sticks, and a harness binary that was missing at boot is picked up once it is on PATH.
+- `remote-pi create <cwd> --harness omp` runs a daemon on omp. The default is `REMOTE_PI_HARNESS`, then the harness the command runs in, then `pi`.
+- Daemons get a new terminal's environment: the supervisor reads it from the login shell at start, so API keys and proxies from rc files apply under systemd.
+- The systemd unit uses `Restart=always`, so a supervisor that exits cleanly is restarted too.
+
 #### omp model roles from the app (plan/66)
 - The app's model sheet has a Roles tab listing omp's model roles (default, plan, task, smol, advisor and the rest) with model, thinking level and description. Pick a role, then a model and thinking level, or Reset it; the change goes through omp's own settings into `~/.omp/agent/config.yml` and applies to every session, as in the terminal.
 - A role's eligible models are fetched when it is tapped, so the roles list stays about 3 KB.

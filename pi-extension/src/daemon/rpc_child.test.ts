@@ -14,27 +14,35 @@ import { RpcChild, busyTransition, resolvePiBin, resolvePiSpawn, _npmShimTarget,
  * just sleeps, so the child is genuinely alive when we stop it.
  */
 describe("rpcSpawnArgs", () => {
-  test("includes --continue so a restart resumes the latest session (not a new one)", () => {
-    expect(rpcSpawnArgs("/path/to/dist/index.js")).toEqual([
-      "--mode", "rpc", "--approve", "--continue", "-e", "/path/to/dist/index.js",
+  const ext = "/path/to/dist/index.js";
+
+  test("pi: includes --continue so a restart resumes the latest session (not a new one)", () => {
+    expect(rpcSpawnArgs({ harness: "pi", extensionPath: ext })).toEqual([
+      "--mode", "rpc", "--approve", "--continue", "-e", ext,
     ]);
   });
 
-  test("pins the session display name via --name when one is given", () => {
-    expect(rpcSpawnArgs("/path/to/dist/index.js", "PC")).toEqual([
-      "--mode", "rpc", "--approve", "--continue", "--name", "PC", "-e", "/path/to/dist/index.js",
+  test("pi: pins the session display name via --name when one is given", () => {
+    expect(rpcSpawnArgs({ harness: "pi", extensionPath: ext, sessionName: "PC" })).toEqual([
+      "--mode", "rpc", "--approve", "--continue", "--name", "PC", "-e", ext,
     ]);
   });
 
-  test("can omit --continue for one daemon fresh-session restart", () => {
-    expect(rpcSpawnArgs("/path/to/dist/index.js", "PC", false)).toEqual([
-      "--mode", "rpc", "--approve", "--name", "PC", "-e", "/path/to/dist/index.js",
+  test("pi: can omit --continue for one daemon fresh-session restart", () => {
+    expect(rpcSpawnArgs({ harness: "pi", extensionPath: ext, sessionName: "PC", useContinue: false })).toEqual([
+      "--mode", "rpc", "--approve", "--name", "PC", "-e", ext,
     ]);
   });
 
-  test("always passes --approve (pi >=0.79 project trust; RPC is non-interactive)", () => {
-    expect(rpcSpawnArgs("/path/to/dist/index.js")).toContain("--approve");
-    expect(rpcSpawnArgs("/path/to/dist/index.js", "PC", false)).toContain("--approve");
+  // omp rejects pi's --approve/--name, and leaves `~` for a temp dir unless
+  // --allow-home is given: a daemon must run in the folder it was registered for.
+  test("omp: no pi-only flags, stays in the registered folder", () => {
+    expect(rpcSpawnArgs({ harness: "omp", extensionPath: ext, sessionName: "PC" })).toEqual([
+      "--mode", "rpc", "--allow-home", "--continue", "-e", ext,
+    ]);
+    expect(rpcSpawnArgs({ harness: "omp", extensionPath: ext, useContinue: false })).toEqual([
+      "--mode", "rpc", "--allow-home", "-e", ext,
+    ]);
   });
 });
 
@@ -47,7 +55,7 @@ describe("RpcChild — deliberate stop is not a crash", () => {
 
   // POSIX-only: uses a `.sh` stub + SIGTERM/SIGKILL semantics. The RpcChild
   // stop() logic is cross-platform; only this stub/signal harness is POSIX.
-  test.skipIf(process.platform === "win32")("stop() emits isCrash:false though the child dies by signal", async () => {
+  test.skipIf(process.platform === "win32")("stop() reports a requested exit though the child dies by signal", async () => {
     dir = mkdtempSync(join(tmpdir(), "pi-rpcchild-"));
     const bin = join(dir, "staysalive.sh");
     writeFileSync(bin, "#!/bin/sh\nexec sleep 30\n");
@@ -61,8 +69,23 @@ describe("RpcChild — deliberate stop is not a crash", () => {
     await child.stop();
 
     const evt = await exited;
-    expect(evt.isCrash).toBe(false);   // ← was `true` before the fix → spurious restart
+    expect(evt.requested).toBe(true);   // ← a signal exit used to count as a crash → spurious restart
     expect(child.state).toBe("stopped");
+  });
+
+  // Plan 67: a failed spawn left the dead handle in place, so every later
+  // spawn() returned early and the supervisor's retry never ran.
+  test("a failed spawn can be retried", async () => {
+    dir = mkdtempSync(join(tmpdir(), "pi-rpcchild-"));
+    const child = new RpcChild({ piBin: join(dir, "no-such-harness"), extensionPath: "/no/such.js", cwd: dir });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { promise, resolve } = Promise.withResolvers<RpcChildExitEvent>();
+      child.once("exit", resolve);
+      child.spawn();
+      const evt = await promise;
+      expect(evt.requested).toBe(false);
+      expect(child.state).toBe("crashed");
+    }
   });
 });
 
