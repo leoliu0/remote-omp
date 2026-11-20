@@ -352,7 +352,7 @@ GoRouter buildRouter(
                 child: MediaQuery.removePadding(
                   context: ctx,
                   removeLeft: true,
-                  child: const _DetailPane(),
+                  child: const DetailPane(),
                 ),
               ),
             ],
@@ -382,7 +382,7 @@ GoRouter buildRouter(
             routes: [
               GoRoute(
                 path: '/session',
-                builder: (ctx, st) => const _DetailPane(),
+                builder: (ctx, st) => const DetailPane(),
               ),
             ],
           ),
@@ -469,13 +469,18 @@ GoRouter buildRouter(
 /// by (epk, room) so switching sessions tears down the old ChatViewModel
 /// and builds a fresh one, which re-binds to the now-selected peer (the
 /// VM reads `Preferences.selectedPeerEpk`, already set by Home._open).
-class _DetailPane extends StatelessWidget {
-  const _DetailPane();
+///
+/// On a phone the detail branch is preloaded but never shown, and the chat
+/// is a pushed `/chat` route. A chat built here too would be a second,
+/// invisible ChatPage with its own view models, which take events meant for
+/// the visible one (an upload's path went into the hidden composer).
+class DetailPane extends StatelessWidget {
+  const DetailPane({super.key});
 
   @override
   Widget build(BuildContext context) {
     final sel = context.watch<SessionSelection>();
-    if (sel.current == null) {
+    if (sel.current == null || !isWideLayout(context)) {
       return const DetailPlaceholder();
     }
     return MultiProvider(
