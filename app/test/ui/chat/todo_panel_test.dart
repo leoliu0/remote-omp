@@ -1,6 +1,6 @@
 // todo_state — wire parsing, omp's todo rules shared with the web client, the
 // chat's todo-tool pill and the panel widget. Payloads captured from a scratch
-// omp v18.9.2 run (pi-extension/src/todo_state.fixture.json): init with
+// omp v18.9.2 run (omp-extension/src/todo_state.fixture.json): init with
 // Setup/Build, done, start out of order, block, append, drop.
 
 import 'package:app/domain/session_state.dart';
@@ -10,7 +10,7 @@ import 'package:app/ui/chat/widgets/tool_request_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-// The list after `drop Ship`, as the pi-extension sends it.
+// The list after `drop Ship`, as the omp-extension sends it.
 const Map<String, dynamic> _afterDrop = {
   'type': 'todo_state',
   'ts': 1791587119493,

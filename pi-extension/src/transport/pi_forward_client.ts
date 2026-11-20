@@ -6,11 +6,11 @@ import type { Envelope } from "../session/envelope.js";
  * Plan/25 Wave A wire types — must stay bit-compatible with the relay's
  * `handlers/pi_forward.rs`.
  *
- * Outbound (Pi → relay):
- *   { type: "pi_envelope", to_pc: <pi-b-pubkey-base64>, envelope: {...} }
+ * Outbound (PC → relay):
+ *   { type: "pi_envelope", to_pc: <pc-b-pubkey-base64>, envelope: {...} }
  *
- * Inbound (relay → Pi):
- *   { type: "pi_envelope_in", from_pc: <pi-a-pubkey-base64>, envelope: {...} }
+ * Inbound (relay → PC):
+ *   { type: "pi_envelope_in", from_pc: <pc-a-pubkey-base64>, envelope: {...} }
  *
  * Transport errors arrive as a regular envelope nested inside the inbound
  * frame, with `envelope.from = "_relay"` and
@@ -31,11 +31,11 @@ interface PiEnvelopeInFrame {
   envelope: Envelope;
 }
 
-/** Outbound API + inbound listener for Pi↔Pi envelope forwarding via relay. */
+/** Outbound API + inbound listener for PC↔PC envelope forwarding via relay. */
 export interface PiForwardClientEvents {
   /**
    * Emitted whenever the relay delivers a `pi_envelope_in` frame addressed
-   * to this Pi. `fromPc` is the verified Pi-pubkey of the sender (relay
+   * to this PC. `fromPc` is the verified pubkey of the sending PC (relay
    * authoritative — defense against spoofed `envelope.from`).
    */
   envelope: [env: Envelope, fromPc: string];

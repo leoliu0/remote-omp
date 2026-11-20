@@ -112,15 +112,29 @@ class UserMsg extends ChatMessage {
 
 class AssistantMsg extends ChatMessage {
   final String text;
-  const AssistantMsg({required super.id, required this.text});
+
+  /// Plan/68 — set on a row that records a failure rather than an answer: the
+  /// `code` of the `error` frame (live) or of the replayed history event.
+  final String? errorCode;
+  const AssistantMsg({required super.id, required this.text, this.errorCode});
+
+  /// A turn that failed at the provider: the one Retry re-runs.
+  bool get isFailedTurn => errorCode == kProviderErrorCode;
 
   @override
   bool operator ==(Object other) =>
-      other is AssistantMsg && other.id == id && other.text == text;
+      other is AssistantMsg &&
+      other.id == id &&
+      other.text == text &&
+      other.errorCode == errorCode;
 
   @override
-  int get hashCode => Object.hash(id, text);
+  int get hashCode => Object.hash(id, text, errorCode);
 }
+
+/// `code` of the `error` frame the extension sends when a turn fails at the
+/// provider (`stopReason: "error"`).
+const kProviderErrorCode = 'provider_error';
 
 class ToolEvent extends ChatMessage {
   final String toolCallId;

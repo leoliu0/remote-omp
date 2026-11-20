@@ -1,13 +1,13 @@
 {
-  "name": "remote-pi",
+  "name": "remote-omp",
   "version": "0.7.0",
-  "description": "Mobile remote control and local agent mesh for the Pi coding agent. Pair your phone via QR over a relay, watch tool calls in real time, run multi-Pi sessions over a local Unix Domain Socket broker, and let agents talk to each other through structured request/reply.",
+  "description": "Mobile remote control and local agent mesh for the omp (oh-my-pi) coding agent. Pair your phone via QR over a relay, watch tool calls in real time, run multi-omp sessions over a local Unix Domain Socket broker, and let agents talk to each other through structured request/reply.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "remote-pi": "dist/index.js",
-    "pi-supervisord": "dist/bin/supervisord.js"
+    "remote-omp": "dist/index.js",
+    "remote-omp-supervisord": "dist/bin/supervisord.js"
   },
   "scripts": {
     "build": "tsc",
@@ -17,10 +17,10 @@
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
   },
   "keywords": [
-    "pi",
-    "pi-package",
-    "pi-extension",
-    "pi-coding-agent",
+    "omp",
+    "oh-my-pi",
+    "omp-plugin",
+    "omp-extension",
     "remote-control",
     "mobile",
     "coding-agent",
@@ -31,7 +31,7 @@
     "qr-pairing",
     "websocket"
   ],
-  "pi": {
+  "omp": {
     "extensions": [
       "./dist/index.js"
     ]
@@ -40,12 +40,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jacobaraujo7/remote_pi.git",
-    "directory": "pi-extension"
+    "url": "git+https://github.com/leoliu0/remote-omp.git",
+    "directory": "omp-extension"
   },
   "homepage": "https://remote-pi.jacobmoura.work",
   "bugs": {
-    "url": "https://github.com/jacobaraujo7/remote_pi/issues"
+    "url": "https://github.com/leoliu0/remote-omp/issues"
   },
   "files": [
     "dist",
@@ -56,15 +56,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=20.0.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@google/genai",
-      "esbuild",
-      "koffi",
-      "protobufjs"
-    ]
+    "node": ">=20.6.0"
   },
   "devDependencies": {
     "@types/node": "^25.8.0",
@@ -75,8 +67,6 @@
     "vitest": "^4.1.6"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.79.10",
-    "@earendil-works/pi-tui": "^0.79.10",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@napi-rs/keyring": "^1.3.0",
     "@noble/ed25519": "^3.1.0",

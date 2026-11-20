@@ -64,6 +64,26 @@ class PlainPeerChannel implements IChannel, IControlLink {
     }
   }
 
+  /// Plan 68 — the reply to request [requestId] comes from [roomId], which is
+  /// not the active room: have the transport let that one frame through.
+  /// No-op when the transport has no room demux (in-memory test fakes).
+  void expectReply(String requestId, String roomId) {
+    try {
+      (_transport as dynamic).expectReply(requestId, roomId);
+    } catch (_) {
+      // Non-WS transports don't demux by room — nothing to allow.
+    }
+  }
+
+  /// The request is finished; the transport stops expecting its reply.
+  void cancelReply(String requestId) {
+    try {
+      (_transport as dynamic).cancelReply(requestId);
+    } catch (_) {
+      // See [expectReply].
+    }
+  }
+
   @override
   Stream<ServerMessage> get serverMessages {
     if (!_started) {

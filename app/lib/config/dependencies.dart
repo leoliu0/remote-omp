@@ -4,11 +4,15 @@ import 'dart:io' show Platform;
 import 'package:app/config/utils/injector.dart';
 import 'package:app/data/actions/actions_repository.dart';
 import 'package:app/data/files/file_receiver.dart';
+import 'package:app/data/files/file_uploader.dart';
 import 'package:app/data/files/platform_file_actions.dart';
+import 'package:app/data/files/upload_file_picker.dart';
 import 'package:app/data/mesh/mesh_client.dart';
 import 'package:app/data/mesh/mesh_sync_service.dart';
 import 'package:app/data/local/app_database.dart';
 import 'package:app/data/local/received_file_store.dart';
+import 'package:app/data/local/preference_store.dart';
+import 'package:app/data/local/saved_prompts_store.dart';
 import 'package:app/data/local/session_store.dart';
 import 'package:app/data/preferences/preferences.dart';
 import 'package:app/data/repositories/home_read_repository.dart';
@@ -34,6 +38,7 @@ import 'package:app/pairing/qr_scanner.dart';
 import 'package:app/pairing/storage.dart';
 import 'package:app/routing/adaptive.dart';
 import 'package:app/ui/chat/attachment/viewmodels/attachment_viewmodel.dart';
+import 'package:app/ui/chat/upload/viewmodels/upload_viewmodel.dart';
 import 'package:app/ui/chat/quick_actions/viewmodels/model_roles_viewmodel.dart';
 import 'package:app/ui/chat/quick_actions/viewmodels/quick_actions_viewmodel.dart';
 import 'package:app/ui/chat/viewmodels/chat_viewmodel.dart';
@@ -67,6 +72,12 @@ Future<void> setupDependencies() async {
     await prefs.load();
     next.addInstance<Preferences>(
       prefs,
+      onDispose: (value) => value.dispose(),
+    );
+
+    final savedPrompts = SavedPromptsStore(PreferenceStore(database));
+    next.addInstance<SavedPromptsStore>(
+      savedPrompts,
       onDispose: (value) => value.dispose(),
     );
 
@@ -126,6 +137,15 @@ Future<void> setupDependencies() async {
       () => FileReceiver(next.get<ConnectionManager>(), receivedFileStore),
     );
     next.addOther<FileActions>(() => PlatformFileActions());
+    // Plan 68 — files this phone uploads to the PC.
+    next.addService<FileUploader>(
+      () => FileUploader(
+        next.get<ConnectionManager>(),
+        // A path no chat on screen took is kept in that session's saved draft.
+        onUnhandledResult: (result) => keepUploadedPathInDraft(prefs, result),
+      ),
+    );
+    next.addOther<IUploadFilePicker>(() => PlatformUploadFilePicker());
     next.addRepository<SessionReadRepository>(
       () => SessionReadRepository(sessionStore),
     );
@@ -189,6 +209,13 @@ Future<void> setupDependencies() async {
       () => AttachmentViewModel(
         next.get<IImagePickerService>(),
         next.get<IActionsRepository>(),
+      ),
+    );
+    next.addViewModel<UploadViewModel>(
+      () => UploadViewModel(
+        next.get<FileUploader>(),
+        next.get<IUploadFilePicker>(),
+        prefs,
       ),
     );
 

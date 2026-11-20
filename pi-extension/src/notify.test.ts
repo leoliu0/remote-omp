@@ -14,24 +14,24 @@ import {
 
 const BASE_EVENT = {
   id: "ev-1",
-  title: "remote_pi: Done",
+  title: "remote_omp: Done",
   body: "Finished tests",
-  session: "remote_pi",
-  cwd: "/home/leo/Documents/remote_pi",
+  session: "remote_omp",
+  cwd: "/home/leo/Documents/remote_omp",
 };
 
 describe("notify config validation & resolution", () => {
-  const prevUrl = process.env["REMOTE_PI_NOTIFY_URL"];
-  const prevToken = process.env["REMOTE_PI_NOTIFY_TOKEN"];
-  const prevMode = process.env["REMOTE_PI_NOTIFY_MODE"];
+  const prevUrl = process.env["REMOTE_OMP_NOTIFY_URL"];
+  const prevToken = process.env["REMOTE_OMP_NOTIFY_TOKEN"];
+  const prevMode = process.env["REMOTE_OMP_NOTIFY_MODE"];
 
   afterEach(() => {
-    if (prevUrl === undefined) delete process.env["REMOTE_PI_NOTIFY_URL"];
-    else process.env["REMOTE_PI_NOTIFY_URL"] = prevUrl;
-    if (prevToken === undefined) delete process.env["REMOTE_PI_NOTIFY_TOKEN"];
-    else process.env["REMOTE_PI_NOTIFY_TOKEN"] = prevToken;
-    if (prevMode === undefined) delete process.env["REMOTE_PI_NOTIFY_MODE"];
-    else process.env["REMOTE_PI_NOTIFY_MODE"] = prevMode;
+    if (prevUrl === undefined) delete process.env["REMOTE_OMP_NOTIFY_URL"];
+    else process.env["REMOTE_OMP_NOTIFY_URL"] = prevUrl;
+    if (prevToken === undefined) delete process.env["REMOTE_OMP_NOTIFY_TOKEN"];
+    else process.env["REMOTE_OMP_NOTIFY_TOKEN"] = prevToken;
+    if (prevMode === undefined) delete process.env["REMOTE_OMP_NOTIFY_MODE"];
+    else process.env["REMOTE_OMP_NOTIFY_MODE"] = prevMode;
   });
 
   test("isValidNotifyUrl & isValidNotifyMode", () => {
@@ -49,9 +49,9 @@ describe("notify config validation & resolution", () => {
   });
 
   test("resolveNotifyConfig prefers env over config and defaults mode to offline", () => {
-    delete process.env["REMOTE_PI_NOTIFY_URL"];
-    delete process.env["REMOTE_PI_NOTIFY_TOKEN"];
-    delete process.env["REMOTE_PI_NOTIFY_MODE"];
+    delete process.env["REMOTE_OMP_NOTIFY_URL"];
+    delete process.env["REMOTE_OMP_NOTIFY_TOKEN"];
+    delete process.env["REMOTE_OMP_NOTIFY_MODE"];
 
     expect(resolveNotifyConfig({})).toEqual({
       url: null,
@@ -73,9 +73,9 @@ describe("notify config validation & resolution", () => {
       source: "config",
     });
 
-    process.env["REMOTE_PI_NOTIFY_URL"] = "https://ntfy.sh/from-env";
-    process.env["REMOTE_PI_NOTIFY_TOKEN"] = "env-tok";
-    process.env["REMOTE_PI_NOTIFY_MODE"] = "off";
+    process.env["REMOTE_OMP_NOTIFY_URL"] = "https://ntfy.sh/from-env";
+    process.env["REMOTE_OMP_NOTIFY_TOKEN"] = "env-tok";
+    process.env["REMOTE_OMP_NOTIFY_MODE"] = "off";
     expect(
       resolveNotifyConfig({
         notify_url: "https://ntfy.sh/from-cfg",
@@ -91,8 +91,8 @@ describe("notify config validation & resolution", () => {
   });
 
   test("invalid env URL or mode falls back safely", () => {
-    process.env["REMOTE_PI_NOTIFY_URL"] = "not-a-url";
-    process.env["REMOTE_PI_NOTIFY_MODE"] = "bogus";
+    process.env["REMOTE_OMP_NOTIFY_URL"] = "not-a-url";
+    process.env["REMOTE_OMP_NOTIFY_MODE"] = "bogus";
     expect(
       resolveNotifyConfig({
         notify_url: "https://ntfy.sh/valid",
@@ -116,7 +116,7 @@ describe("snippet & header sanitization", () => {
   });
 
   test("sanitizeHeaderValue converts dashes/ellipsis and strips newlines/non-ASCII", () => {
-    expect(sanitizeHeaderValue("pi — Done…\r\n🚀")).toBe("pi - Done...");
+    expect(sanitizeHeaderValue("omp — Done…\r\n🚀")).toBe("omp - Done...");
     for (let i = 0; i < sanitizeHeaderValue("✓ Café\t\n— ok").length; i++) {
       const code = sanitizeHeaderValue("✓ Café\t\n— ok").charCodeAt(i);
       expect(code).toBeGreaterThanOrEqual(32);
@@ -129,17 +129,17 @@ describe("buildWebhookRequest payloads", () => {
   test("default ntfy / plain webhook includes headers + bearer token", () => {
     const req = buildWebhookRequest(
       "https://ntfy.sh/my-topic",
-      { ...BASE_EVENT, kind: "needs_input", title: "pi — Review…", hostname: "x3d" },
+      { ...BASE_EVENT, kind: "needs_input", title: "omp — Review…", hostname: "x3d" },
       "secret-token",
     );
     expect(req.headers["Content-Type"]).toBe("text/plain; charset=utf-8");
-    expect(req.headers["Title"]).toBe("pi - Review...");
+    expect(req.headers["Title"]).toBe("omp - Review...");
     expect(req.headers["Priority"]).toBe("high");
     expect(req.headers["Tags"]).toBe("question");
     expect(req.headers["Authorization"]).toBe("Bearer secret-token");
-    expect(req.headers["X-Remote-Pi-Event"]).toBe("needs_input");
-    expect(req.headers["X-Remote-Pi-Session"]).toBe("remote_pi");
-    expect(req.headers["X-Remote-Pi-Host"]).toBe("x3d");
+    expect(req.headers["X-Remote-Omp-Event"]).toBe("needs_input");
+    expect(req.headers["X-Remote-Omp-Session"]).toBe("remote_omp");
+    expect(req.headers["X-Remote-Omp-Host"]).toBe("x3d");
     expect(req.body).toBe("Finished tests");
   });
 
@@ -150,7 +150,7 @@ describe("buildWebhookRequest payloads", () => {
     );
     expect(req.headers["Content-Type"]).toBe("application/json");
     expect(JSON.parse(req.body)).toEqual({
-      content: "**remote_pi: Done**\nFinished tests",
+      content: "**remote_omp: Done**\nFinished tests",
     });
   });
 
@@ -161,7 +161,7 @@ describe("buildWebhookRequest payloads", () => {
     );
     expect(req.headers["Content-Type"]).toBe("application/json");
     expect(JSON.parse(req.body)).toEqual({
-      text: "*remote_pi: Done*\nBoom",
+      text: "*remote_omp: Done*\nBoom",
     });
   });
 
@@ -175,10 +175,10 @@ describe("buildWebhookRequest payloads", () => {
     expect(req.headers["Authorization"]).toBe("Bearer tok");
     expect(JSON.parse(req.body)).toEqual({
       event: "error",
-      title: "remote_pi: Done",
+      title: "remote_omp: Done",
       body: "Finished tests",
-      session: "remote_pi",
-      cwd: "/home/leo/Documents/remote_pi",
+      session: "remote_omp",
+      cwd: "/home/leo/Documents/remote_omp",
       hostname: "x3d",
       priority: "high",
       ts: 12345,
@@ -246,7 +246,7 @@ describe("PushNotifier", () => {
 
     const disabled = makeNotifier({ online: false, config: { mode: "off" } });
     disabled.notifier.notifyNeedsInput({ ...BASE_EVENT, id: "a2" });
-    const res = await disabled.notifier.sendTest("remote_pi", "/cwd");
+    const res = await disabled.notifier.sendTest("remote_omp", "/cwd");
     expect(res.ok).toBe(false);
     expect(disabled.calls).toHaveLength(0);
   });
@@ -255,10 +255,10 @@ describe("PushNotifier", () => {
     const { notifier, calls } = makeNotifier({ online: false });
     notifier.notifyTurnDone({ ...BASE_EVENT, id: "t1" });
     await vi.advanceTimersByTimeAsync(200);
-    notifier.notifyNeedsInput({ ...BASE_EVENT, id: "ask1", title: "remote_pi: Plan review ready" });
+    notifier.notifyNeedsInput({ ...BASE_EVENT, id: "ask1", title: "remote_omp: Plan review ready" });
     await vi.advanceTimersByTimeAsync(600);
     expect(calls).toHaveLength(1);
-    expect((calls[0]!.init?.headers as Record<string, string>)["X-Remote-Pi-Event"]).toBe("needs_input");
+    expect((calls[0]!.init?.headers as Record<string, string>)["X-Remote-Omp-Event"]).toBe("needs_input");
   });
 
   test("deduplicates repeated events with the same kind and id", async () => {
@@ -271,7 +271,7 @@ describe("PushNotifier", () => {
 
   test("sendTest bypasses phone-online gate and returns HTTP status", async () => {
     const { notifier, calls } = makeNotifier({ online: true, config: { mode: "offline" } });
-    const res = await notifier.sendTest("remote_pi", "/repo");
+    const res = await notifier.sendTest("remote_omp", "/repo");
     expect(res).toEqual({ ok: true, status: 200 });
     expect(calls).toHaveLength(1);
     expect((calls[0]!.init?.headers as Record<string, string>)["Tags"]).toBe("bell");

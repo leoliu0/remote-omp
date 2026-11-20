@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { Cron } from "croner";
+import { remoteOmpHome } from "../paths.js";
 
 /**
  * Cron registry: scheduled prompts for daemons, persisted at
- * `~/.pi/remote/cron.json`. Mirrors `registry.ts` (`daemons.json`) — tolerant
+ * `~/.omp/remote/cron.json`. Mirrors `registry.ts` (`daemons.json`) — tolerant
  * load (missing/corrupt → empty), atomic-ish full-file save.
  *
  * Each job targets a daemon by its `daemon_id` (the 8-hex id from
@@ -51,8 +51,7 @@ export interface CronRegistry {
 }
 
 function cronPath(): string {
-  const root = process.env["REMOTE_PI_HOME"] || homedir();
-  return join(root, ".pi", "remote", "cron.json");
+  return join(remoteOmpHome(), "cron.json");
 }
 
 /** Test/diag-only: the on-disk path. */

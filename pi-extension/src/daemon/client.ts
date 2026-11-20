@@ -11,8 +11,8 @@ import { getSupervisorSockPath } from "./supervisor.js";
 import { usesNamedPipe } from "../session/ipc.js";
 
 /**
- * Tiny client for the `remote-pi` CLI to call the supervisor over the
- * `~/.pi/remote/supervisor.sock` UDS.
+ * Tiny client for the `remote-omp` CLI to call the supervisor over the
+ * `~/.omp/remote/supervisor.sock` UDS.
  *
  * Each call opens a fresh connection, sends one request line, reads one
  * reply line, closes. No connection pooling — the CLI is short-lived,
@@ -20,7 +20,7 @@ import { usesNamedPipe } from "../session/ipc.js";
  *
  * `SupervisorOfflineError` is the common error: thrown when the socket
  * file is missing OR the connect fails (no listener). The CLI handler
- * formats it as a friendly "Run `remote-pi install` first" message.
+ * formats it as a friendly "Run `remote-omp install` first" message.
  */
 
 const CONNECT_TIMEOUT_MS = 1000;
@@ -30,9 +30,19 @@ export class SupervisorOfflineError extends Error {
   constructor(public readonly sockPath: string) {
     super(
       `Supervisor is not running. UDS not responding at ${sockPath}.\n` +
-      "Run `remote-pi install` to set it up, or start it manually with `pi-supervisord`.",
+      "Run `remote-omp install` to set it up, or start it manually with `remote-omp-supervisord`.",
     );
     this.name = "SupervisorOfflineError";
+  }
+}
+
+/** The supervisor answered `ok: false`. `code` is its machine-readable reason
+ *  when it gave one (e.g. `cwd_busy`); an older supervisor never does, and
+ *  answers an op it does not know with `unknown op: <op>`. The name stays
+ *  `Error` so existing `String(err)` messages read as before. */
+export class SupervisorReplyError extends Error {
+  constructor(message: string, public readonly code?: string) {
+    super(message);
   }
 }
 
@@ -42,7 +52,7 @@ export class SupervisorOfflineError extends Error {
  * Throws:
  *   - `SupervisorOfflineError` when the supervisor isn't reachable.
  *   - `Error` from `parseReply` when the reply line is malformed.
- *   - The supervisor's own error string when `ok: false`.
+ *   - `SupervisorReplyError` (message = the supervisor's error string) when `ok: false`.
  */
 export async function callSupervisor<Op extends ControlRequest["op"]>(
   req: Extract<ControlRequest, { op: Op }>,
@@ -57,14 +67,14 @@ export async function callSupervisor<Op extends ControlRequest["op"]>(
     sock.write(encodeRequest(req));
     const line = await _readLine(sock);
     const reply = parseReply(line) as ControlReply<ControlReplyFor<Op>>;
-    if (!reply.ok) throw new Error(reply.error);
+    if (!reply.ok) throw new SupervisorReplyError(reply.error, reply.code);
     return reply.data as ControlReplyFor<Op>;
   } finally {
     sock.destroy();
   }
 }
 
-/** Returns true when the supervisor is reachable. Used by `/remote-pi
+/** Returns true when the supervisor is reachable. Used by `/remote-omp
  *  daemons` to decide whether to query runtime state or fall back to
  *  registry-only listing. */
 export async function supervisorOnline(): Promise<boolean> {

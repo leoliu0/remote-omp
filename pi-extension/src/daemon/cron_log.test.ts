@@ -2,20 +2,35 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendCronLog, firedFor, readCronLog } from "./cron_log.js";
+import { appendCronLog, cronLogPath, firedFor, readCronLog } from "./cron_log.js";
 
 let home: string;
+let prevOmpHome: string | undefined;
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "pi-cronlog-"));
-  process.env["REMOTE_PI_HOME"] = home;
+  home = mkdtempSync(join(tmpdir(), "omp-cronlog-"));
+  prevOmpHome = process.env["REMOTE_OMP_HOME"];
+  process.env["REMOTE_OMP_HOME"] = home;
 });
 afterEach(() => {
-  delete process.env["REMOTE_PI_HOME"];
+  if (prevOmpHome === undefined) delete process.env["REMOTE_OMP_HOME"];
+  else process.env["REMOTE_OMP_HOME"] = prevOmpHome;
   try { rmSync(home, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
 describe("cron_log", () => {
+  test("lives under the Remote OMP data directory, resolved when called", () => {
+    expect(cronLogPath()).toBe(join(home, ".omp", "remote", "cron.jsonl"));
+    const other = mkdtempSync(join(tmpdir(), "omp-cronlog-other-"));
+    process.env["REMOTE_OMP_HOME"] = other;
+    try {
+      expect(cronLogPath()).toBe(join(other, ".omp", "remote", "cron.jsonl"));
+    } finally {
+      process.env["REMOTE_OMP_HOME"] = home;
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
   test("missing file → []", () => {
     expect(readCronLog()).toEqual([]);
   });

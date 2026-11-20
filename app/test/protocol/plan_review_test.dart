@@ -1,6 +1,6 @@
 // omp plan mode — protocol surface, built from the captured frames
 // (test/protocol/plan_capture_fixtures.dart). Contract:
-// pi-extension/src/protocol/types.ts (PlanReviewWire, PlanReviewAnswerWire,
+// omp-extension/src/protocol/types.ts (PlanReviewWire, PlanReviewAnswerWire,
 // PlanStatus, `plan_state`, `plan_mode`).
 
 import 'dart:convert';

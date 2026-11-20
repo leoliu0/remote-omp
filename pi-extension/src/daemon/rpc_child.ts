@@ -4,17 +4,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { DaemonState } from "./control_protocol.js";
-import { defaultAgentName, loadLocalConfig, type LocalConfig } from "../session/local_config.js";
-import type { Harness } from "./harness.js";
+import type { LocalConfig } from "../session/local_config.js";
+import { daemonIdForCwd } from "./id.js";
+import { daemonUiTimeoutMs } from "./ui_timeout.js";
+import { UiRequestTimeBox } from "./ui_requests.js";
+import { parseHostExitFrame } from "./host_exit.js";
 
 /**
- * Wrapper around a `<harness> --mode rpc -e <extension>` child process for the
+ * Wrapper around an `omp --mode rpc -e <extension>` child process for the
  * supervisor.
  *
  * Lifecycle:
- *   - `spawn()` boots the child with the daemon's cwd + `REMOTE_PI_DAEMON=1`
+ *   - `spawn()` boots the child with the daemon's cwd + `REMOTE_OMP_DAEMON=1`
  *     env so the extension runs in headless daemon mode.
- *   - `sendPrompt(text)` writes a Pi RPC `prompt` command to stdin.
+ *   - `sendPrompt(text)` writes an omp RPC `prompt` command to stdin.
  *   - The child's stdout (RPC events) updates the passive `_busy` hint on
  *     `message_start`/`message_end`, resolves pending `get_state` queries for
  *     `refreshBusy()`, and re-emits lines as `"stdout"` when listeners exist.
@@ -29,34 +32,35 @@ const MAX_STDOUT_LINE_BYTES = 256 * 1024;
 const MAX_STDERR_BUF_BYTES = 64 * 1024;
 
 export interface RpcChildOptions {
-  /** Which CLI to run; decides the argv (see `rpcSpawnArgs`). Defaults to "pi". */
-  harness?: Harness;
-  /** Path to the harness binary. Defaults to the harness name (must be on PATH). */
-  piBin?: string;
-  /** Absolute path to the remote-pi `dist/index.js` to load as -e. */
+  /** Path to the omp binary. Defaults to `omp` (must be on PATH). */
+  ompBin?: string;
+  /** Absolute path to the remote-omp `dist/index.js` to load as -e. */
   extensionPath: string;
   /** Working directory for the spawned process. Falls back here when no inline
-   *  `config` (`REMOTE_PI_DIRECT_CONFIG`) is injected. */
+   *  `config` (`REMOTE_OMP_DIRECT_CONFIG`) is injected. */
   cwd: string;
   /** Additional env vars merged on top of `process.env` + the mandatory
-   *  `REMOTE_PI_DAEMON=1`. */
+   *  `REMOTE_OMP_DAEMON=1`. */
   env?: NodeJS.ProcessEnv;
   /**
-   * Daemon config injected into the child via `REMOTE_PI_DIRECT_CONFIG`
-   * (JSON inline) instead of a per-cwd `.pi/remote-pi/config.json` file. The
+   * Daemon config injected into the child via `REMOTE_OMP_DIRECT_CONFIG`
+   * (JSON inline) instead of a per-cwd `.omp/remote-omp/config.json` file. The
    * supervisor builds this from the registry. When set, the child reads it
-   * env-first (see `loadLocalConfig`) and no config file is needed. Also the
-   * source of the `--name` for `pi` sessions. Falls back to the on-disk config
-   * when omitted.
+   * env-first (see `loadLocalConfig`) and no config file is needed. Falls back
+   * to the on-disk config when omitted.
    */
   config?: LocalConfig;
+  /** Start a brand-new session on the FIRST spawn instead of resuming the
+   *  folder's latest one (`--continue`). Later respawns resume as usual. Used
+   *  for sessions started from the phone (plan/68). */
+  freshSession?: boolean;
 }
 
 export interface RpcChildExitEvent {
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
   /** True when the exit was asked for through `stop()`. Anything else — a
-   *  crash, or the harness quitting by itself — is not the supervisor's doing. */
+   *  crash, or omp quitting by itself — is not the supervisor's doing. */
   readonly requested: boolean;
   /** How long the process ran (monotonic ms); 0 when it never started. */
   readonly uptimeMs: number;
@@ -67,23 +71,24 @@ export const EXIT_DAEMON_RESTART = 43;
 
 /** Windows extensions `spawn` (without `shell`) can actually launch, in
  *  preference order: native `.exe` first, then the `.cmd`/`.bat` shims (run via
- *  cmd.exe). An extensionless `pi` is a Unix shell script Node CANNOT spawn on
+ *  cmd.exe). An extensionless `omp` is a Unix shell script Node CANNOT spawn on
  *  Windows — picking it yields `spawn … ENOENT` and the daemon shows "crashed". */
 const WIN_EXECUTABLE_EXTS = [".exe", ".cmd", ".bat", ".com"];
 
 /**
- * Resolve the `pi` executable for `spawn` (plan/40, decision C). On Windows a
- * bare `pi` is actually `pi.cmd`/`pi.ps1`, and `spawn` won't find it without an
- * extension → resolve the real path via `where` (rather than `shell:true`,
- * which risks shell injection). An explicit path or an already-suffixed name is
- * used as-is. POSIX returns the name unchanged. Best-effort: if `where` fails,
- * fall back to the bare name (spawn will surface ENOENT honestly).
+ * Resolve the `omp` executable for `spawn` (plan/40, decision C). On Windows a
+ * bare `omp` is actually `omp.exe` or an `omp.cmd`/`omp.ps1` shim, and `spawn`
+ * won't find it without an extension → resolve the real path via `where`
+ * (rather than `shell:true`, which risks shell injection). An explicit path or
+ * an already-suffixed name is used as-is. POSIX returns the name unchanged.
+ * Best-effort: if `where` fails, fall back to the bare name (spawn will surface
+ * ENOENT honestly).
  */
-export function resolvePiBin(piBin: string, plat: NodeJS.Platform = process.platform): string {
-  if (plat !== "win32") return piBin;
-  if (piBin.includes("\\") || piBin.includes("/") || /\.[a-z0-9]+$/i.test(piBin)) return piBin;
+export function resolveOmpBin(ompBin: string, plat: NodeJS.Platform = process.platform): string {
+  if (plat !== "win32") return ompBin;
+  if (ompBin.includes("\\") || ompBin.includes("/") || /\.[a-z0-9]+$/i.test(ompBin)) return ompBin;
   try {
-    const out = execFileSync("where", [piBin], { encoding: "utf8" });
+    const out = execFileSync("where", [ompBin], { encoding: "utf8" });
     const lines = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const runnable = lines.find((l) =>
       WIN_EXECUTABLE_EXTS.some((ext) => l.toLowerCase().endsWith(ext)),
@@ -93,28 +98,28 @@ export function resolvePiBin(piBin: string, plat: NodeJS.Platform = process.plat
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code && code !== "ENOENT") {
-      process.stderr.write(`[remote-pi-supervisord] where ${piBin} failed: ${String(err)}\n`);
+      process.stderr.write(`[remote-omp-supervisord] where ${ompBin} failed: ${String(err)}\n`);
     }
   }
-  return piBin;
+  return ompBin;
 }
 
 /** What to pass to `spawn`: the executable and any args to prepend before the
  *  caller's args. On POSIX (and for `.exe`) `prefixArgs` is empty. */
-export interface PiSpawnTarget { command: string; prefixArgs: string[] }
+export interface OmpSpawnTarget { command: string; prefixArgs: string[] }
 
 /**
- * Resolve `pi` to a directly-spawnable target (plan/40). On Windows `pi` is an
+ * Resolve `omp` to a directly-spawnable target (plan/40). On Windows `omp` can be an
  * npm `.cmd` shim, which modern Node refuses to `spawn` without `shell:true`
  * (EINVAL, post CVE-2024-27980). Instead we parse the shim to recover the
  * underlying `node <cli.js>` and spawn that directly.
  */
-export function resolvePiSpawn(
-  piBin: string,
+export function resolveOmpSpawn(
+  ompBin: string,
   plat: NodeJS.Platform = process.platform,
   nodeExe: string = process.execPath,
-): PiSpawnTarget {
-  const resolved = resolvePiBin(piBin, plat);
+): OmpSpawnTarget {
+  const resolved = resolveOmpBin(ompBin, plat);
   if (plat !== "win32") return { command: resolved, prefixArgs: [] };
   if (/\.(cmd|bat)$/i.test(resolved)) {
     const target = _npmShimTarget(resolved);
@@ -135,7 +140,7 @@ export function _npmShimTarget(cmdPath: string): string | null {
     content = readFileSync(cmdPath, "utf8");
   } catch (err) {
     process.stderr.write(
-      `[remote-pi-supervisord] could not read Windows shim ${cmdPath}: ${String(err)}\n`,
+      `[remote-omp-supervisord] could not read Windows shim ${cmdPath}: ${String(err)}\n`,
     );
     return null;
   }
@@ -160,26 +165,14 @@ export function busyTransition(line: string): boolean | null {
 }
 
 /**
- * CLI args for the daemon's `--mode rpc` child. pi and omp share the RPC
- * protocol but not their flags.
+ * CLI args for the daemon's `omp --mode rpc` child. `--allow-home` because omp
+ * otherwise leaves `~` for a temp dir: a daemon must run in the folder it was
+ * registered for. `--continue` resumes the folder's latest session unless the
+ * caller wants a fresh one (`useContinue: false`).
  */
-export function rpcSpawnArgs(o: {
-  harness: Harness;
-  extensionPath: string;
-  sessionName?: string;
-  useContinue?: boolean;
-}): string[] {
+export function rpcSpawnArgs(o: { extensionPath: string; useContinue?: boolean }): string[] {
   const resume = o.useContinue === false ? [] : ["--continue"];
-  if (o.harness === "omp") {
-    return ["--mode", "rpc", "--allow-home", ...resume, "-e", o.extensionPath];
-  }
-  return [
-    "--mode", "rpc",
-    "--approve",
-    ...resume,
-    ...(o.sessionName ? ["--name", o.sessionName] : []),
-    "-e", o.extensionPath,
-  ];
+  return ["--mode", "rpc", "--allow-home", ...resume, "-e", o.extensionPath];
 }
 
 export class RpcChild extends EventEmitter {
@@ -198,11 +191,29 @@ export class RpcChild extends EventEmitter {
   private stderrBuf = "";
   /** Passive busy flag derived from the RPC stream (message_start/end). */
   private _busy = false;
+  /** Makes the id of each `prompt` frame unique even within one millisecond. */
+  private _promptSeq = 0;
   /** In-flight `get_state` requests, keyed by request id. */
   private readonly _statePending = new Map<string, { resolve: (b: boolean) => void; timer: ReturnType<typeof setTimeout> }>();
+  /** Cancels other extensions' dialogs nobody answers (an unattended daemon has no UI). */
+  private readonly _uiBox = new UiRequestTimeBox(
+    (frame) => {
+      const stdin = this.child?.stdin;
+      if (!stdin || stdin.destroyed) return;
+      try {
+        stdin.write(JSON.stringify(frame) + "\n");
+      } catch (err) {
+        process.stderr.write(
+          `[remote-omp-supervisord] ui cancel write failed for ${this.opts.cwd}: ${String(err)}\n`,
+        );
+      }
+    },
+    () => daemonUiTimeoutMs(this.opts.env ? { ...process.env, ...this.opts.env } : process.env),
+  );
 
   constructor(private readonly opts: RpcChildOptions) {
     super();
+    if (opts.freshSession) this.forceFreshSessionOnNextSpawn = true;
   }
 
   get state(): DaemonState { return this._state; }
@@ -229,34 +240,31 @@ export class RpcChild extends EventEmitter {
     this.stderrBuf = "";
     this._state = "starting";
 
-    const harness = this.opts.harness ?? "pi";
-    const piTarget = resolvePiSpawn(this.opts.piBin ?? harness);
-    const cfg = this.opts.config ?? loadLocalConfig(this.opts.cwd);
-    const sessionName = cfg.agent_name ?? defaultAgentName(this.opts.cwd);
+    const ompTarget = resolveOmpSpawn(this.opts.ompBin ?? "omp");
     const useContinue = !this.forceFreshSessionOnNextSpawn;
     this.forceFreshSessionOnNextSpawn = false;
-    // On Windows `prefixArgs` carries pi's cli.js (we spawn node directly); on
-    // POSIX it's empty and `command` is the resolved harness binary or `piBin`.
+    // On Windows `prefixArgs` carries omp's cli.js (we spawn node directly); on
+    // POSIX it's empty and `command` is `omp` or `ompBin`.
     const args = [
-      ...piTarget.prefixArgs,
-      ...rpcSpawnArgs({ harness, extensionPath: this.opts.extensionPath, sessionName, useContinue }),
+      ...ompTarget.prefixArgs,
+      ...rpcSpawnArgs({ extensionPath: this.opts.extensionPath, useContinue }),
     ];
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       ...this.opts.env,
       // Mandatory daemon marker — session_start / commands check this to run
       // headlessly and keep daemon lifetime under the supervisor.
-      REMOTE_PI_DAEMON: "1",
-      // A daemon that registers another daemon from its shell (`remote-pi
-      // create`) defaults to its own harness.
-      REMOTE_PI_HARNESS: harness,
+      REMOTE_OMP_DAEMON: "1",
+      // The id this supervisor files the child under: the extension names it in a `send`
+      // control request to reach omp's own command pipeline (phone-typed slash commands).
+      REMOTE_OMP_DAEMON_ID: daemonIdForCwd(this.opts.cwd),
       // Inject the daemon config inline so the child needs no config file.
-      ...(this.opts.config ? { REMOTE_PI_DIRECT_CONFIG: JSON.stringify(this.opts.config) } : {}),
+      ...(this.opts.config ? { REMOTE_OMP_DIRECT_CONFIG: JSON.stringify(this.opts.config) } : {}),
     };
 
     let child: ChildProcess;
     try {
-      child = spawn(piTarget.command, args, {
+      child = spawn(ompTarget.command, args, {
         cwd: this.opts.cwd,
         env,
         stdio: ["pipe", "pipe", "pipe"],
@@ -264,7 +272,7 @@ export class RpcChild extends EventEmitter {
       });
     } catch (err) {
       process.stderr.write(
-        `[remote-pi-supervisord] spawn failed (harness=${harness}, cmd=${piTarget.command}, cwd=${this.opts.cwd}): ${String(err)}\n`,
+        `[remote-omp-supervisord] spawn failed (cmd=${ompTarget.command}, cwd=${this.opts.cwd}): ${String(err)}\n`,
       );
       this._startedAt = null;
       this._onExit(null, null);
@@ -276,7 +284,7 @@ export class RpcChild extends EventEmitter {
 
     child.stdin?.on("error", (err) => {
       process.stderr.write(
-        `[remote-pi-supervisord] stdin error for ${this.opts.cwd} (pid=${child.pid ?? "none"}): ${String(err)}\n`,
+        `[remote-omp-supervisord] stdin error for ${this.opts.cwd} (pid=${child.pid ?? "none"}): ${String(err)}\n`,
       );
     });
 
@@ -289,14 +297,14 @@ export class RpcChild extends EventEmitter {
     child.once("spawn", () => {
       if (this.child !== child) return;
       this._state = "running";
-      if (harness === "omp" && child.stdin && !child.stdin.destroyed) {
+      if (child.stdin && !child.stdin.destroyed) {
         try {
           child.stdin.write(
             JSON.stringify({ type: "set_event_filter", events: ["message_start", "message_end"] }) + "\n",
           );
         } catch (err) {
           process.stderr.write(
-            `[remote-pi-supervisord] failed setting omp event filter for ${this.opts.cwd}: ${String(err)}\n`,
+            `[remote-omp-supervisord] failed setting omp event filter for ${this.opts.cwd}: ${String(err)}\n`,
           );
         }
       }
@@ -310,18 +318,18 @@ export class RpcChild extends EventEmitter {
     child.on("error", (err) => {
       if (this.child !== child) {
         process.stderr.write(
-          `[remote-pi-supervisord] late child error (harness=${harness}, cmd=${piTarget.command}, cwd=${this.opts.cwd}): ${String(err)}\n`,
+          `[remote-omp-supervisord] late child error (cmd=${ompTarget.command}, cwd=${this.opts.cwd}): ${String(err)}\n`,
         );
         return;
       }
       if (child.pid !== undefined) {
         process.stderr.write(
-          `[remote-pi-supervisord] child error (pid=${child.pid}, harness=${harness}, cwd=${this.opts.cwd}): ${String(err)}\n`,
+          `[remote-omp-supervisord] child error (pid=${child.pid}, cwd=${this.opts.cwd}): ${String(err)}\n`,
         );
         return;
       }
       process.stderr.write(
-        `[remote-pi-supervisord] spawn failed (harness=${harness}, cmd=${piTarget.command}, cwd=${this.opts.cwd}): ${String(err)}\n`,
+        `[remote-omp-supervisord] spawn failed (cmd=${ompTarget.command}, cwd=${this.opts.cwd}): ${String(err)}\n`,
       );
       this._startedAt = null;
       this._onExit(null, null);
@@ -329,20 +337,32 @@ export class RpcChild extends EventEmitter {
   }
 
   /**
-   * Sends a Pi RPC `prompt` command to the child's stdin. Fire-and-forget.
+   * Sends an RPC `prompt` command to the child's stdin. Fire-and-forget.
    * Returns false if the child isn't active or writing failed.
+   *
+   * `streamingBehavior` is how omp queues the prompt when the child is mid-run: without one it
+   * refuses the frame ("Agent is already processing"); when idle it is ignored. Default
+   * `followUp`: a cron fire or a CLI `send` waits for the run to end instead of derailing it.
    */
-  sendPrompt(text: string, requestId?: string): boolean {
+  sendPrompt(
+    text: string,
+    opts: { requestId?: string; streamingBehavior?: "steer" | "followUp" } = {},
+  ): boolean {
     if (!this.child || !this.child.stdin || this.child.stdin.destroyed || !this.isActive) {
       return false;
     }
-    const cmd = { id: requestId ?? `sv-${Date.now()}`, type: "prompt", message: text };
+    const cmd = {
+      id: opts.requestId ?? `sv-${Date.now()}-${++this._promptSeq}`,
+      type: "prompt",
+      message: text,
+      streamingBehavior: opts.streamingBehavior ?? "followUp",
+    };
     try {
       this.child.stdin.write(JSON.stringify(cmd) + "\n");
       return true;
     } catch (err) {
       process.stderr.write(
-        `[remote-pi-supervisord] sendPrompt write failed for ${this.opts.cwd}: ${String(err)}\n`,
+        `[remote-omp-supervisord] sendPrompt write failed for ${this.opts.cwd}: ${String(err)}\n`,
       );
       return false;
     }
@@ -379,13 +399,13 @@ export class RpcChild extends EventEmitter {
         const sent = child.kill("SIGTERM");
         if (!sent && child.exitCode === null && child.signalCode === null) {
           process.stderr.write(
-            `[remote-pi-supervisord] SIGTERM could not be delivered to ${this.opts.cwd} (pid=${child.pid ?? "?"})\n`,
+            `[remote-omp-supervisord] SIGTERM could not be delivered to ${this.opts.cwd} (pid=${child.pid ?? "?"})\n`,
           );
         }
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
           process.stderr.write(
-            `[remote-pi-supervisord] SIGTERM failed for ${this.opts.cwd} (pid=${child.pid ?? "?"}): ${String(err)}\n`,
+            `[remote-omp-supervisord] SIGTERM failed for ${this.opts.cwd} (pid=${child.pid ?? "?"}): ${String(err)}\n`,
           );
         }
       }
@@ -393,14 +413,14 @@ export class RpcChild extends EventEmitter {
       killTimer = setTimeout(() => {
         if (settled || child.exitCode !== null || child.signalCode !== null) return;
         process.stderr.write(
-          `[remote-pi-supervisord] ${this.opts.cwd} (pid=${child.pid ?? "?"}) did not exit after ${timeoutMs}ms; escalating to SIGKILL\n`,
+          `[remote-omp-supervisord] ${this.opts.cwd} (pid=${child.pid ?? "?"}) did not exit after ${timeoutMs}ms; escalating to SIGKILL\n`,
         );
         try {
           child.kill("SIGKILL");
         } catch (err) {
           if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
             process.stderr.write(
-              `[remote-pi-supervisord] SIGKILL failed for ${this.opts.cwd} (pid=${child.pid ?? "?"}): ${String(err)}\n`,
+              `[remote-omp-supervisord] SIGKILL failed for ${this.opts.cwd} (pid=${child.pid ?? "?"}): ${String(err)}\n`,
             );
           }
         }
@@ -409,7 +429,7 @@ export class RpcChild extends EventEmitter {
       safetyTimer = setTimeout(() => {
         if (settled) return;
         process.stderr.write(
-          `[remote-pi-supervisord] ${this.opts.cwd} (pid=${child.pid ?? "?"}) did not exit after SIGKILL; detaching handle\n`,
+          `[remote-omp-supervisord] ${this.opts.cwd} (pid=${child.pid ?? "?"}) did not exit after SIGKILL; detaching handle\n`,
         );
         if (this.child === child) {
           this._onExit(child.exitCode, child.signalCode);
@@ -474,6 +494,8 @@ export class RpcChild extends EventEmitter {
   }
 
   private _handleStdoutLine(line: string): void {
+    this._uiBox.ingest(line);
+    if (parseHostExitFrame(line) !== null) this._nudgeHost();
     const hasStdoutListeners = this.listenerCount("stdout") > 0;
     const maybeBusy = line.includes('"message_start"') || line.includes('"message_end"');
     const maybeState = this._statePending.size > 0 && line.includes('"get_state"');
@@ -521,6 +543,24 @@ export class RpcChild extends EventEmitter {
   }
 
   /**
+   * omp acts on a shutdown its extension requested only after the next input frame it
+   * finishes (or at stdin EOF), and a daemon's stdin is quiet between prompts. The
+   * extension announces the exit it asked for (`host_exit.ts`); answer with the cheapest
+   * frame omp handles so the shutdown runs now instead of at the extension's watchdog.
+   */
+  private _nudgeHost(): void {
+    const stdin = this.child?.stdin;
+    if (!stdin || stdin.destroyed) return;
+    try {
+      stdin.write(JSON.stringify({ id: `host-exit-${Date.now()}`, type: "get_state" }) + "\n");
+    } catch (err) {
+      process.stderr.write(
+        `[remote-omp-supervisord] host exit nudge failed for ${this.opts.cwd}: ${String(err)}\n`,
+      );
+    }
+  }
+
+  /**
    * Authoritative busy check: queries the child's `get_state` and syncs
    * `_busy` to `isStreaming`. Resolves the passive flag on timeout (no
    * response) or when the child isn't active.
@@ -532,7 +572,7 @@ export class RpcChild extends EventEmitter {
       const timer = setTimeout(() => {
         this._statePending.delete(id);
         process.stderr.write(
-          `[remote-pi-supervisord] get_state timed out after ${timeoutMs}ms for ${this.opts.cwd}\n`,
+          `[remote-omp-supervisord] get_state timed out after ${timeoutMs}ms for ${this.opts.cwd}\n`,
         );
         resolve(this._busy);
       }, timeoutMs);
@@ -543,7 +583,7 @@ export class RpcChild extends EventEmitter {
         clearTimeout(timer);
         this._statePending.delete(id);
         process.stderr.write(
-          `[remote-pi-supervisord] get_state write failed for ${this.opts.cwd}: ${String(err)}\n`,
+          `[remote-omp-supervisord] get_state write failed for ${this.opts.cwd}: ${String(err)}\n`,
         );
         resolve(this._busy);
       }
@@ -567,6 +607,7 @@ export class RpcChild extends EventEmitter {
   private _onExit(code: number | null, signal: NodeJS.Signals | null): void {
     const requested = this._stopping;
     this._flushStderr();
+    this._uiBox.dispose();
     this.stdoutBuf = "";
     this.droppingLongStdoutLine = false;
     // The session itself asked to end — the app's `/new` (private code) or its

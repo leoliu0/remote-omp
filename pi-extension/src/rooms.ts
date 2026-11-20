@@ -3,7 +3,7 @@ import { realpathSync } from "node:fs";
 import { defaultAgentName } from "./session/local_config.js";
 
 /**
- * Deterministic room id derived from a cwd. Two Pi processes in the same
+ * Deterministic room id derived from a cwd. Two omp processes in the same
  * directory produce the same id; different cwds produce different ids
  * (with cryptographic-strength collision resistance). Symlinks are resolved
  * via `realpath` so `/a` and `/symlink-to-a` map to the same room.
@@ -22,7 +22,7 @@ export function roomIdForCwd(cwd: string): string {
 }
 
 /**
- * THE single derivation of the App↔Pi `room_id` (plan/41) — keyed by
+ * THE single derivation of the App↔PC `room_id` (plan/41) — keyed by
  * `(cwd, name)` so several agents in the SAME folder get distinct rooms (the
  * app then renders one tile per agent instead of merging them into one).
  *
@@ -36,9 +36,9 @@ export function roomIdForCwd(cwd: string): string {
  * even two unnamed agents: the 1st stays `folder` (== default → legacy room),
  * the 2nd becomes `folder#2` (≠ default → name-scoped room).
  *
- * INVARIANT: every callsite that derives the App↔Pi room for the same agent
+ * INVARIANT: every callsite that derives the App↔PC room for the same agent
  * MUST go through this function — otherwise the app would pair on a room the
- * Pi never announces.
+ * PC never announces.
  */
 export function roomIdFor(cwd: string, name?: string): string {
   if (!name || name === defaultAgentName(cwd)) return roomIdForCwd(cwd);

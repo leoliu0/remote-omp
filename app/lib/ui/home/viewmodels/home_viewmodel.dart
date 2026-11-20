@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:app/data/actions/new_session_repository.dart';
 import 'package:app/data/preferences/preferences.dart';
 import 'package:app/data/transport/connection_manager.dart';
 import 'package:app/data/transport/epk_encoding.dart';
@@ -61,7 +62,7 @@ class HomeViewModel extends ViewModel<HomeState> {
   /// the blue "working" dot on the Home tile.
   ///
   /// Plan/32 — single source of truth: the relay broadcasts `meta.working`
-  /// (turn_start/turn_end from the Pi-extension) to ALL subscribed rooms,
+  /// (turn_start/turn_end from the omp-extension) to ALL subscribed rooms,
   /// exactly like presence, so this reflects EVERY session — connected or
   /// not. We deliberately do NOT OR the DB session index here: that row is
   /// only kept fresh for the currently-connected room (the SyncService
@@ -253,6 +254,33 @@ class HomeViewModel extends ViewModel<HomeState> {
   Future<bool> restartSession(String epk, String roomId) async {
     return _conn.restartRoom(epk, roomId);
   }
+
+  // ---------------------------------------------------------------------------
+  // New session (plan 68)
+  // ---------------------------------------------------------------------------
+
+  /// `true` when a new session can be started on [epk]'s PC: the relay link is
+  /// up, [epk] is the PC the app is connected to (its socket is bound to one
+  /// PC) and one of that PC's sessions is live to take the request. Home has
+  /// no open chat, so the request needs that live session to be sent through.
+  bool canStartSession(String epk) {
+    if (_conn.status is! StatusOnline) return false;
+    final active = _conn.activePeer?.remoteEpk;
+    if (active == null || toStandardB64(active) != toStandardB64(epk)) {
+      return false;
+    }
+    return _conn.roomsFor(epk).any((r) => _conn.isRoomLive(epk, r.roomId));
+  }
+
+  /// Folders on [epk]'s PC that already run a live session.
+  Set<String> liveSessionFolders(String epk) => {
+    for (final r in _conn.roomsFor(epk))
+      if (r.cwd != null && _conn.isRoomLive(epk, r.roomId)) r.cwd!,
+  };
+
+  /// What the New session sheet browses and spawns through for [epk]'s PC.
+  NewSessionRequester newSessionRequester(String epk) =>
+      NewSessionRepository(_conn, epk: epk);
 
   @override
   void dispose() {

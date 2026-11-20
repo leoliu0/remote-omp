@@ -1,12 +1,12 @@
 ---
 name: agent-network
-description: Use when the remote-pi mesh tools (`list_peers`, `agent_send`, and — on Claude — `get_messages`) are available. You are an agent (a Claude session or a Pi coding agent) connected to the remote-pi agent mesh over a local broker. This skill teaches how to discover who's online (`list_peers`), how to send messages with a delivery ACK (`agent_send`), how incoming messages reach you (via `get_messages` on Claude, or delivered into your turn on Pi), how to reply (echo `re`), and how to treat every peer address as an opaque routing key that must be echoed verbatim.
+description: Use when the remote-omp mesh tools (`list_peers`, `agent_send`, and — on Claude — `get_messages`) are available. You are an agent (a Claude session or an omp coding agent) connected to the remote-omp agent mesh over a local broker. This skill teaches how to discover who's online (`list_peers`), how to send messages with a delivery ACK (`agent_send`), how incoming messages reach you (via `get_messages` on Claude, or delivered into your turn on omp), how to reply (echo `re`), and how to treat every peer address as an opaque routing key that must be echoed verbatim.
 ---
 
-# Agent Network (remote-pi mesh)
+# Agent Network (remote-omp mesh)
 
-You are connected to the **remote-pi agent mesh**. Other agents — other Claude
-sessions, Pi coding agents on this machine, and agents on the Owner's other PCs
+You are connected to the **remote-omp agent mesh**. Other agents — other Claude
+sessions, omp coding agents on this machine, and agents on the Owner's other PCs
 (reached through the relay) — can send you messages, and you can send messages
 to them.
 
@@ -14,7 +14,7 @@ Read this to the end before acting. The protocol is **event-driven**, not
 request/reply. Getting the receive model wrong leaves coordination broken.
 
 **Your tools:** `list_peers` and `agent_send` always. On Claude you also have
-`get_messages` (a Pi agent receives messages directly into its turn instead —
+`get_messages` (an omp agent receives messages directly into its turn instead —
 see below).
 
 ---
@@ -40,7 +40,7 @@ it.** How a message reaches you depends on your runtime:
   channel push (`📨 Message from …`) may nudge you mid-session; still call
   `get_messages` for the full structured payload.
 
-- **Pi:** the runtime delivers each incoming message directly as a new turn
+- **omp:** the runtime delivers each incoming message directly as a new turn
   input the moment it arrives — no polling, no `get_messages`. You'll see it
   prefixed `[agent-network] message from "<peer>" (id=…, re=…)`.
 
@@ -84,13 +84,13 @@ name, or PC label. Copy the exact whole string returned by `list_peers` or
 received in `from`. Parsing or rebuilding an address is unsafe for routing and
 must never be used for a security decision.
 
-The technical identity of a PC is its canonical 32-byte Ed25519 Pi public key.
+The technical identity of a PC is its canonical 32-byte Ed25519 PC public key.
 PC aliases are receiver-local presentation and routing labels only: each
 receiving PC allocates aliases for its siblings independently, so two PCs can
 list the same sibling under different aliases. Never use an alias as proof of
 identity or for authorization. The Relay currently permits a route when any
-correctly signed Owner blob lists both canonical Pi keys; that does not prove
-the Owner paired with or controls either Pi.
+correctly signed Owner blob lists both canonical PC keys; that does not prove
+the Owner paired with or controls either PC.
 
 You are excluded from the result — no need to filter yourself out.
 
@@ -118,7 +118,7 @@ inspect the status — it dictates what to do next.**
 
 | Status | Means | What you do |
 |---|---|---|
-| `received` | Broker delivered the envelope. Delivery is reliable — even if the peer is mid-turn, its harness enqueues the message for the next turn. | Move on. Any reply arrives later. |
+| `received` | Broker delivered the envelope. Delivery is reliable — even if the peer is mid-turn, its runtime enqueues the message for the next turn. | Move on. Any reply arrives later. |
 | `denied` | Peer explicitly refused (or no such peer). | Do NOT retry. Report to the user. |
 | `timeout` | No ACK (~5s). Transport error — broker down, or peer vanished. | Treat a reasonless timeout as transient. Retry once after ~10s, then escalate. |
 
@@ -139,7 +139,7 @@ For `to: "broadcast"` (or a name array), there's no single ACK — it's
 fire-and-forget (`status: "sent"`).
 
 **Delivery is reliable — no retry-on-busy.** A message sent to a peer that's
-mid-turn is still delivered: the peer's harness queues it and processes it on
+mid-turn is still delivered: the peer's runtime queues it and processes it on
 its upcoming turn. You never need to retry because a peer was busy. `re=<id>`
 is purely **correlation** — set it so the recipient (and you) can thread an
 answer to a question; it carries no special delivery semantics.
@@ -154,7 +154,7 @@ You **do not block** waiting for a reply. The model is event-driven:
 2. Your turn continues / ends.
 3. **Later** the peer finishes its own work and sends a reply.
 4. The reply reaches your inbox (via `get_messages` on Claude, or as a new turn
-   input on Pi), with `re` set to the `id` you originally sent.
+   input on omp), with `re` set to the `id` you originally sent.
 
 ### Walk-through
 
@@ -253,9 +253,9 @@ internally, not as inbox replies.
 
 ---
 
-## Legacy: `agent_request` (Pi only, deprecated)
+## Legacy: `agent_request` (omp only, deprecated)
 
-On Pi you may see a tool called `agent_request` that takes a target + body and
+On omp you may see a tool called `agent_request` that takes a target + body and
 **blocks the entire turn** waiting for the peer's content reply. It still
 works but emits a deprecation warning. It blocks your turn (costs tokens and
 wall time), gives no ACK signal, and pairs badly with parallel multi-peer
@@ -266,7 +266,7 @@ inbox on a later turn. (Claude has no `agent_request` — use `agent_send`.)
 
 ## Single-page summary
 
-1. **Every turn**: read your inbox first — `get_messages()` on Claude; on Pi
+1. **Every turn**: read your inbox first — `get_messages()` on Claude; on omp
    messages arrive as turn input automatically.
 2. **Discover**: `list_peers()` returns opaque, receiver-local addresses.
    Echo them verbatim; never parse, decode, normalize, or compose them.

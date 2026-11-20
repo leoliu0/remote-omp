@@ -7,26 +7,29 @@ import { acquireCwdLock, lockPathForCwd, lockPathFor } from "./cwd_lock.js";
 /** A fresh tmp cwd per test — each gets a unique room hash, so tests in
  *  parallel don't fight over the same lock socket. */
 function tmpCwd(): string {
-  return mkdtempSync(join(tmpdir(), "pi-cwdlock-"));
+  return mkdtempSync(join(tmpdir(), "omp-cwdlock-"));
 }
 
-/** Redirect the lock dir away from the developer's real `~/.pi/remote/locks`
+/** Redirect the lock dir away from the developer's real `~/.omp/remote/locks`
  *  so running the suite never binds sockets in the live mesh's directory.
  *
  *  Base it on a SHORT root (`/tmp`), NOT `os.tmpdir()`: the lock socket nests
- *  `<home>/.pi/remote/locks/<12-char>.sock`, and on macOS `os.tmpdir()` is a
+ *  `<home>/.omp/remote/locks/<12-char>.sock`, and on macOS `os.tmpdir()` is a
  *  deep `/var/folders/…/T/` path that pushes the socket past the ~104-char UDS
  *  path limit → `bind` fails → `acquireCwdLock` returns `ok:false` and these
  *  tests fail (and break `prepublishOnly`). `/tmp` keeps the full path short. */
 let testHome: string;
+let prevHome: string | undefined;
 
 beforeEach(() => {
   testHome = mkdtempSync("/tmp/rp-cwdlock-");
-  process.env["REMOTE_PI_HOME"] = testHome;
+  prevHome = process.env["REMOTE_OMP_HOME"];
+  process.env["REMOTE_OMP_HOME"] = testHome;
 });
 
 afterEach(() => {
-  delete process.env["REMOTE_PI_HOME"];
+  if (prevHome === undefined) delete process.env["REMOTE_OMP_HOME"];
+  else process.env["REMOTE_OMP_HOME"] = prevHome;
   try { rmSync(testHome, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
@@ -75,15 +78,15 @@ describe("acquireCwdLock", () => {
     if (b.ok) b.release();
   });
 
-  // The stale-socket self-heal path (a previous Pi died WITHOUT releasing
+  // The stale-socket self-heal path (a previous omp process died WITHOUT releasing
   // the lock — `kill -9` or crash) can't be reproduced reliably from a
   // single Node process: depending on Node version + OS, `server.close()`
   // either unlinks the socket file or leaves it behind. We rely on the
   // existing leader-election tests (which DO exercise the unlink-retry
   // path via real broker crashes in `src/session/leader_election.test.ts`)
   // to cover the OS primitive, and trust that `acquireCwdLock` composes
-  // it correctly. Manual repro: `kill -9` a Pi process holding the lock,
-  // then run `/remote-pi` again — acquires cleanly.
+  // it correctly. Manual repro: `kill -9` an omp process holding the lock,
+  // then run `/remote-omp` again — acquires cleanly.
 
   test("same cwd, DIFFERENT names → independent locks (multi-agent per folder)", async () => {
     const cwd = tmpCwd();
@@ -135,4 +138,23 @@ describe("acquireCwdLock", () => {
 
     if (held.ok) held.release();
   });
+
+  // POSIX only: on Windows the lock is a named pipe, not a path under the home.
+  test.skipIf(process.platform === "win32")(
+    "lock socket lives under <REMOTE_OMP_HOME>/.omp/remote/locks, resolved at call time",
+    () => {
+      const cwd = tmpCwd();
+      expect(lockPathForCwd(cwd).startsWith(join(testHome, ".omp", "remote", "locks"))).toBe(true);
+
+      // Re-point the home mid-test: the very next call must follow it.
+      const other = mkdtempSync("/tmp/rp-cwdlock-other-");
+      try {
+        process.env["REMOTE_OMP_HOME"] = other;
+        expect(lockPathForCwd(cwd).startsWith(join(other, ".omp", "remote", "locks"))).toBe(true);
+      } finally {
+        process.env["REMOTE_OMP_HOME"] = testHome;
+        try { rmSync(other, { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
+    },
+  );
 });

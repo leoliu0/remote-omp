@@ -1857,4 +1857,63 @@ void main() {
       );
     });
   });
+
+  group('failed turn rows (plan 68 Retry)', () {
+    test('a live provider_error frame writes a row tagged as a failed turn', () async {
+      final s = await setup();
+      s.ch.push(ErrorMessage(code: 'provider_error', message: 'overloaded'));
+      await _settle();
+
+      final row = messages(s.epk).singleWhere((r) => r.role == MsgRole.assistant);
+      expect(row.text, '⚠ provider_error: overloaded');
+      expect(row.errorCode, 'provider_error');
+      expect((row.toChatMessage() as AssistantMsg).isFailedTurn, isTrue);
+
+      s.conn.dispose();
+      s.sync.dispose();
+    });
+
+    test('other error codes are rows too, but not failed turns', () async {
+      final s = await setup();
+      s.ch.push(ErrorMessage(code: 'internal_error', message: 'boom'));
+      await _settle();
+
+      final row = messages(s.epk).singleWhere((r) => r.role == MsgRole.assistant);
+      expect(row.errorCode, 'internal_error');
+      expect((row.toChatMessage() as AssistantMsg).isFailedTurn, isFalse);
+
+      s.conn.dispose();
+      s.sync.dispose();
+    });
+
+    test('the same failure replayed by session_history carries the tag, and keeps it through the JSON round trip', () async {
+      final s = await setup();
+      s.ch.push(
+        SessionHistory(
+          inReplyTo: 'sync1',
+          sessionStartedAt: 0,
+          events: const [
+            UserInputEvt(ts: 1, id: 'u1', text: 'run it'),
+            AgentMessageEvt(
+              ts: 2,
+              inReplyTo: 'u1',
+              text: '⚠ provider_error: overloaded',
+              errorCode: 'provider_error',
+            ),
+            AgentMessageEvt(ts: 3, inReplyTo: 'u1', text: 'a normal answer'),
+          ],
+          eos: true,
+        ),
+      );
+      await _settle();
+
+      final rows = messages(s.epk);
+      expect(rows.map((r) => r.errorCode), [null, 'provider_error', null]);
+      final restored = MessageRecord.fromJson(rows[1].toJson());
+      expect((restored.toChatMessage() as AssistantMsg).isFailedTurn, isTrue);
+
+      s.conn.dispose();
+      s.sync.dispose();
+    });
+  });
 }

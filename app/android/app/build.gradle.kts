@@ -22,7 +22,7 @@ val keystoreProperties = Properties().apply {
 val hasReleaseKeystore = keystoreProperties.getProperty("storeFile") != null
 
 android {
-    namespace = "work.jacobmoura.remotepi"
+    namespace = "work.jacobmoura.remoteomp"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -36,7 +36,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "work.jacobmoura.remotepi"
+        applicationId = "work.jacobmoura.remoteomp"
         // plan/23 § "Minimum Android version" — remote_pi_identity plugin requires API 34.
         minSdk = 34
         targetSdk = flutter.targetSdkVersion

@@ -44,14 +44,15 @@ function fakePi(overrides: Partial<ActionPi> = {}): ActionPi {
   };
 }
 
-/** Upstream-pi-shaped model: no omp `thinking` key and no `thinkingLevelMap`,
- *  so pi-ai's rule applies — standard levels only, no "xhigh"/"max". */
+/** omp-shaped model: `thinking.efforts` lists the levels it accepts, so the
+ *  picker offers `["off", "auto", ...efforts]`. */
 const sampleModel: SdkModelLike = {
   id: "claude-opus-4-7",
   name: "Claude Opus 4.7",
   provider: "anthropic",
   reasoning: true,
   contextWindow: 200_000,
+  thinking: { efforts: ["minimal", "low", "medium", "high"] },
 };
 
 function fakeRegistry(catalog: SdkModelLike[]): ActionModelRegistry {
@@ -420,7 +421,7 @@ describe("handleListModels", () => {
         reasoning: true,
         context_window: 200_000,
         vision: false,
-        thinking_levels: ["auto", "off", "minimal", "low", "medium", "high"],
+        thinking_levels: ["off", "auto", "minimal", "low", "medium", "high"],
       },
     ]);
     expect(reply.current).toEqual(reply.models[0]);
@@ -502,7 +503,7 @@ describe("wireFromModel", () => {
       reasoning: true,
       context_window: 200_000,
       vision: false,  // sampleModel has no `input` → text-only
-      thinking_levels: ["auto", "off", "minimal", "low", "medium", "high"],
+      thinking_levels: ["off", "auto", "minimal", "low", "medium", "high"],
     });
   });
 
@@ -515,59 +516,6 @@ describe("wireFromModel", () => {
   test("vision=false when model.input is text-only", () => {
     const textOnly: SdkModelLike = { ...sampleModel, input: ["text"] };
     expect(wireFromModel(textOnly).vision).toBe(false);
-  });
-
-  test("Gemini 3.7 Flash: off mapped to null -> only minimal..high (no off, no max)", () => {
-    const gemini: SdkModelLike = {
-      ...sampleModel,
-      id: "gemini-3.7-flash",
-      name: "Gemini 3.7 Flash",
-      reasoning: true,
-      thinkingLevelMap: { off: null },
-    };
-    expect(wireFromModel(gemini).thinking_levels).toEqual([
-      "auto", "minimal", "low", "medium", "high",
-    ]);
-  });
-
-  test("Kimi K3: off, minimal, medium, xhigh mapped to null -> only low, high, max", () => {
-    const k3: SdkModelLike = {
-      ...sampleModel,
-      id: "k3",
-      name: "Kimi K3",
-      reasoning: true,
-      thinkingLevelMap: {
-        off: null,
-        minimal: null,
-        low: "low",
-        medium: null,
-        high: "high",
-        xhigh: null,
-        max: "max",
-      },
-    };
-    expect(wireFromModel(k3).thinking_levels).toEqual([
-      "auto", "low", "high", "max",
-    ]);
-  });
-
-  test("DeepSeek V4 Pro: supports off, high, max", () => {
-    const dsv4: SdkModelLike = {
-      ...sampleModel,
-      id: "deepseek-v4-pro",
-      reasoning: true,
-      thinkingLevelMap: {
-        minimal: null,
-        low: null,
-        medium: null,
-        high: "high",
-        xhigh: null,
-        max: "max",
-      },
-    };
-    expect(wireFromModel(dsv4).thinking_levels).toEqual([
-      "auto", "off", "high", "max",
-    ]);
   });
 
   test("thinking_levels is ['off'] for non-reasoning models", () => {

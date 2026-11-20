@@ -17,7 +17,7 @@ function uniqueSock(): string {
   // Per-test unique IPC address. POSIX → a `.sock` file in a fresh tmpdir;
   // Windows → a named pipe whose name embeds the unique tmpdir basename
   // (pipes are machine-global, so the suffix must be unique — plan/40).
-  const dir = mkdtempSync(join(tmpdir(), "pi-e2e-"));
+  const dir = mkdtempSync(join(tmpdir(), "omp-e2e-"));
   return ipcAddress(`e2e-${basename(dir)}`, join(dir, "broker.sock"));
 }
 
@@ -1139,7 +1139,7 @@ describe("ACK protocol (plan/25 Wave 0)", () => {
 
   test("audit.jsonl tags envelopes with via=uds for local routing", async () => {
     const sock = tmpSock();
-    const auditDir = mkdtempSync(join(tmpdir(), "pi-audit-"));
+    const auditDir = mkdtempSync(join(tmpdir(), "omp-audit-"));
     const audit = join(auditDir, "audit.jsonl");
     const orq = await makePeer(sock, "orq", audit);
     const backend = await makePeer(sock, "backend", audit);
@@ -1160,7 +1160,7 @@ describe("ACK protocol (plan/25 Wave 0)", () => {
 
   test("audit.jsonl tags injectFromRemote envelopes with via=relay", async () => {
     const sock = tmpSock();
-    const auditDir = mkdtempSync(join(tmpdir(), "pi-audit-"));
+    const auditDir = mkdtempSync(join(tmpdir(), "omp-audit-"));
     const audit = join(auditDir, "audit.jsonl");
     const orq = await makePeer(sock, "orq", audit);
     const broker = orq.localBroker()!;
@@ -1207,7 +1207,7 @@ describe("ACK protocol (plan/25 Wave 0)", () => {
     await orq.leave(); await a.leave(); await b.leave();
   });
 
-  // ── `remote-pi peers` observer probe (read-only roster) ─────────────────────
+  // ── `remote-omp peers` observer probe (read-only roster) ───────────────────
 
   test("unregistered list_peers probe returns the roster without joining", async () => {
     const sock = tmpSock();
@@ -1313,7 +1313,7 @@ describe("plan/38 — address encoder + name migration (pure)", () => {
   test("migrateAgentName strips a frozen #N and the legacy parent/folder shape", () => {
     expect(migrateAgentName("backend")).toBe("backend");
     expect(migrateAgentName("backend#2")).toBe("backend");       // frozen runtime suffix
-    expect(migrateAgentName("Projects/remote_pi")).toBe("remote_pi");  // legacy parent/folder
+    expect(migrateAgentName("Projects/remote_omp")).toBe("remote_omp");  // legacy parent/folder
     expect(migrateAgentName("myapp/backend#3")).toBe("backend");  // both at once
     expect(migrateAgentName("")).toBeUndefined();
     expect(migrateAgentName("#2")).toBeUndefined();

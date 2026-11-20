@@ -760,4 +760,37 @@ void main() {
       s.cm.dispose();
     });
   });
+
+  group('ActionsRepository — list_files', () {
+    test('listFiles sends list_files and resolves on files_list', () async {
+      final s = await _setup();
+      final future = s.repo.listFiles('sup', limit: 8);
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final sent = s.ch.sent.single as ListFilesRequest;
+      expect(sent.toJson(), {
+        'type': 'list_files',
+        'id': sent.id,
+        'query': 'sup',
+        'limit': 8,
+      });
+      s.ch.push(FilesListResult(
+        inReplyTo: sent.id,
+        root: '/repo',
+        files: const ['src/daemon/supervisor.ts'],
+      ));
+      final resolved = await future;
+      expect(resolved.files, ['src/daemon/supervisor.ts']);
+      s.cm.dispose();
+    });
+
+    test('an extension that never answers (too old) times out as ActionFailure',
+        () async {
+      final s = await _setup(timeout: const Duration(milliseconds: 20));
+      await expectLater(
+        s.repo.listFiles('sup'),
+        throwsA(isA<ActionFailure>()),
+      );
+      s.cm.dispose();
+    });
+  });
 }

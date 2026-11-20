@@ -49,6 +49,7 @@ class ChatViewModel extends ViewModel<ChatState> {
   StreamSubscription<List<AgentActivityJob>>? _activitySub;
   StreamSubscription<PlanState?>? _planSub;
   StreamSubscription<List<TodoPhase>>? _todoSub;
+  StreamSubscription<List<WireSkill>>? _skillsSub;
   StreamSubscription<Map<String, List<RoomInfo>>>? _roomsSub;
   StreamSubscription<ConnectionStatus>? _statusSub;
 
@@ -110,6 +111,9 @@ class ChatViewModel extends ViewModel<ChatState> {
     _activitySub = _sync.agentActivityStream.listen(_onActivity);
     _planSub = _sync.planStateStream.listen(_onPlanState);
     _todoSub = _sync.todoStream.listen(_onTodo);
+    // The slash menu reads the lists at build time; `skills_list` is the last
+    // frame of a sync reply, so repaint when it lands.
+    _skillsSub = _sync.dynamicSkillsStream.listen((_) => notifyListeners());
     _roomsSub = _conn.roomsStream.listen((_) => _recompute());
     _statusSub = _conn.statusStream.listen(_onStatus);
     // ignore: discarded_futures
@@ -130,6 +134,10 @@ class ChatViewModel extends ViewModel<ChatState> {
   }
 
   List<WireSkill> get dynamicSkills => _sync.dynamicSkills;
+
+  /// omp's own command list for the slash menu; null while the peer's
+  /// extension does not send one (the menu then shows the app's built-in list).
+  List<WireCommand>? get hostCommands => _sync.hostCommands;
   List<String>? get promptHistory => _sync.promptHistory;
 
   bool get isRoomLive {
@@ -432,6 +440,12 @@ class ChatViewModel extends ViewModel<ChatState> {
 
   Future<void> cancel(String targetId) => _sync.cancel(targetId);
 
+  /// Composer `@` autocomplete: ranked relative paths of the session's files
+  /// matching [query]. Throws [ActionFailure] (e.g. on timeout when the
+  /// extension is too old to know `list_files`).
+  Future<List<String>> searchFiles(String query, {int? limit}) async =>
+      (await _actions.listFiles(query, limit: limit)).files;
+
   Future<void> approveTool(String toolCallId, ApproveDecision decision) =>
       _sync.approveTool(toolCallId, decision);
 
@@ -440,6 +454,32 @@ class ChatViewModel extends ViewModel<ChatState> {
   /// state itself arrives as `plan_state`.
   Future<void> setPlanMode(PlanModeAction action) =>
       _actions.setPlanMode(action);
+
+  /// Plan 68 — id of the failed turn the chat offers "Retry" under: the
+  /// transcript's newest item is a provider-error row, the agent is idle and
+  /// the PC is reachable. Null everywhere else.
+  String? get retryMessageId => retryTargetId(
+    _messages,
+    canRetry:
+        !isWorking &&
+        _streaming == null &&
+        _runtime.connection == RuntimeConnection.online &&
+        _runtime.presence == RuntimePresence.alive &&
+        !_pairingRevoked &&
+        _peerOfflineReason == null,
+  );
+
+  /// Plan 68 — Retry on a failed turn. Resolves to null once the extension
+  /// scheduled the retry (the turn then streams like any other), or to the
+  /// text to show the user when it refused or could not be reached.
+  Future<String?> retryTurn() async {
+    try {
+      await _actions.retryTurn();
+      return null;
+    } on ActionFailure catch (e) {
+      return retryFailureMessage(e.message);
+    }
+  }
 
   /// Plan/57 — submit (or cancel) an interactive extension_ui_request.
   ///
@@ -456,7 +496,7 @@ class ChatViewModel extends ViewModel<ChatState> {
     _recompute();
     final sent = await _sync.respondExtensionUi(resp);
     if (!sent) {
-      _uiErrors[resp.id] = 'Not connected — check the link to Pi and retry.';
+      _uiErrors[resp.id] = 'Not connected — check the link to the PC and retry.';
       _recompute();
     }
   }
@@ -526,6 +566,7 @@ class ChatViewModel extends ViewModel<ChatState> {
     _activitySub?.cancel();
     _planSub?.cancel();
     _todoSub?.cancel();
+    _skillsSub?.cancel();
     _roomsSub?.cancel();
     _statusSub?.cancel();
     super.dispose();
@@ -554,3 +595,23 @@ List<ChatMessage> mergeFilesIntoTimeline(
   }
   return out;
 }
+
+/// Plan 68 — the id of the item to offer "Retry" under: the transcript's
+/// newest item, when it records a failed turn and [canRetry] (the agent is
+/// idle and the PC reachable). A message after the failure removes it.
+String? retryTargetId(List<ChatMessage> messages, {required bool canRetry}) {
+  if (!canRetry || messages.isEmpty) return null;
+  final last = messages.last;
+  return last is AssistantMsg && last.isFailedTurn ? last.id : null;
+}
+
+/// Plan 68 — what the user reads when Retry fails. A timeout means an
+/// extension too old to know `retry_turn` (it drops frames it does not
+/// recognise), so the text says to update it.
+String retryFailureMessage(String failure) => switch (failure) {
+  'timeout' =>
+    "The PC didn't answer. Update Remote OMP on the PC, then try again.",
+  'offline' || 'disconnected' || 'disposed' => 'Not connected to the PC.',
+  '' => 'Retry failed.',
+  _ => failure,
+};

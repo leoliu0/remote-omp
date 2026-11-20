@@ -1,10 +1,9 @@
-import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { addDaemon, listDaemons, migrateRegistryNames, removeDaemon, type DaemonRecord } from "./registry.js";
+import { addDaemon, listDaemons, migrateRegistryNames, normalizeCwd, removeDaemon, type DaemonRecord } from "./registry.js";
 import { daemonIdForCwd } from "./id.js";
-import { isHarness } from "./harness.js";
+import { remoteOmpHome } from "../paths.js";
 import { type LocalConfig } from "../session/local_config.js";
 import { ipcAddress, usesNamedPipe } from "../session/ipc.js";
 import { EXIT_DAEMON_FRESH_SESSION, EXIT_DAEMON_RESTART, RpcChild, type RpcChildExitEvent, type RpcChildOptions } from "./rpc_child.js";
@@ -35,14 +34,14 @@ import { appendCronLog, readCronLog, type CronResult } from "./cron_log.js";
  * Central process that owns the daemon fleet (plan/26, plan/67).
  *
  * Responsibilities:
- *   - Spawn one `<harness> --mode rpc` child per registry entry. Track them in
+ *   - Spawn one `omp --mode rpc` child per registry entry. Track them in
  *     `children: Map<id, ChildSlot>`.
  *   - Own each daemon's lifetime (plan/67): a child that exits for any reason
- *     the supervisor did not request — a crash, or the harness quitting by
+ *     the supervisor did not request — a crash, or omp quitting by
  *     itself — is respawned, with a capped backoff, for as long as the
  *     registry lists it.
- *   - Listen on `~/.pi/remote/supervisor.sock` for `ControlRequest`s from
- *     the `remote-pi` CLI. Each connection: 1 request → 1 reply → close.
+ *   - Listen on `~/.omp/remote/supervisor.sock` for `ControlRequest`s from
+ *     the `remote-omp` CLI. Each connection: 1 request → 1 reply → close.
  *   - Graceful shutdown on SIGTERM/SIGINT: stop all children + unlink
  *     the UDS file so a next supervisor can bind cleanly.
  *
@@ -67,10 +66,14 @@ const RESTART_BACKOFFS_MS: readonly [number, ...number[]] = [1_000, 5_000, 30_00
  *  backoff over instead of continuing where a past crash loop left off. */
 const STABLE_UPTIME_MS = 60_000;
 
+/** How long `spawn_ephemeral` waits for the omp process to exist (or die)
+ *  before answering, so a missing binary is reported instead of silently
+ *  becoming a session that never shows up. */
+const EPHEMERAL_START_WAIT_MS = 2_000;
+
 function supervisorSockPath(): string {
-  const root = process.env["REMOTE_PI_HOME"] || homedir();
-  // POSIX → ~/.pi/remote/supervisor.sock; Windows → per-user named pipe (plan/40).
-  return ipcAddress("supervisor", join(root, ".pi", "remote", SUPERVISOR_SOCK_NAME));
+  // POSIX → ~/.omp/remote/supervisor.sock; Windows → per-user named pipe (plan/40).
+  return ipcAddress("supervisor", join(remoteOmpHome(), SUPERVISOR_SOCK_NAME));
 }
 
 function _unlinkIgnoringEnoent(path: string, context: string): void {
@@ -78,7 +81,7 @@ function _unlinkIgnoringEnoent(path: string, context: string): void {
     unlinkSync(path);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      process.stderr.write(`[remote-pi-supervisord] unlink ${path} (${context}) failed: ${String(err)}\n`);
+      process.stderr.write(`[remote-omp-supervisord] unlink ${path} (${context}) failed: ${String(err)}\n`);
     }
   }
 }
@@ -88,8 +91,8 @@ function _unlinkIgnoringEnoent(path: string, context: string): void {
 export class SupervisorAlreadyRunningError extends Error {
   constructor(public readonly sockPath: string) {
     super(
-      `Another pi-supervisord is already running (UDS held at ${sockPath}). ` +
-      "Refusing to start a second instance. Use `remote-pi daemon …` to control it, " +
+      `Another remote-omp-supervisord is already running (UDS held at ${sockPath}). ` +
+      "Refusing to start a second instance. Use `remote-omp daemon …` to control it, " +
       "or stop the running one first.",
     );
     this.name = "SupervisorAlreadyRunningError";
@@ -114,12 +117,11 @@ function _probeSupervisor(path: string): Promise<boolean> {
 }
 
 export interface SupervisorOptions {
-  /** Absolute path to remote-pi's `dist/index.js` — passed as `-e` to each
+  /** Absolute path to remote-omp's `dist/index.js` — passed as `-e` to each
    *  spawned daemon child. */
   extensionPath: string;
-  /** Override the harness binary for every daemon. Defaults to the daemon's
-   *  harness name (`pi` / `omp`) on PATH. */
-  piBin?: string;
+  /** Override the omp binary for every daemon. Defaults to `omp` on PATH. */
+  ompBin?: string;
   /** Child environment overlay passed to spawned daemons instead of mutating
    *  the supervisor's own `process.env`. */
   childEnv?: NodeJS.ProcessEnv;
@@ -152,6 +154,10 @@ interface ChildSlot {
   restartTimer: ReturnType<typeof setTimeout> | null;
   restartAttempt: number;
   fastRecycleCount: number;
+  /** Plan/68: a session started from the phone. It has no registry entry (so
+   *  `name` lives here), is never respawned once it ends, and is gone
+   *  from `children` the moment its process exits. */
+  ephemeral?: { name: string };
 }
 
 export class Supervisor {
@@ -239,7 +245,7 @@ export class Supervisor {
       });
     });
     server.on("error", (err) => {
-      process.stderr.write(`[remote-pi-supervisord] UDS server error: ${String(err)}\n`);
+      process.stderr.write(`[remote-omp-supervisord] UDS server error: ${String(err)}\n`);
     });
     this.server = server;
   }
@@ -267,14 +273,14 @@ export class Supervisor {
         .then((reply) => socket.end(encodeReply(reply)))
         .catch((err) => {
           process.stderr.write(
-            `[remote-pi-supervisord] control handler error: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`,
+            `[remote-omp-supervisord] control handler error: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`,
           );
           socket.end(encodeReply<unknown>({ ok: false, error: String(err) }));
         });
     });
     socket.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EPIPE" || err.code === "ECONNRESET") return;
-      process.stderr.write(`[remote-pi-supervisord] control socket error: ${String(err)}\n`);
+      process.stderr.write(`[remote-omp-supervisord] control socket error: ${String(err)}\n`);
     });
   }
 
@@ -289,14 +295,15 @@ export class Supervisor {
       case "list":         return { ok: true, data: { daemons: this._listInfo() } };
       case "status":       return { ok: true, data: { daemons: this._listInfo() } };
       case "start_all":    return this._opStartAll();
-      case "start":        return this._opStart(req.id);
+      case "start":        return this._opStart(req.id, req.fresh === true);
       case "stop_all":     return this._opStopAll();
       case "stop":         return this._opStop(req.id);
       case "restart_all":  return this._opRestartAll();
       case "restart":      return this._opRestart(req.id);
-      case "send":         return this._opSend(req.id, req.text);
+      case "send":         return this._opSend(req.id, req.text, req.streaming_behavior);
       case "register":     return this._opRegister(req);
       case "unregister":   return this._opUnregister(req.id);
+      case "spawn_ephemeral": return this._opSpawnEphemeral(req);
       case "cron_add":     return this._opCronAdd(req);
       case "cron_list":    return this._opCronList();
       case "cron_remove":  return this._opCronRemove(req.job_id);
@@ -318,22 +325,40 @@ export class Supervisor {
 
   private _listInfo(): DaemonInfo[] {
     const registry = listDaemons();
-    return registry.map((entry) => {
+    const infos = registry.map((entry) => {
       const slot = this.children.get(entry.id);
       const info: DaemonInfo = {
         id: entry.id,
         cwd: entry.cwd,
         name: entry.name,
-        harness: entry.harness,
         state: slot?.child.state ?? "stopped",
       };
-      if (slot) {
-        if (slot.child.pid !== undefined) info.pid = slot.child.pid;
-        if (slot.child.uptimeMs !== undefined) info.uptime_s = Math.floor(slot.child.uptimeMs / 1000);
-        info.restart_count = slot.child.restartCount;
-      }
+      if (slot) this._addRuntime(info, slot);
       return info;
     });
+    // Plan/68: phone-started sessions have no registry entry; list them after
+    // the registered daemons. A slot whose folder was registered meanwhile is
+    // already reported above.
+    const registered = new Set(registry.map((entry) => entry.id));
+    for (const slot of this.children.values()) {
+      if (!slot.ephemeral || registered.has(slot.id)) continue;
+      const info: DaemonInfo = {
+        id: slot.id,
+        cwd: slot.cwd,
+        name: slot.ephemeral.name,
+        state: slot.child.state,
+        ephemeral: true,
+      };
+      this._addRuntime(info, slot);
+      infos.push(info);
+    }
+    return infos;
+  }
+
+  private _addRuntime(info: DaemonInfo, slot: ChildSlot): void {
+    if (slot.child.pid !== undefined) info.pid = slot.child.pid;
+    if (slot.child.uptimeMs !== undefined) info.uptime_s = Math.floor(slot.child.uptimeMs / 1000);
+    info.restart_count = slot.child.restartCount;
   }
 
   private async _opStartAll(): Promise<ControlReply<unknown>> {
@@ -355,16 +380,18 @@ export class Supervisor {
 
   /** Spawn a single registered daemon by id. Idempotent: a daemon already
    *  active returns `started: false`. Unknown id → ok:false. This is what
-   *  `/remote-pi create` calls so a freshly-registered folder boots its daemon
-   *  immediately instead of waiting for the next supervisor restart. */
-  private async _opStart(id: string): Promise<ControlReply<unknown>> {
+   *  `/remote-omp create` calls so a freshly-registered folder boots its daemon
+   *  immediately instead of waiting for the next supervisor restart. `fresh`
+   *  (plan/68, a session created from the phone) starts a new session instead
+   *  of resuming the folder's latest one; respawns resume as usual. */
+  private async _opStart(id: string, fresh = false): Promise<ControlReply<unknown>> {
     const entry = this._findRegistered(id);
     if (!entry) return { ok: false, error: `no daemon with id ${id}` };
     const slot = this.children.get(id);
     if (slot && slot.child.isActive) {
       return { ok: true, data: { id, state: slot.child.state, started: false } };
     }
-    await this._spawnEntry(entry);
+    await this._spawnEntry(entry, { fresh });
     const state = this.children.get(id)?.child.state ?? "starting";
     return { ok: true, data: { id, state, started: true } };
   }
@@ -384,7 +411,7 @@ export class Supervisor {
     }
     if (toStop.length > 0) {
       process.stderr.write(
-        `[remote-pi-supervisord] stopping ${toStop.map((x) => x.id).join(", ")} (stop_all)\n`,
+        `[remote-omp-supervisord] stopping ${toStop.map((x) => x.id).join(", ")} (stop_all)\n`,
       );
       await Promise.all(toStop.map(async ({ id, slot }) => {
         await slot.child.stop();
@@ -396,16 +423,23 @@ export class Supervisor {
 
   /** Stop a single registered daemon by id. Idempotent: a daemon that isn't
    *  active returns `stopped: false`. Unknown id → ok:false. Cancels any
-   *  pending restart backoff unconditionally so a deliberate stop sticks. */
+   *  pending restart backoff unconditionally so a deliberate stop sticks. A
+   *  phone-started (ephemeral) session is stopped the same way and forgotten. */
   private async _opStop(id: string): Promise<ControlReply<unknown>> {
     const entry = this._findRegistered(id);
-    if (!entry) return { ok: false, error: `no daemon with id ${id}` };
+    if (!entry) {
+      const eph = this.children.get(id);
+      if (!eph?.ephemeral) return { ok: false, error: `no daemon with id ${id}` };
+      process.stderr.write(`[remote-omp-supervisord] stopping ${id} (requested, ephemeral)\n`);
+      await eph.child.stop();
+      return { ok: true, data: { id, state: eph.child.state, stopped: true } };
+    }
     const slot = this.children.get(id);
     if (slot) this._cancelRestart(slot);
     if (!slot || !slot.child.isActive) {
       return { ok: true, data: { id, state: slot?.child.state ?? "stopped", stopped: false } };
     }
-    process.stderr.write(`[remote-pi-supervisord] stopping ${id} (requested)\n`);
+    process.stderr.write(`[remote-omp-supervisord] stopping ${id} (requested)\n`);
     await slot.child.stop();
     return { ok: true, data: { id, state: slot.child.state, stopped: true } };
   }
@@ -434,13 +468,20 @@ export class Supervisor {
     return { ok: true, data: { restarted } };
   }
 
-  private _opSend(id: string, text: string): ControlReply<unknown> {
+  private _opSend(
+    id: string,
+    text: string,
+    streamingBehavior?: "steer" | "followUp",
+  ): ControlReply<unknown> {
+    if (streamingBehavior !== undefined && streamingBehavior !== "steer" && streamingBehavior !== "followUp") {
+      return { ok: false, error: `streaming_behavior must be "steer" or "followUp"`, code: "bad_request" };
+    }
     const slot = this.children.get(id);
     if (!slot) return { ok: false, error: `daemon ${id} not running` };
     if (!slot.child.isActive) {
       return { ok: false, error: `daemon ${id} state is ${slot.child.state}` };
     }
-    const ok = slot.child.sendPrompt(text);
+    const ok = slot.child.sendPrompt(text, streamingBehavior ? { streamingBehavior } : {});
     return { ok: true, data: { id, delivered: ok } };
   }
 
@@ -448,14 +489,11 @@ export class Supervisor {
     if (typeof req.cwd !== "string" || !req.cwd.trim()) {
       return { ok: false, error: "cwd is required" };
     }
-    if (req.harness !== undefined && !isHarness(req.harness)) {
-      return { ok: false, error: `unknown harness "${String(req.harness)}" (expected pi or omp)` };
-    }
     if (req.name !== undefined && typeof req.name !== "string") {
       return { ok: false, error: "name must be a string" };
     }
     try {
-      const record = addDaemon(req.cwd, req.name, req.harness);
+      const record = addDaemon(req.cwd, req.name);
       return { ok: true, data: record };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
@@ -464,9 +502,10 @@ export class Supervisor {
 
   private async _opUnregister(id: string): Promise<ControlReply<unknown>> {
     // Stop the child first so we don't leave an orphan when the registry
-    // entry is gone.
+    // entry is gone. A phone-started (ephemeral) session is not this daemon's
+    // child: only `stop` ends it.
     const slot = this.children.get(id);
-    if (slot) {
+    if (slot && !slot.ephemeral) {
       this._cancelRestart(slot);
       await slot.child.stop();
       this.children.delete(id);
@@ -477,6 +516,51 @@ export class Supervisor {
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
+  }
+
+  /**
+   * Plan/68 — start a session from the phone: an `omp --mode rpc` child
+   * that is NOT in daemons.json. Unlike a registered daemon (plan/67) it lasts
+   * exactly as long as its process: a crash, or the app's Quit (`/exit`), ends
+   * it for good, and a supervisor shutdown drops it. A folder a registered
+   * daemon or another supervised session already owns is refused. The reply
+   * waits until the process exists (or failed to), so a missing omp binary
+   * is an error here instead of a session that never shows up.
+   */
+  private async _opSpawnEphemeral(
+    req: Extract<ControlRequest, { op: "spawn_ephemeral" }>,
+  ): Promise<ControlReply<unknown>> {
+    if (typeof req.cwd !== "string" || !req.cwd.trim()) {
+      return { ok: false, error: "cwd is required", code: "bad_request" };
+    }
+    const name = typeof req.name === "string" ? req.name.trim() : "";
+    if (!name) return { ok: false, error: "name is required", code: "bad_request" };
+    if (this.shuttingDown) return { ok: false, error: "supervisor is shutting down", code: "shutting_down" };
+
+    let cwd: string;
+    try {
+      cwd = normalizeCwd(req.cwd);
+      if (!statSync(cwd).isDirectory()) throw new Error("not a directory");
+    } catch {
+      return { ok: false, error: `folder not found: ${req.cwd}`, code: "not_found" };
+    }
+    const id = daemonIdForCwd(cwd);
+    if (this._findRegistered(id)) {
+      return { ok: false, error: `a daemon is already registered for ${cwd}`, code: "already_registered" };
+    }
+    if (this.children.has(id)) {
+      return { ok: false, error: `a session is already running in ${cwd}`, code: "cwd_busy" };
+    }
+
+    const slot = this._spawnEphemeral(id, cwd, name);
+    if ((await this._awaitStart(slot.child, EPHEMERAL_START_WAIT_MS)) === "exited") {
+      return {
+        ok: false,
+        error: `omp did not start in ${cwd} (is it installed and on the supervisor's PATH?)`,
+        code: "spawn_failed",
+      };
+    }
+    return { ok: true, data: { id, cwd, name, state: slot.child.state } };
   }
 
   // ── Cron ops + engine (plan/39) ────────────────────────────────────────────
@@ -549,12 +633,12 @@ export class Supervisor {
       const opts = job.tz ? { timezone: job.tz, name: job.id } : { name: job.id };
       const cron = new Cron(job.schedule, opts, () => {
         void this.fireJob(job.id).catch((err) => {
-          process.stderr.write(`[remote-pi-supervisord] cron fire failed for ${job.id}: ${String(err)}\n`);
+          process.stderr.write(`[remote-omp-supervisord] cron fire failed for ${job.id}: ${String(err)}\n`);
         });
       });
       this.cronJobs.set(job.id, cron);
     } catch (e) {
-      process.stderr.write(`[remote-pi-supervisord] cron schedule failed for ${job.id}: ${String(e)}\n`);
+      process.stderr.write(`[remote-omp-supervisord] cron schedule failed for ${job.id}: ${String(e)}\n`);
     }
   }
 
@@ -576,12 +660,12 @@ export class Supervisor {
         const lastRunMs = job.last_run ? Date.parse(job.last_run) : 0;
         if (prev.getTime() > lastRunMs) {
           void this.fireJob(job.id, { manual: true }).catch((err) => {
-            process.stderr.write(`[remote-pi-supervisord] cron catchup failed for ${job.id}: ${String(err)}\n`);
+            process.stderr.write(`[remote-omp-supervisord] cron catchup failed for ${job.id}: ${String(err)}\n`);
           });
         }
       } catch (err) {
         process.stderr.write(
-          `[remote-pi-supervisord] cron catchup skipped for ${job.id} (${job.schedule}): ${String(err)}\n`,
+          `[remote-omp-supervisord] cron catchup skipped for ${job.id} (${job.schedule}): ${String(err)}\n`,
         );
       }
     }
@@ -642,7 +726,7 @@ export class Supervisor {
     slot.restartTimer = null;
   }
 
-  private async _spawnEntry(entry: DaemonRecord): Promise<void> {
+  private async _spawnEntry(entry: DaemonRecord, opts: { fresh?: boolean } = {}): Promise<void> {
     const { id, cwd } = entry;
     // Clean up any prior slot (e.g. crashed + waiting for backoff) and wait
     // for any still-active child to release its per-cwd UDS lock before spawning.
@@ -658,12 +742,12 @@ export class Supervisor {
       auto_start_relay: true,
     };
     const childOpts: RpcChildOptions = {
-      harness: entry.harness,
       extensionPath: this.opts.extensionPath,
       cwd,
       config,
     };
-    if (this.opts.piBin !== undefined) childOpts.piBin = this.opts.piBin;
+    if (opts.fresh) childOpts.freshSession = true;
+    if (this.opts.ompBin !== undefined) childOpts.ompBin = this.opts.ompBin;
     if (this.childEnv !== undefined) childOpts.env = this.childEnv;
     const child = new RpcChild(childOpts);
     const slot: ChildSlot = {
@@ -677,20 +761,75 @@ export class Supervisor {
     this.children.set(id, slot);
 
     process.stderr.write(
-      `[remote-pi-supervisord] spawning ${id} (${entry.harness}, name="${entry.name}") in ${cwd}\n`,
+      `[remote-omp-supervisord] spawning ${id} (name="${entry.name}") in ${cwd}\n`,
     );
     child.on("exit", (evt: RpcChildExitEvent) => this._onChildExit(slot, evt));
     child.spawn();
   }
 
+  /** Spawns the child of a phone-started session (see `_opSpawnEphemeral`) and
+   *  registers its slot. Always a new session, never `--continue`. */
+  private _spawnEphemeral(id: string, cwd: string, name: string): ChildSlot {
+    const config: LocalConfig = { agent_name: name, auto_start_relay: true };
+    const childOpts: RpcChildOptions = {
+      extensionPath: this.opts.extensionPath,
+      cwd,
+      config,
+      freshSession: true,
+    };
+    if (this.opts.ompBin !== undefined) childOpts.ompBin = this.opts.ompBin;
+    if (this.childEnv !== undefined) childOpts.env = this.childEnv;
+    const child = new RpcChild(childOpts);
+    const slot: ChildSlot = {
+      id,
+      cwd,
+      child,
+      restartTimer: null,
+      restartAttempt: 0,
+      fastRecycleCount: 0,
+      ephemeral: { name },
+    };
+    this.children.set(id, slot);
+    process.stderr.write(
+      `[remote-omp-supervisord] spawning ${id} (name="${name}") in ${cwd} (ephemeral)\n`,
+    );
+    child.on("exit", (evt: RpcChildExitEvent) => this._onChildExit(slot, evt));
+    child.spawn();
+    return slot;
+  }
+
+  /** Resolves once `child` has a process ("started"), has already exited, or
+   *  `ms` elapsed ("pending" — still launching, give it the benefit of the doubt). */
+  private _awaitStart(child: RpcChild, ms: number): Promise<"started" | "exited" | "pending"> {
+    if (!child.isActive) return Promise.resolve("exited");
+    if (child.state === "running") return Promise.resolve("started");
+    return new Promise((resolve) => {
+      const done = (outcome: "started" | "exited" | "pending"): void => {
+        clearTimeout(timer);
+        child.off("spawn", onSpawn);
+        child.off("exit", onExit);
+        resolve(outcome);
+      };
+      const onSpawn = (): void => done("started");
+      const onExit = (): void => done("exited");
+      const timer = setTimeout(() => done("pending"), ms);
+      child.once("spawn", onSpawn);
+      child.once("exit", onExit);
+    });
+  }
+
   private _onChildExit(slot: ChildSlot, evt: RpcChildExitEvent): void {
     // A slot replaced by a newer spawn of the same daemon no longer decides.
     if (this.shuttingDown || this.children.get(slot.id) !== slot) return;
+    if (slot.ephemeral) {
+      this._onEphemeralExit(slot, evt);
+      return;
+    }
 
     // The supervisor asked for this exit (stop / restart / unregister): the
     // daemon stays down until the supervisor starts it again.
     if (evt.requested) {
-      process.stderr.write(`[remote-pi-supervisord] ${slot.id} stopped (requested)\n`);
+      process.stderr.write(`[remote-omp-supervisord] ${slot.id} stopped (requested)\n`);
       return;
     }
 
@@ -705,7 +844,7 @@ export class Supervisor {
         // crash. Restart immediately while guarding against runaway sub-5s loops.
         const kind = evt.code === EXIT_DAEMON_FRESH_SESSION ? "fresh session" : "restart";
         process.stderr.write(
-          `[remote-pi-supervisord] ${slot.id} exited (code=${evt.code}); immediate recycle (${kind})\n`,
+          `[remote-omp-supervisord] ${slot.id} exited (code=${evt.code}); immediate recycle (${kind})\n`,
         );
         slot.restartAttempt = 0;
         slot.child.noteRestart();
@@ -714,7 +853,7 @@ export class Supervisor {
       }
     }
 
-    // Any other exit — a crash, or the harness quitting by itself (the app's
+    // Any other exit — a crash, or omp quitting by itself (the app's
     // "quit session" is a clean exit 0) — must not cost the daemon: the
     // registry says it runs, and only the supervisor may end it (plan/67).
     // Retry for as long as it is registered.
@@ -734,7 +873,7 @@ export class Supervisor {
     const delay = Number.isFinite(rawDelay) && rawDelay >= 0 ? rawDelay : 1_000;
     slot.restartAttempt += 1;
     process.stderr.write(
-      `[remote-pi-supervisord] ${slot.id} exited (code=${evt.code} signal=${evt.signal}); ` +
+      `[remote-omp-supervisord] ${slot.id} exited (code=${evt.code} signal=${evt.signal}); ` +
       `restart in ${delay}ms (attempt ${slot.restartAttempt})\n`,
     );
     slot.restartTimer = setTimeout(() => {
@@ -743,6 +882,33 @@ export class Supervisor {
       slot.child.noteRestart();
       slot.child.spawn();
     }, delay);
+  }
+
+  /**
+   * An ephemeral session ends with its process (plan/68): nothing respawns it
+   * after a crash or a quit, and its folder is free again. The one exception is
+   * the app asking the RUNNING session to recycle itself — exit 42 (new
+   * context) or 43 (restart): that is a live session carrying on, so it comes
+   * back at once, with the same guard against sub-5s loops as a daemon.
+   */
+  private _onEphemeralExit(slot: ChildSlot, evt: RpcChildExitEvent): void {
+    if (!evt.requested && (evt.code === EXIT_DAEMON_FRESH_SESSION || evt.code === EXIT_DAEMON_RESTART)) {
+      slot.fastRecycleCount = evt.uptimeMs < FAST_RECYCLE_THRESHOLD_MS ? slot.fastRecycleCount + 1 : 0;
+      if (slot.fastRecycleCount <= MAX_FAST_RECYCLES) {
+        const kind = evt.code === EXIT_DAEMON_FRESH_SESSION ? "fresh session" : "restart";
+        process.stderr.write(
+          `[remote-omp-supervisord] ${slot.id} exited (code=${evt.code}); immediate recycle (${kind}, ephemeral)\n`,
+        );
+        slot.child.noteRestart();
+        slot.child.spawn();
+        return;
+      }
+    }
+    this.children.delete(slot.id);
+    process.stderr.write(
+      `[remote-omp-supervisord] ${slot.id} ended (code=${evt.code} signal=${evt.signal}` +
+      `${evt.requested ? ", requested" : ""}); ephemeral session, not restarted\n`,
+    );
   }
 }
 

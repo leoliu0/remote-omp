@@ -214,6 +214,92 @@ describe("file transfer frames (plan/65)", () => {
   });
 });
 
+// Plan/68 — phone → PC upload frames. Field names are the wire contract shared
+// with app/lib/protocol/protocol.dart: snake_case, exactly as in the plan.
+describe("upload frames (plan/68)", () => {
+  const clientFrames: ClientMessage[] = [
+    {
+      type: "upload_start",
+      id: "r1",
+      upload_id: "u-1",
+      name: "report.pdf",
+      size: 20_971_520,
+      mime: "application/pdf",
+      sha256: "a".repeat(64),
+    },
+    { type: "upload_start", id: "r2", upload_id: "u-2", name: "empty.txt", size: 0 },
+    { type: "upload_chunk", id: "r3", upload_id: "u-1", seq: 4, data: "AAEC" },
+    { type: "upload_end", id: "r4", upload_id: "u-1" },
+    { type: "upload_cancel", id: "r5", upload_id: "u-1" },
+  ];
+  const serverFrames: ServerMessage[] = [
+    { type: "upload_ack", upload_id: "u-1", seq: 5, received: 5_242_880 },
+    {
+      type: "upload_done",
+      upload_id: "u-1",
+      path: "/home/me/.omp/remote/uploads/2026-11-20/report.pdf",
+      size: 20_971_520,
+    },
+    { type: "upload_error", upload_id: "u-1", code: "too_large", message: "The file is 300 MiB." },
+  ];
+
+  for (const frame of clientFrames) {
+    test(`app → ext ${frame.type} round-trips (${JSON.stringify(frame).length} B)`, () => {
+      const line = encodeClient(frame);
+      expect(line.endsWith("\n")).toBe(true);
+      expect(decodeClient(line)).toEqual(frame);
+    });
+  }
+
+  for (const frame of serverFrames) {
+    test(`ext → app ${frame.type} round-trips`, () => {
+      expect(decodeServer(encodeServer(frame))).toEqual(frame);
+    });
+  }
+
+  test("wire field names are exactly the plan's snake_case names", () => {
+    expect(Object.keys(JSON.parse(encodeClient(clientFrames[0]!)))).toEqual([
+      "type", "id", "upload_id", "name", "size", "mime", "sha256",
+    ]);
+    expect(Object.keys(JSON.parse(encodeClient(clientFrames[2]!)))).toEqual([
+      "type", "id", "upload_id", "seq", "data",
+    ]);
+    expect(Object.keys(JSON.parse(encodeServer(serverFrames[0]!)))).toEqual([
+      "type", "upload_id", "seq", "received",
+    ]);
+    expect(Object.keys(JSON.parse(encodeServer(serverFrames[1]!)))).toEqual([
+      "type", "upload_id", "path", "size",
+    ]);
+    expect(Object.keys(JSON.parse(encodeServer(serverFrames[2]!)))).toEqual([
+      "type", "upload_id", "code", "message",
+    ]);
+  });
+
+  test("direction is enforced: client frames are not server frames and vice versa", () => {
+    for (const t of ["upload_start", "upload_chunk", "upload_end", "upload_cancel"]) {
+      expect(() => decodeServer(`{"type":"${t}","upload_id":"u"}`)).toThrow(DecodeError);
+    }
+    for (const t of ["upload_ack", "upload_done", "upload_error"]) {
+      expect(() => decodeClient(`{"type":"${t}","upload_id":"u"}`)).toThrow(DecodeError);
+    }
+  });
+
+  test("a full 1 MiB chunk frame stays far below the relay's 4 MiB envelope cap", () => {
+    const frame: ClientMessage = {
+      type: "upload_chunk",
+      id: "r-9",
+      upload_id: "0194a3c2-5b7e-7c1d-8f3a-2b9d4e6f7a10",
+      seq: 255,
+      data: Buffer.alloc(1024 * 1024, 0xab).toString("base64"),
+    };
+    // The relay's cap applies to the decoded `ct` (this JSON): `ct.len() * 3 / 4`.
+    const ct = Buffer.from(JSON.stringify(frame)).toString("base64");
+    const estimated = Math.floor((ct.length * 3) / 4);
+    expect(estimated).toBeLessThan(2 * 1024 * 1024);
+    expect(estimated).toBeGreaterThan(1024 * 1024);
+  });
+});
+
 // Plan/66 — omp model roles. Field names are the wire contract shared with
 // app/lib/protocol/protocol.dart: snake_case, exactly as in the plan.
 describe("model role frames (plan/66)", () => {

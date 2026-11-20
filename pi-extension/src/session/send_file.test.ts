@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "../omp-api.js";
 import type { PeerChannel } from "../transport/peer_channel.js";
 import type { ClientMessage, ServerMessage } from "../protocol/types.js";
 import {
@@ -133,7 +133,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
-  delete process.env["REMOTE_PI_MAX_SEND_MIB"];
+  delete process.env["REMOTE_OMP_MAX_SEND_MIB"];
 });
 
 function writeFile(name: string, bytes: Buffer): string {
@@ -465,7 +465,7 @@ describe("FileSender — relay presence", () => {
     expect(err).toBeInstanceOf(SendFileError);
     expect(err).toMatchObject({ code: "phone_offline" });
     expect((err as Error).message).toBe(
-      "phone_offline: Remote Pi is not connected on the phone. Ask the user to open the app, then try again.",
+      "phone_offline: Remote OMP is not connected on the phone. Ask the user to open the app, then try again.",
     );
     expect(Date.now() - started).toBeGreaterThanOrEqual(50);
     expect(phone.frames).toHaveLength(0);
@@ -631,8 +631,8 @@ describe("FileSender — rejected before any frame", () => {
     expect(phone.frames).toHaveLength(0);
   });
 
-  test("file over the cap → too_large (cap from REMOTE_PI_MAX_SEND_MIB)", async () => {
-    process.env["REMOTE_PI_MAX_SEND_MIB"] = "1";
+  test("file over the cap → too_large (cap from REMOTE_OMP_MAX_SEND_MIB)", async () => {
+    process.env["REMOTE_OMP_MAX_SEND_MIB"] = "1";
     const phone = new FakePhone("p1");
     const sender = new FileSender(registry([phone], "p1"));
     const err = await sender.send({ path: writeFile("big.bin", randomBytes(MiB + 1)) }).catch((e) => e);
@@ -658,11 +658,11 @@ describe("FileSender — rejected before any frame", () => {
 });
 
 describe("cap and helpers", () => {
-  test("maxSendBytes defaults to 256 MiB and honours REMOTE_PI_MAX_SEND_MIB", () => {
+  test("maxSendBytes defaults to 256 MiB and honours REMOTE_OMP_MAX_SEND_MIB", () => {
     expect(maxSendBytes({})).toBe(256 * MiB);
-    expect(maxSendBytes({ REMOTE_PI_MAX_SEND_MIB: "64" })).toBe(64 * MiB);
-    expect(maxSendBytes({ REMOTE_PI_MAX_SEND_MIB: "junk" })).toBe(256 * MiB);
-    expect(maxSendBytes({ REMOTE_PI_MAX_SEND_MIB: "0" })).toBe(256 * MiB);
+    expect(maxSendBytes({ REMOTE_OMP_MAX_SEND_MIB: "64" })).toBe(64 * MiB);
+    expect(maxSendBytes({ REMOTE_OMP_MAX_SEND_MIB: "junk" })).toBe(256 * MiB);
+    expect(maxSendBytes({ REMOTE_OMP_MAX_SEND_MIB: "0" })).toBe(256 * MiB);
   });
 
   test("guessMime covers the common cases", () => {

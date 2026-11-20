@@ -797,7 +797,7 @@ class _VersionFooter extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 20),
           child: Center(
             child: Text(
-              'Remote Pi ${info.version} (${info.buildNumber})',
+              'Remote OMP ${info.version} (${info.buildNumber})',
               style: context.typo.mono.copyWith(
                 fontSize: 10,
                 color: colors.muted2,

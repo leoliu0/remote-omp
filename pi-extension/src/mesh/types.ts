@@ -1,5 +1,5 @@
 /**
- * Mesh-membership types — pi-extension side. Mirrors the wire shape defined
+ * Mesh-membership types — omp-extension side. Mirrors the wire shape defined
  * in plan/24-mesh-membership.md and must stay bit-compatible with the Dart
  * (app) and Rust (relay) implementations of the same protocol.
  *
@@ -9,7 +9,7 @@
  */
 
 export interface MeshMember {
-  /** Pi Ed25519 pubkey, canonical RFC 4648 standard base64 with padding. */
+  /** PC Ed25519 pubkey, canonical RFC 4648 standard base64 with padding. */
   remoteEpk: string;
   /** Relay URL where this member registers. */
   relayUrl: string;

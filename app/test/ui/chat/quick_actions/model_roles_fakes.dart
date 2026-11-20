@@ -102,6 +102,9 @@ class FakeRolesRepo implements IActionsRepository {
   Future<void> setPlanMode(PlanModeAction action) async {}
 
   @override
+  Future<void> retryTurn() async {}
+
+  @override
   Future<void> setModel(String provider, String modelId) async {}
 
   @override
@@ -123,6 +126,10 @@ class FakeRolesRepo implements IActionsRepository {
         staged: staged,
         diff: '',
       );
+
+  @override
+  Future<FilesListResult> listFiles(String query, {int? limit}) async =>
+      const FilesListResult(inReplyTo: 'fake', root: '/', files: []);
 
   @override
   void dispose() {

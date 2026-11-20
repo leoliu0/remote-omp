@@ -11,24 +11,24 @@ describe("usesNamedPipe", () => {
 
 describe("ipcAddress", () => {
   test("POSIX → returns the filesystem path unchanged", () => {
-    const p = "/home/u/.pi/remote/supervisor.sock";
+    const p = "/home/u/.omp/remote/supervisor.sock";
     expect(ipcAddress("supervisor", p, "darwin", "u")).toBe(p);
     expect(ipcAddress("supervisor", p, "linux", "u")).toBe(p);
   });
 
   test("Windows → per-user named pipe", () => {
     expect(ipcAddress("supervisor", "/ignored.sock", "win32", "jacob"))
-      .toBe("\\\\.\\pipe\\remote-pi-supervisor-jacob");
+      .toBe("\\\\.\\pipe\\remote-omp-supervisor-jacob");
     expect(ipcAddress("broker-local", "/ignored.sock", "win32", "alice"))
-      .toBe("\\\\.\\pipe\\remote-pi-broker-local-alice");
+      .toBe("\\\\.\\pipe\\remote-omp-broker-local-alice");
   });
 
   test("Windows → sanitizes unsafe chars in suffix + user", () => {
     expect(ipcAddress("broker local", "/x", "win32", "DOMAIN\\user"))
-      .toBe("\\\\.\\pipe\\remote-pi-broker_local-DOMAIN_user");
+      .toBe("\\\\.\\pipe\\remote-omp-broker_local-DOMAIN_user");
   });
 
   test("Windows → falls back to 'user' when username is empty", () => {
-    expect(ipcAddress("supervisor", "/x", "win32", "")).toBe("\\\\.\\pipe\\remote-pi-supervisor-user");
+    expect(ipcAddress("supervisor", "/x", "win32", "")).toBe("\\\\.\\pipe\\remote-omp-supervisor-user");
   });
 });

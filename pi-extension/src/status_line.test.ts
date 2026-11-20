@@ -47,9 +47,9 @@ describe("footerPath (omp path segment)", () => {
   });
 
   test("over 40 chars keeps the tail behind a leading …", () => {
-    const cwd = "/srv/build/agents/remote-pi/packages/extension/src/protocol";
+    const cwd = "/srv/build/agents/remote-omp/packages/extension/src/protocol";
     const { path } = footerPath(cwd, ROOTS);
-    expect(path).toBe("…mote-pi/packages/extension/src/protocol");
+    expect(path).toBe("…ote-omp/packages/extension/src/protocol");
     expect(path).toHaveLength(40);
   });
 

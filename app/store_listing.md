@@ -1,10 +1,10 @@
-# Store Listings — Remote Pi (App Store + Google Play)
+# Store Listings — Remote OMP (App Store + Google Play)
 
 Reference copy for both store listings. Keep in sync when metadata changes.
 Google Play section is at the bottom; most copy is shared.
 
-- **iOS Bundle ID:** `work.jacobmoura.remotepi.app` (the plain `work.jacobmoura.remotepi` is reserved by another Apple team)
-- **Android applicationId:** `work.jacobmoura.remotepi` (separate Play namespace — no conflict)
+- **iOS Bundle ID:** `work.jacobmoura.remoteomp.app`
+- **Android applicationId:** `work.jacobmoura.remoteomp` (separate Play namespace — no conflict)
 - **Apple Team:** `U843T2P7A2`
 - **Min iOS:** 18.0 · **Min Android:** API 34 (Android 14)
 - **Platforms:** iPhone **+ iPad** (universal — iPad 13" screenshots required)
@@ -19,12 +19,12 @@ Google Play section is at the bottom; most copy is shared.
 
 **App Name** (24/30)
 ```
-Remote Pi: Coding Agents
+Remote OMP: Coding Agents
 ```
 
-> The on-device name (`CFBundleDisplayName`) stays "Remote Pi" — independent of
-> the store name, which must be globally unique. "Remote Pi" exact is taken by a
-> live app (Ten Fifty Ventures LLC, `com.luisartola.RemotePi`).
+> The on-device name (`CFBundleDisplayName`) stays "Remote OMP" — independent of
+> the store name, which must be globally unique. Verify the store name is free
+> in App Store Connect before submitting.
 
 **Subtitle** (≤30) — pick one:
 ```
@@ -45,7 +45,7 @@ ssh,terminal,developer,cli,ai,assistant,claude,devtools,server,pairing,self-host
 
 ## Description (≤4000)
 ```
-Remote Pi turns your iPhone into the control surface for the AI coding agents running on every machine you work from.
+Remote OMP turns your iPhone into the control surface for the AI coding agents running on every machine you work from.
 
 Pair your phone once by scanning a QR code on your Mac. From then on your devices form a mesh: the agents on your machines talk to each other, and your phone is the trusted key that authorizes new peers and lets you step in from anywhere.
 
@@ -59,18 +59,18 @@ WHAT YOU CAN DO
 YOUR PHONE IS JUST THE AUTHENTICATOR
 You don't run the heavy work on your phone. The agents live on your computers; your phone holds the cryptographic identity that vouches for new devices and gives you a window into what's happening. Pairing uses Ed25519 device keys over TLS.
 
-WORKS WITH THE HARNESS YOU USE
-Remote Pi rides alongside the coding-agent setup you already run on your machines instead of replacing it.
+WORKS WITH OMP
+Remote OMP rides alongside the omp (oh-my-pi) coding agent you already run on your machines instead of replacing it.
 
 OPEN SOURCE & SELF-HOSTABLE
-Remote Pi is open source. Start with the public relay, or point the app at your own self-hosted relay so the connection between your devices runs on infrastructure you control.
+Remote OMP is open source. Start with the public relay, or point the app at your own self-hosted relay so the connection between your devices runs on infrastructure you control.
 
 Built for developers who want their agents within reach — on the couch, on the move, or away from the desk.
 ```
 
 ## What's New (1.0.1)
 ```
-First public release of Remote Pi. Pair your phone with your machines, watch your coding agents work in real time, and approve their tool calls from anywhere. Feedback is very welcome.
+First public release of Remote OMP. Pair your phone with your machines, watch your coding agents work in real time, and approve their tool calls from anywhere. Feedback is very welcome.
 ```
 
 ## URLs
@@ -121,7 +121,7 @@ routes ephemeral traffic.
 
 ## App Review Information
 
-> **Why this matters:** Remote Pi is a *companion* app — it can't show full
+> **Why this matters:** Remote OMP is a *companion* app — it can't show full
 > functionality without a paired machine, and each pairing code is **single-use
 > and expires in 60 s** (see `lib/pairing/qr_scanner.dart`). A static code in the
 > notes would be dead by the time a reviewer tries it. The accepted solution for
@@ -143,7 +143,7 @@ Email:              jacobaraujo7@gmail.com
 ### Reviewer Notes (paste into App Review Information → Notes)
 ```
 ABOUT THE APP
-Remote Pi is a companion app for developers. It does not work standalone: it pairs with a coding-agent "harness" running on your own computer (Mac/Linux) and lets you monitor those agents and approve their actions from your phone. There is no user account and no sign-in.
+Remote OMP is a companion app for developers. It does not work standalone: it pairs with the omp coding agent running on your own computer (Mac/Linux/Windows) and lets you monitor those agents and approve their actions from your phone. There is no user account and no sign-in.
 
 WHY A DEMO VIDEO IS PROVIDED
 Pairing requires a live companion machine, and each pairing code is single-use and expires after 60 seconds (a security measure). A static code in these notes would expire before review. The video here — [PUBLIC VIDEO LINK] — shows the complete flow end to end on a physical iPhone: pairing, the live session list across machines, streaming agent output, and approving a tool call.
@@ -182,13 +182,13 @@ above. (A direct .mp4 can also be uploaded to the attachment field.)
 
 Reuses the same brand voice and the **no-E2E copy rule** above.
 
-- **applicationId:** `work.jacobmoura.remotepi` (Play namespace is independent of
+- **applicationId:** `work.jacobmoura.remoteomp` (Play namespace is independent of
   Apple — the iOS rename does NOT apply here; this ID is fine on Play)
 - **Min SDK:** API 34 (Android 14) — intentional, `remote_pi_identity` needs
   Block Store. **Target SDK:** Flutter default (verify it meets Play's current
   minimum target — API 35 for new apps).
-- **Signing:** already configured. Upload key in `android/signing/remotepi-release.jks`
-  (alias `remotepi`), loaded via `android/key.properties`. On first upload, enroll
+- **Signing:** already configured. Upload key in `android/signing/remoteomp-release.jks`
+  (alias from the `ANDROID_KEY_ALIAS` secret), loaded via `android/key.properties`. On first upload, enroll
   in **Play App Signing** (Google manages the app key; this keystore is the upload key).
   - Upload key **SHA-1:** `C6:F8:AF:C9:4B:31:98:D7:5B:75:08:78:4E:F3:8C:AD:70:1A:06:89`
   - Upload key **SHA-256:** `92:5C:FB:3B:90:76:E0:81:19:E0:12:5B:34:77:38:44:9B:70:BF:CF:53:8F:8A:DC:A6:63:5A:68:AC:B1:9E:40`
@@ -202,8 +202,8 @@ Reuses the same brand voice and the **no-E2E copy rule** above.
 
 **App title** (≤30) — Play does **not** require a globally-unique name, so either works:
 ```
-Remote Pi: Coding Agents     (matches App Store)
-Remote Pi                    (plain — available on Play)
+Remote OMP: Coding Agents   (matches App Store)
+Remote OMP                  (plain)
 ```
 
 **Short description** (≤80)
@@ -214,7 +214,7 @@ Watch and approve your AI coding agents on every machine, from your phone.
 **Full description** (≤4000) — Android-adapted ("phone"/"computer" instead of
 "iPhone"/"Mac"). Bullets render fine on Play.
 ```
-Remote Pi turns your phone into the control surface for the AI coding agents running on every machine you work from.
+Remote OMP turns your phone into the control surface for the AI coding agents running on every machine you work from.
 
 Pair your phone once by scanning a QR code on your computer. From then on your devices form a mesh: the agents on your machines talk to each other, and your phone is the trusted key that authorizes new peers and lets you step in from anywhere.
 
@@ -228,11 +228,11 @@ WHAT YOU CAN DO
 YOUR PHONE IS JUST THE AUTHENTICATOR
 You don't run the heavy work on your phone. The agents live on your computers; your phone holds the cryptographic identity that vouches for new devices and gives you a window into what's happening. Pairing uses Ed25519 device keys over TLS.
 
-WORKS WITH THE HARNESS YOU USE
-Remote Pi rides alongside the coding-agent setup you already run on your machines instead of replacing it.
+WORKS WITH OMP
+Remote OMP rides alongside the omp (oh-my-pi) coding agent you already run on your machines instead of replacing it.
 
 OPEN SOURCE & SELF-HOSTABLE
-Remote Pi is open source. Start with the public relay, or point the app at your own self-hosted relay so the connection between your devices runs on infrastructure you control.
+Remote OMP is open source. Start with the public relay, or point the app at your own self-hosted relay so the connection between your devices runs on infrastructure you control.
 
 Built for developers who want their agents within reach — on the couch, on the move, or away from the desk.
 ```

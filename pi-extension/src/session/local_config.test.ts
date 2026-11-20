@@ -1,24 +1,33 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadLocalConfig, localConfigExists, saveLocalConfig } from "./local_config.js";
 import { _detectGoalStatus } from "../index.js";
 
-const ENV = "REMOTE_PI_DIRECT_CONFIG";
+const ENV = "REMOTE_OMP_DIRECT_CONFIG";
 
 function makeCwd(): string {
   return mkdtempSync(join(tmpdir(), "rp-localcfg-"));
 }
 
-/** Write a config.json into <cwd>/.pi/remote-pi/. */
+/** Write a config.json into <cwd>/.omp/remote-omp/. */
 function writeFileConfig(cwd: string, obj: unknown): void {
-  const dir = join(cwd, ".pi", "remote-pi");
+  const dir = join(cwd, ".omp", "remote-omp");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "config.json"), JSON.stringify(obj));
 }
 
-describe("loadLocalConfig — file vs REMOTE_PI_DIRECT_CONFIG", () => {
+/** Write what Remote Pi left behind: <cwd>/.pi/remote-pi/config.json. Returns its path. */
+function writeLegacyConfig(cwd: string, obj: unknown): string {
+  const dir = join(cwd, ".pi", "remote-pi");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "config.json");
+  writeFileSync(file, JSON.stringify(obj));
+  return file;
+}
+
+describe("loadLocalConfig — file vs REMOTE_OMP_DIRECT_CONFIG", () => {
   let cwd: string;
 
   beforeEach(() => {
@@ -121,6 +130,11 @@ describe("localConfigExists — honors env + file", () => {
     expect(localConfigExists(cwd)).toBe(true);
   });
 
+  test("true when only the legacy .pi/remote-pi file exists", () => {
+    writeLegacyConfig(cwd, { agent_name: "a" });
+    expect(localConfigExists(cwd)).toBe(true);
+  });
+
   test("true when only the inline env is set", () => {
     process.env[ENV] = JSON.stringify({ agent_name: "a" });
     expect(localConfigExists(cwd)).toBe(true);
@@ -148,6 +162,129 @@ describe("saveLocalConfig — unaffected by env (still writes the file)", () => 
     saveLocalConfig(cwd, { agent_name: "saved" });
     delete process.env[ENV]; // ensure we read the file back, not any env
     expect(loadLocalConfig(cwd)).toEqual({ agent_name: "saved", auto_start_relay: true });
+  });
+});
+
+describe("migration from the pre-rename <cwd>/.pi/remote-pi/config.json (plan/69)", () => {
+  let cwd: string;
+  const newFile = () => join(cwd, ".omp", "remote-omp", "config.json");
+
+  beforeEach(() => {
+    cwd = makeCwd();
+    delete process.env[ENV];
+  });
+  afterEach(() => {
+    delete process.env[ENV];
+    vi.restoreAllMocks();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  /** Makes the new location unwritable on every platform (even as root): `.omp` becomes a regular file. */
+  function blockNewLocation(): void {
+    writeFileSync(join(cwd, ".omp"), "not a directory");
+  }
+
+  test("legacy-only folder: values are served, copied to the new file, legacy file left untouched", () => {
+    const legacy = writeLegacyConfig(cwd, { agent_name: "legacy", auto_start_relay: false });
+    const before = readFileSync(legacy, "utf8");
+
+    expect(loadLocalConfig(cwd)).toEqual({ agent_name: "legacy", auto_start_relay: false });
+
+    expect(JSON.parse(readFileSync(newFile(), "utf8"))).toEqual({
+      agent_name: "legacy",
+      auto_start_relay: false,
+    });
+    expect(readFileSync(legacy, "utf8")).toBe(before);
+  });
+
+  test("the copy holds the parsed values only (stale / unknown keys dropped)", () => {
+    writeLegacyConfig(cwd, { agent_name: "app", workspace: "acme", session_name: "x", junk: 1 });
+    loadLocalConfig(cwd);
+    expect(JSON.parse(readFileSync(newFile(), "utf8"))).toEqual({ agent_name: "app" });
+  });
+
+  test("both present: the new file wins and neither file is rewritten", () => {
+    const legacy = writeLegacyConfig(cwd, { agent_name: "legacy", auto_start_relay: false });
+    writeFileConfig(cwd, { agent_name: "current", auto_start_relay: true });
+    const legacyBefore = readFileSync(legacy, "utf8");
+    const newBefore = readFileSync(newFile(), "utf8");
+
+    expect(loadLocalConfig(cwd)).toEqual({ agent_name: "current", auto_start_relay: true });
+
+    expect(readFileSync(legacy, "utf8")).toBe(legacyBefore);
+    expect(readFileSync(newFile(), "utf8")).toBe(newBefore);
+  });
+
+  test("the copy happens once: a later edit of the legacy file does not override the new file", () => {
+    const legacy = writeLegacyConfig(cwd, { agent_name: "legacy" });
+    expect(loadLocalConfig(cwd)).toEqual({ agent_name: "legacy" });
+
+    writeFileSync(legacy, JSON.stringify({ agent_name: "edited-by-an-old-install" }));
+    expect(loadLocalConfig(cwd)).toEqual({ agent_name: "legacy" });
+  });
+
+  test("a failed copy never throws: the legacy values are still served", () => {
+    writeLegacyConfig(cwd, { agent_name: "legacy", auto_start_relay: false });
+    blockNewLocation();
+
+    expect(() => loadLocalConfig(cwd)).not.toThrow();
+    expect(loadLocalConfig(cwd)).toEqual({ agent_name: "legacy", auto_start_relay: false });
+    expect(existsSync(newFile())).toBe(false);
+  });
+
+  test("an invalid legacy file yields {} and no new file is created", () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const dir = join(cwd, ".pi", "remote-pi");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "config.json"), "{not json");
+
+    expect(loadLocalConfig(cwd)).toEqual({});
+    expect(existsSync(newFile())).toBe(false);
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("ignoring invalid local config"));
+  });
+
+  test("inline env still wins over a legacy file and skips the copy", () => {
+    writeLegacyConfig(cwd, { agent_name: "legacy" });
+    process.env[ENV] = JSON.stringify({ agent_name: "fromenv" });
+
+    expect(loadLocalConfig(cwd)).toEqual({ agent_name: "fromenv" });
+    expect(existsSync(newFile())).toBe(false);
+  });
+
+  test("save after a legacy read keeps the legacy fields and writes only the new file", () => {
+    const legacy = writeLegacyConfig(cwd, { agent_name: "legacy", auto_start_relay: false });
+    const before = readFileSync(legacy, "utf8");
+    expect(loadLocalConfig(cwd)).toEqual({ agent_name: "legacy", auto_start_relay: false });
+
+    saveLocalConfig(cwd, { agent_name: "renamed" });
+
+    expect(JSON.parse(readFileSync(newFile(), "utf8"))).toEqual({
+      agent_name: "renamed",
+      auto_start_relay: false,
+    });
+    expect(readFileSync(legacy, "utf8")).toBe(before);
+    expect(loadLocalConfig(cwd)).toEqual({ agent_name: "renamed", auto_start_relay: false });
+  });
+
+  test("save on a legacy-only folder without a prior read also keeps the legacy fields", () => {
+    writeLegacyConfig(cwd, { agent_name: "legacy", auto_start_relay: false });
+
+    saveLocalConfig(cwd, { agent_name: "renamed" });
+
+    expect(JSON.parse(readFileSync(newFile(), "utf8"))).toEqual({
+      agent_name: "renamed",
+      auto_start_relay: false,
+    });
+  });
+
+  test("save never throws when the new location is unwritable", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    writeLegacyConfig(cwd, { agent_name: "legacy" });
+    blockNewLocation();
+
+    expect(() => saveLocalConfig(cwd, { agent_name: "renamed" })).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not persist local config"));
+    expect(existsSync(newFile())).toBe(false);
   });
 });
 

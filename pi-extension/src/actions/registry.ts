@@ -7,7 +7,7 @@
  *
  * History (issue #112): this module used to build its own registry via
  * `ModelRegistry.create(AuthStorage.create())`. Both factories were removed
- * from `@earendil-works/pi-coding-agent` in pi 0.83, so the import crashed the
+ * from the Pi coding-agent package in pi 0.83, so the import crashed the
  * whole pi process on the first `model_set`/`list_models` from the app
  * (`undefined is not an object (evaluating 'AuthStorage.create')`, thrown from
  * the WebSocket line handler). Reading the registry off the live ctx drops the

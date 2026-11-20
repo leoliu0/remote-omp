@@ -17,17 +17,32 @@ import {
 } from "./cron_registry.js";
 
 let home: string;
+let prevOmpHome: string | undefined;
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "pi-cron-"));
-  process.env["REMOTE_PI_HOME"] = home;
+  home = mkdtempSync(join(tmpdir(), "omp-cron-"));
+  prevOmpHome = process.env["REMOTE_OMP_HOME"];
+  process.env["REMOTE_OMP_HOME"] = home;
 });
 afterEach(() => {
-  delete process.env["REMOTE_PI_HOME"];
+  if (prevOmpHome === undefined) delete process.env["REMOTE_OMP_HOME"];
+  else process.env["REMOTE_OMP_HOME"] = prevOmpHome;
   try { rmSync(home, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
 describe("cron_registry — CRUD", () => {
+  test("lives under the Remote OMP data directory, resolved when called", () => {
+    expect(cronRegistryPath()).toBe(join(home, ".omp", "remote", "cron.json"));
+    const other = mkdtempSync(join(tmpdir(), "omp-cron-other-"));
+    process.env["REMOTE_OMP_HOME"] = other;
+    try {
+      expect(cronRegistryPath()).toBe(join(other, ".omp", "remote", "cron.json"));
+    } finally {
+      process.env["REMOTE_OMP_HOME"] = home;
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
   test("missing file → empty registry", () => {
     expect(loadCronRegistry()).toEqual({ jobs: [] });
     expect(listJobs()).toEqual([]);

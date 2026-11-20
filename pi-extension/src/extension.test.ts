@@ -4,16 +4,18 @@
  * Post plano 06: no Noise XX. Pairing is `pair_request → pair_ok|pair_error`
  * over an opaque outer envelope whose `ct` is base64(JSON.stringify(inner)).
  */
-import { describe, expect, test, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, test, vi, beforeEach, afterEach, type Mock } from "vitest";
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getCapabilities, setCapabilities } from "@earendil-works/pi-tui";
-import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { EXIT_DAEMON_RESTART } from "./daemon/rpc_child.js";
+import type { ExtensionAPI, ExtensionFactory } from "./omp-api.js";
+import { EXIT_DAEMON_FRESH_SESSION, EXIT_DAEMON_RESTART } from "./daemon/rpc_child.js";
+import { SupervisorOfflineError } from "./daemon/client.js";
+import type { ControlRequest } from "./daemon/control_protocol.js";
+import { _setBuiltinCommandsForTest, _setSupervisorCallForTest, type BuiltinCommand } from "./slash_commands.js";
 import capture from "./model_meta.fixture.json" with { type: "json" };
 import todoCapture from "./todo_state.fixture.json" with { type: "json" };
 
@@ -68,7 +70,7 @@ vi.mock("./pairing/storage.js", async (importOriginal) => {
     }),
     listPeers: vi.fn().mockImplementation(async () => [..._knownPeers]),
     // Hermetic: derive owners from the in-memory _knownPeers instead of the
-    // real ~/.pi/remote/peers.json. The unmocked `listOwnerPubkeys` calls the
+    // real ~/.omp/remote/peers.json. The unmocked `listOwnerPubkeys` calls the
     // module-internal (real) `listPeers`, so it would read this dev machine's
     // actual owners → SelfRevoke would HTTP-fetch the production mesh blob and
     // seed real siblings (e.g. "MacMini"), making BrokerRemote emit stray
@@ -161,7 +163,7 @@ vi.mock("./config.js", async (importOriginal) => {
       if ("notify_mode" in patch) _savedNotifyMode = patch.notify_mode;
     }),
     resolveRelayUrl: vi.fn().mockImplementation(() => {
-      const env = process.env["REMOTE_PI_RELAY"];
+      const env = process.env["REMOTE_OMP_RELAY"];
       if (env && env.length > 0) return { url: orig.toHttpUrl(env), source: "env" as const };
       if (_savedRelayUrl && _savedRelayUrl.length > 0) {
         return { url: orig.toHttpUrl(_savedRelayUrl), source: "config" as const };
@@ -205,10 +207,36 @@ vi.mock("./pairing/qr.js", async (importOriginal) => {
   };
 });
 
-vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
-  const orig = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
-  return { ...orig, convertToPng: _convertToPngMock };
+// omp's TUI classes and PNG conversion come from the omp process (omp-host.ts). The four classes are
+// recording fakes: the renderer tests assert what gets composed, not how omp draws it.
+const _fakeTui = vi.hoisted(() => {
+  class Container {
+    children: Array<{ render(width: number): string[] }> = [];
+    addChild(child: { render(width: number): string[] }): void { this.children.push(child); }
+    render(width: number): string[] { return this.children.flatMap((child) => child.render(width)); }
+    invalidate(): void {}
+  }
+  class Box extends Container {
+    constructor(readonly paddingX: number, readonly paddingY: number, readonly bgFn?: (text: string) => string) { super(); }
+    override render(width: number): string[] {
+      const lines = super.render(width);
+      return this.bgFn ? lines.map((line) => this.bgFn!(line)) : lines;
+    }
+  }
+  class Text {
+    constructor(readonly text: string) {}
+    render(): string[] { return this.text.split("\n"); }
+    invalidate(): void {}
+  }
+  class Image {
+    constructor(readonly data: string, readonly mimeType: string, readonly theme: unknown) {}
+    render(): string[] { return [`[image ${this.mimeType} ${this.data.length}b]`]; }
+    invalidate(): void {}
+  }
+  return { Box, Container, Image, Text };
 });
+
+vi.mock("./omp-host.js", () => ({ convertToPng: _convertToPngMock, hostTui: () => _fakeTui }));
 
 interface CapturedSelfRevokeOptions {
   onRevoke?: (rawOwnerPubkey: string, canonicalOwnerPubkey: string) => void | Promise<void>;
@@ -302,7 +330,7 @@ function makeMockPi(): { pi: ExtensionAPI; registeredCommands: string[] } {
   return { pi, registeredCommands };
 }
 
-function makeMockCtx(cwd = "/home/user/projects/remote_pi") {
+function makeMockCtx(cwd = "/home/user/projects/remote_omp") {
   return { ui: { notify: vi.fn() }, cwd, abort: vi.fn() };
 }
 
@@ -373,43 +401,43 @@ describe("extension default export", () => {
     const { pi, registeredCommands } = makeMockPi();
     (extension as ExtensionFactory)(pi);
     // Local session (plan/25)
-    expect(registeredCommands).toContain("remote-pi");
-    expect(registeredCommands).toContain("remote-pi setup");
-    expect(registeredCommands).toContain("remote-pi status");
-    expect(registeredCommands).toContain("remote-pi stop");
-    expect(registeredCommands).toContain("remote-pi pair");
-    expect(registeredCommands).toContain("remote-pi devices");
-    expect(registeredCommands).toContain("remote-pi revoke");
-    expect(registeredCommands).toContain("remote-pi set-relay");
+    expect(registeredCommands).toContain("remote-omp");
+    expect(registeredCommands).toContain("remote-omp setup");
+    expect(registeredCommands).toContain("remote-omp status");
+    expect(registeredCommands).toContain("remote-omp stop");
+    expect(registeredCommands).toContain("remote-omp pair");
+    expect(registeredCommands).toContain("remote-omp devices");
+    expect(registeredCommands).toContain("remote-omp revoke");
+    expect(registeredCommands).toContain("remote-omp set-relay");
     // Daemon registry (plan/26 W1)
-    expect(registeredCommands).toContain("remote-pi create");
-    expect(registeredCommands).toContain("remote-pi remove");
+    expect(registeredCommands).toContain("remote-omp create");
+    expect(registeredCommands).toContain("remote-omp remove");
     // Fleet ops (plan/26 W2) — use `daemon` prefix to avoid clashing with
-    // /remote-pi stop (local) since both have very different semantics.
-    expect(registeredCommands).toContain("remote-pi daemons");
-    expect(registeredCommands).toContain("remote-pi daemon start");
-    expect(registeredCommands).toContain("remote-pi daemon stop");
-    expect(registeredCommands).toContain("remote-pi daemon restart");
-    expect(registeredCommands).toContain("remote-pi daemon status");
-    expect(registeredCommands).toContain("remote-pi daemon send");
+    // /remote-omp stop (local) since both have very different semantics.
+    expect(registeredCommands).toContain("remote-omp daemons");
+    expect(registeredCommands).toContain("remote-omp daemon start");
+    expect(registeredCommands).toContain("remote-omp daemon stop");
+    expect(registeredCommands).toContain("remote-omp daemon restart");
+    expect(registeredCommands).toContain("remote-omp daemon status");
+    expect(registeredCommands).toContain("remote-omp daemon send");
     // Service install (plan/26 W3) — systemd / launchd
-    expect(registeredCommands).toContain("remote-pi install");
-    expect(registeredCommands).toContain("remote-pi uninstall");
+    expect(registeredCommands).toContain("remote-omp install");
+    expect(registeredCommands).toContain("remote-omp uninstall");
     // Cross-PC peer inventory (plan/25 W D)
-    expect(registeredCommands).toContain("remote-pi peers");
+    expect(registeredCommands).toContain("remote-omp peers");
   });
 
   test("restart-supervisor maps to the right OS command sequence per platform", () => {
     expect(_restartSupervisorCommand("darwin", 501)).toEqual([
-      { cmd: "launchctl", args: ["kickstart", "-k", "gui/501/dev.remotepi.supervisord"] },
+      { cmd: "launchctl", args: ["kickstart", "-k", "gui/501/dev.remoteomp.supervisord"] },
     ]);
     expect(_restartSupervisorCommand("linux", 1000)).toEqual([
-      { cmd: "systemctl", args: ["--user", "restart", "remote-pi-supervisord.service"] },
+      { cmd: "systemctl", args: ["--user", "restart", "remote-omp-supervisord.service"] },
     ]);
     // Windows (plan/40): End (ignorable) then Run, via Task Scheduler.
     expect(_restartSupervisorCommand("win32", 0)).toEqual([
-      { cmd: "schtasks", args: ["/End", "/TN", "RemotePiSupervisor"], ignoreFailure: true },
-      { cmd: "schtasks", args: ["/Run", "/TN", "RemotePiSupervisor"] },
+      { cmd: "schtasks", args: ["/End", "/TN", "RemoteOmpSupervisor"], ignoreFailure: true },
+      { cmd: "schtasks", args: ["/Run", "/TN", "RemoteOmpSupervisor"] },
     ]);
     // Truly unsupported platform → null (caller exits non-zero).
     expect(_restartSupervisorCommand("aix", 0)).toBeNull();
@@ -420,47 +448,47 @@ describe("extension default export", () => {
     (extension as ExtensionFactory)(pi);
     // 8 plan-25 + 2 daemon registry (W1) + 6 fleet ops (W2) + 2 install (W3)
     // + 1 cross-PC inventory (plan-25 W D) + 1 cron (plan-39) + 1 rename (plan/41)
-    // + 1 relay control (issue #119) + 2 web client (remote-pi web, rc web) + 11 /rc commands
-    // + 2 restart (remote-pi restart, rc restart)
-    // + 4 push notifications (remote-pi notify, remote-pi set-notify, rc notify, rc set-notify).
+    // + 1 relay control (issue #119) + 2 web client (remote-omp web, rc web) + 11 /rc commands
+    // + 2 restart (remote-omp restart, rc restart)
+    // + 4 push notifications (remote-omp notify, remote-omp set-notify, rc notify, rc set-notify).
     expect(registeredCommands).toHaveLength(42);
-    expect(registeredCommands).toContain("remote-pi notify");
-    expect(registeredCommands).toContain("remote-pi set-notify");
+    expect(registeredCommands).toContain("remote-omp notify");
+    expect(registeredCommands).toContain("remote-omp set-notify");
     expect(registeredCommands).toContain("rc notify");
     expect(registeredCommands).toContain("rc set-notify");
-    expect(registeredCommands).toContain("remote-pi restart");
+    expect(registeredCommands).toContain("remote-omp restart");
     expect(registeredCommands).toContain("rc restart");
     expect(registeredCommands).toContain("rc");
     expect(registeredCommands).toContain("rc status");
     expect(registeredCommands).toContain("rc web");
-    expect(registeredCommands).toContain("remote-pi web");
-    // without it every `/remote-pi relay …` silently reprinted the status panel.
-    expect(registeredCommands).toContain("remote-pi relay");
-    expect(registeredCommands).toContain("remote-pi config");
+    expect(registeredCommands).toContain("remote-omp web");
+    // without it every `/remote-omp relay …` silently reprinted the status panel.
+    expect(registeredCommands).toContain("remote-omp relay");
+    expect(registeredCommands).toContain("remote-omp config");
     for (const removed of [
-      "remote-pi join", "remote-pi leave", "remote-pi sessions",
-      "remote-pi relay start", "remote-pi relay stop",
-      "remote-pi relay status", "remote-pi relay url",
-      "remote-pi start", "remote-pi list", "remote-pi add-relay",
+      "remote-omp join", "remote-omp leave", "remote-omp sessions",
+      "remote-omp relay start", "remote-omp relay stop",
+      "remote-omp relay status", "remote-omp relay url",
+      "remote-omp start", "remote-omp list", "remote-omp add-relay",
     ]) {
       expect(registeredCommands).not.toContain(removed);
     }
   });
 
-  // README documents `/remote-pi rename <new>` but the verb had been dropped
+  // README documents `/remote-omp rename <new>` but the verb had been dropped
   // from the TUI dispatcher (only the Cockpit `rename:` control path worked).
   // Re-adding it aligns the implementation with the documented surface.
-  test("/remote-pi rename is registered and dispatches to _renameAgent", async () => {
-    const rename = captureHandler("remote-pi rename");
+  test("/remote-omp rename is registered and dispatches to _renameAgent", async () => {
+    const rename = captureHandler("remote-omp rename");
     expect(typeof rename).toBe("function");
     // Empty arg → _renameAgent no-ops (same contract as the control channel).
     await expect(rename("", makeMockCtx())).resolves.toBeUndefined();
   });
-  test("/rc web and /remote-pi web are registered and dispatch", async () => {
+  test("/rc web and /remote-omp web are registered and dispatch", async () => {
     const rcWeb = captureHandler("rc web");
-    const remotePiWeb = captureHandler("remote-pi web");
+    const remoteOmpWeb = captureHandler("remote-omp web");
     expect(typeof rcWeb).toBe("function");
-    expect(typeof remotePiWeb).toBe("function");
+    expect(typeof remoteOmpWeb).toBe("function");
     const ctx = makeMockCtx();
     await expect(rcWeb("hosted", ctx)).resolves.toBeUndefined();
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("https://remote-pi.jacobmoura.work/web"), "info");
@@ -487,12 +515,12 @@ describe("state machine + pair_request flow", () => {
       },
     );
     // Force idle via stop
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
   test("start: idle → started", async () => {
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
     expect(_getState()).toBe("started");
   });
@@ -504,10 +532,10 @@ describe("state machine + pair_request flow", () => {
     // (config never exists → first-time path) but writable on Windows (a config
     // could exist → wrong auto-bootstrap path, slow real-socket work).
     const cwd = mkdtempSync(join(tmpdir(), "pi-ext-cwd-"));
-    const pair = captureHandler("remote-pi pair");
+    const pair = captureHandler("remote-omp pair");
     const ctx = makeMockCtx(cwd);
     await pair("", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Run /remote-pi"), "warning");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Run /remote-omp"), "warning");
     expect(_getState()).toBe("idle");
     rmSync(cwd, { recursive: true, force: true });
   });
@@ -516,7 +544,7 @@ describe("state machine + pair_request flow", () => {
     _tokenStatus = "ok";
     const APP_PEER_ID = "valid-app-peer-base64";
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
     expect(_getState()).toBe("started");
 
@@ -548,7 +576,7 @@ describe("state machine + pair_request flow", () => {
       hostname?: string;
     };
     expect(inner.harness).toBeDefined();
-    expect(inner.harness!.name).toBe("Pi coding agent");
+    expect(inner.harness!.name).toBe("omp coding agent");
     expect(typeof inner.harness!.version).toBe("string");
     expect(inner.harness!.version.length).toBeGreaterThan(0);
     expect(typeof inner.hostname).toBe("string");
@@ -566,7 +594,7 @@ describe("state machine + pair_request flow", () => {
     _tokenStatus = "expired";
     const APP_PEER_ID = "stale-token-peer";
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
     relayRef.current!.emit("message", makeInnerLine(APP_PEER_ID, {
@@ -607,7 +635,7 @@ describe("state machine + pair_request flow", () => {
     const APP_PEER_A = "peer-a";
     const APP_PEER_B = "peer-b";
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
     // First pair_request from peer A → ok
@@ -639,7 +667,7 @@ describe("state machine + pair_request flow", () => {
     _tokenStatus = "ok";
     const APP_PEER_ID = "already-paired";
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
     // First pair_request → paired
@@ -670,7 +698,7 @@ describe("state machine + pair_request flow", () => {
       paired_at: new Date().toISOString(),
     });
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
     expect(_getState()).toBe("started");
 
@@ -682,7 +710,7 @@ describe("state machine + pair_request flow", () => {
   });
 
   test("unknown peer non-pair message → state stays started, no peer added", async () => {
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
     relayRef.current!.emit("message", makeInnerLine("unknown-peer", {
@@ -695,7 +723,7 @@ describe("state machine + pair_request flow", () => {
   });
 
   test("unknown peer + user_message → relay receives error{unknown_peer}", async () => {
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
     relayRef.current!.emit("message", makeInnerLine("revoked-peer", {
@@ -721,7 +749,7 @@ describe("state machine + pair_request flow", () => {
     // respond with pair_ok or pair_error, never with the generic
     // error{unknown_peer}. Use token_unknown to keep peer unknown afterwards.
     _tokenStatus = "unknown";
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
     relayRef.current!.emit("message", makeInnerLine("stranger", {
@@ -745,7 +773,7 @@ describe("state machine + pair_request flow", () => {
     _tokenStatus = "ok";
     const APP_PEER_ID = OWNER_STANDARD_FIXTURE;
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
     relayRef.current!.emit("message", makeInnerLine(APP_PEER_ID, {
@@ -814,9 +842,9 @@ describe("contract fixtures: pair_*", () => {
   });
 });
 
-// ── /remote-pi revoke <shortid> ───────────────────────────────────────────────
+// ── /remote-omp revoke <shortid> ───────────────────────────────────────────────
 
-describe("/remote-pi revoke", () => {
+describe("/remote-omp revoke", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     _knownPeers.length = 0;
@@ -832,19 +860,19 @@ describe("/remote-pi revoke", () => {
         return _tokenStatus;
       },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
   test("empty arg → usage warning", async () => {
     _knownPeers.push({ name: "Phone", remote_epk: "abcd1234efghIJKL", paired_at: "now" });
 
-    const revoke = captureHandler("remote-pi revoke");
+    const revoke = captureHandler("remote-omp revoke");
     const ctx = makeMockCtx();
     await revoke("", ctx);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("Usage: /remote-pi revoke"),
+      expect.stringContaining("Usage: /remote-omp revoke"),
       "warning",
     );
     expect(_removedPeers).toHaveLength(0);
@@ -857,7 +885,7 @@ describe("/remote-pi revoke", () => {
     // config on every OS, so revoke bails (mirrors pair) rather than editing
     // the file offline. (Fresh tmpdir — see the "pair without start" test.)
     const cwd = mkdtempSync(join(tmpdir(), "pi-ext-cwd-"));
-    const revoke = captureHandler("remote-pi revoke");
+    const revoke = captureHandler("remote-omp revoke");
     const ctx = makeMockCtx(cwd);
     await revoke("aaaa1111", ctx);
 
@@ -875,10 +903,10 @@ describe("/remote-pi revoke", () => {
     _knownPeers.push({ name: "Phone B", remote_epk: OTHER_OWNER_STANDARD_FIXTURE, paired_at: "now" });
 
     // Revoke now requires the relay (mirrors pair) — bring it up first.
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
-    const revoke = captureHandler("remote-pi revoke");
+    const revoke = captureHandler("remote-omp revoke");
     const ctx = makeMockCtx();
     await revoke(OWNER_STANDARD_FIXTURE.slice(0, 8), ctx);
 
@@ -893,10 +921,10 @@ describe("/remote-pi revoke", () => {
   test("unknown shortid → no peer matching warning, peers untouched", async () => {
     _knownPeers.push({ name: "Phone", remote_epk: "cccc3333", paired_at: "now" });
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
-    const revoke = captureHandler("remote-pi revoke");
+    const revoke = captureHandler("remote-omp revoke");
     const ctx = makeMockCtx();
     await revoke("ffffffff", ctx);
 
@@ -912,10 +940,10 @@ describe("/remote-pi revoke", () => {
     _knownPeers.push({ name: "A", remote_epk: "abcd1111-invalid", paired_at: "now" });
     _knownPeers.push({ name: "B", remote_epk: "abcd2222-invalid", paired_at: "now" });
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
-    const revoke = captureHandler("remote-pi revoke");
+    const revoke = captureHandler("remote-omp revoke");
     const ctx = makeMockCtx();
     await revoke("abcd", ctx);
 
@@ -934,7 +962,7 @@ describe("/remote-pi revoke", () => {
     _tokenStatus = "ok";
     const ACTIVE_PEER = OWNER_STANDARD_FIXTURE;
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
     relayRef.current!.emit("message", JSON.stringify({
@@ -945,7 +973,7 @@ describe("/remote-pi revoke", () => {
     }));
     await vi.waitFor(() => expect(_getState()).toBe("paired"), { timeout: 2000 });
 
-    const revoke = captureHandler("remote-pi revoke");
+    const revoke = captureHandler("remote-omp revoke");
     const ctx = makeMockCtx();
     await revoke(OWNER_STANDARD_FIXTURE.slice(0, 8), ctx);
 
@@ -977,7 +1005,7 @@ describe("/remote-pi revoke", () => {
     }));
     await vi.waitFor(() => expect(_getActivePeerCountForTest()).toBe(2));
 
-    const revoke = captureHandler("remote-pi revoke");
+    const revoke = captureHandler("remote-omp revoke");
     await revoke(OWNER_URL_SAFE_FIXTURE, makeMockCtx());
     expect(_removedPeers).toEqual([OWNER_URL_SAFE_FIXTURE]);
     expect(_hasActivePeerForTest(OWNER_STANDARD_FIXTURE)).toBe(false);
@@ -999,7 +1027,7 @@ describe("/remote-pi revoke", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     try {
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       _setPiForTest({ sendMessage, sendUserMessage: () => undefined });
       await _connectForTest(makeMockCtx());
       expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -1021,8 +1049,10 @@ describe("/remote-pi revoke", () => {
       expect(_hasActivePeerForTest(OTHER_OWNER_STANDARD_FIXTURE)).toBe(true);
       const reports = sendMessage.mock.calls
         .map(([message]) => message as { customType?: string; content?: string })
-        .filter((message) => message.customType === "remote-pi:mesh-revoked");
+        .filter((message) => message.customType === "remote-omp:mesh-revoked");
       expect(reports).toHaveLength(1);
+      // omp: a transcript-only row for the person, never model input.
+      expect(reports[0]).toMatchObject({ excludeFromContext: true });
       expect(reports[0]?.content).toContain(
         createHash("sha256").update(OWNER_PUBLIC_FIXTURE).digest("hex").slice(0, 8),
       );
@@ -1047,7 +1077,7 @@ describe("/remote-pi revoke", () => {
     }));
     await vi.waitFor(() => expect(_getState()).toBe("paired"), { timeout: 2000 });
 
-    const devices = captureHandler("remote-pi devices");
+    const devices = captureHandler("remote-omp devices");
     const ctx = makeMockCtx();
     await devices("", ctx);
 
@@ -1101,7 +1131,7 @@ describe("agent-network mesh delivery", () => {
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sendMessage.mock.calls[0]).toEqual([
       expect.objectContaining({
-        customType: "remote-pi:mesh-message",
+        customType: "remote-omp:mesh-message",
         display: true,
         content: expect.stringContaining("mesh-message-1"),
       }),
@@ -1109,7 +1139,7 @@ describe("agent-network mesh delivery", () => {
     ]);
     expect(sendMessage.mock.calls[1]).toEqual([
       expect.objectContaining({
-        customType: "remote-pi:mesh-message",
+        customType: "remote-omp:mesh-message",
         display: true,
         content: expect.stringContaining("mesh-message-2"),
       }),
@@ -1188,7 +1218,7 @@ function captureEventHarness(): {
 
 type MobileContent = Parameters<ExtensionAPI["sendUserMessage"]>[0];
 
-function mobileSdkHarness(host: "omp" | "upstream" = "omp") {
+function mobileSdkHarness() {
   // OMP AgentSession.sendUserMessage: explicit modes queue even when idle;
   // omitted mode starts idle or auto-steers busy. Do not model it as a no-op.
   const sdk = {
@@ -1197,12 +1227,7 @@ function mobileSdkHarness(host: "omp" | "upstream" = "omp") {
     queued: [] as MobileContent[],
     sendMessage: () => undefined,
     sendUserMessage(content: MobileContent, options?: { deliverAs?: "steer" | "followUp" }) {
-      // Upstream 0.79 prompt() rejects busy sends without a streaming mode;
-      // unlike OMP, explicit modes still start a turn when idle.
-      if (host === "upstream" && sdk.busy && !options?.deliverAs) {
-        throw new Error("Agent is already processing. Specify streamingBehavior.");
-      }
-      if (sdk.busy || (host === "omp" && options?.deliverAs)) {
+      if (sdk.busy || options?.deliverAs) {
         sdk.queued.push(content);
       } else {
         sdk.started.push(content);
@@ -1223,7 +1248,7 @@ function captureMessageRenderer(): {
     registerTool: () => undefined, registerShortcut: () => undefined,
     registerFlag: () => undefined, getFlag: () => undefined,
     registerMessageRenderer(type: string, callback: unknown) {
-      if (type === "remote-pi:received-image") {
+      if (type === "remote-omp:received-image") {
         renderer = callback as (message: { details?: unknown }, options: unknown, theme: unknown) => unknown;
       }
     },
@@ -1241,7 +1266,7 @@ function captureMessageRenderer(): {
 }
 
 async function _pairForTest(appPeerId: string): Promise<void> {
-  captureHandler("remote-pi");
+  captureHandler("remote-omp");
   await _connectForTest(makeMockCtx());
   relayRef.current!.emit("message", JSON.stringify({
     peer: appPeerId,
@@ -1271,7 +1296,7 @@ async function _pairForTestWithCtx(
   appPeerId: string,
   connectCtx: { ui: { notify: ReturnType<typeof vi.fn> }; cwd?: string; abort?: ReturnType<typeof vi.fn> },
 ): Promise<void> {
-  captureHandler("remote-pi");
+  captureHandler("remote-omp");
   await _connectForTest(connectCtx);
   relayRef.current!.emit("message", JSON.stringify({
     peer: appPeerId,
@@ -1306,7 +1331,7 @@ describe("multi-channel broadcast (W2D)", () => {
     (qr.qrSession.consumeToken as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       (token: string) => { _consumeCalls.push(token); return _tokenStatus; },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
@@ -1318,13 +1343,13 @@ describe("multi-channel broadcast (W2D)", () => {
     expect(_hasActivePeerForTest("ownerB__abcdefghij")).toBe(true);
   });
 
-  test("/remote-pi pair without config (idle, first-time) → warns + no QR", async () => {
+  test("/remote-omp pair without config (idle, first-time) → warns + no QR", async () => {
     // Isolated empty cwd → no local config on every OS, so we expect the
     // focused first-time message instead of an auto-bootstrap. (Fresh tmpdir —
     // see the "pair without start" test for the cross-platform rationale.)
     expect(_getState()).toBe("idle");
     const cwd = mkdtempSync(join(tmpdir(), "pi-ext-cwd-"));
-    const pair = captureHandler("remote-pi pair");
+    const pair = captureHandler("remote-omp pair");
     const ctx = makeMockCtx(cwd);
     await pair("", ctx);
 
@@ -1334,12 +1359,12 @@ describe("multi-channel broadcast (W2D)", () => {
     rmSync(cwd, { recursive: true, force: true });
   });
 
-  test("/remote-pi pair generates QR even when an owner is already attached", async () => {
+  test("/remote-omp pair generates QR even when an owner is already attached", async () => {
     await _pairForTest("ownerA__1234567890");
     expect(_getActivePeerCountForTest()).toBe(1);
 
     // QR generation must succeed (no "Already paired" rejection).
-    const pair = captureHandler("remote-pi pair");
+    const pair = captureHandler("remote-omp pair");
     const ctx = makeMockCtx();
     await pair("", ctx);
 
@@ -1483,7 +1508,7 @@ describe("multi-channel broadcast (W2D)", () => {
     await _pairForTest(OWNER_STANDARD_FIXTURE);
     await _pairAdditionalForTest(OTHER_OWNER_STANDARD_FIXTURE, "Android");
 
-    const revoke = captureHandler("remote-pi revoke");
+    const revoke = captureHandler("remote-omp revoke");
     await revoke(OWNER_STANDARD_FIXTURE.slice(0, 8), makeMockCtx());
 
     expect(_hasActivePeerForTest(OWNER_STANDARD_FIXTURE)).toBe(false);
@@ -1591,36 +1616,11 @@ describe("multi-channel broadcast (W2D)", () => {
       onSessionStart({ type: "session_start" }, {});
     });
 
-    test("old Pi busy delivery uses fresh isIdle without yielding or trusting the idle mirror", async () => {
-      const staleCtx = { ...makeMockCtx(), isIdle: () => true };
-      await _pairForTestWithCtx("ownerA__1234567890", staleCtx);
-      const sdk = mobileSdkHarness("upstream");
-      sdk.busy = true;
-      const onSessionStart = captureEventHandler("session_start");
-      onSessionStart({ type: "session_start" }, {
-        isIdle() {
-          // Any await between this authoritative read and dispatch loses
-          // the current busy state and changes this send into an idle turn.
-          queueMicrotask(() => { sdk.busy = false; });
-          return false;
-        },
-      });
-      _setPiForTest(sdk);
-      expect(_getCurrentTurnIdForTest()).toBeNull();
-      relayRef.current!.emit("message", makeInnerLine("ownerA__1234567890", {
-        type: "user_message", id: "old-pi-busy", text: "adjust the running turn",
-      }));
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(sdk.started).toEqual([]);
-      expect(sdk.queued).toEqual(["adjust the running turn"]);
-    });
-
-    test.each([
-      { host: "upstream" as const, before: false, after: true },
-      { host: "omp" as const, before: true, after: false },
-    ])("$host rechecks live state after asynchronous image preparation", async ({ host, before, after }) => {
+    test("omp rechecks live state after asynchronous image preparation", async () => {
+      const before = true;
+      const after = false;
       await _pairForTest("ownerA__1234567890");
-      const sdk = mobileSdkHarness(host);
+      const sdk = mobileSdkHarness();
       sdk.busy = before;
       const conversion = deferred<{ data: string; mimeType: string }>();
       _convertToPngMock.mockReturnValueOnce(conversion.promise);
@@ -1965,7 +1965,7 @@ describe("multi-channel broadcast (W2D)", () => {
 
     const previewCall = sentMessages.find((message) => {
       const current = message[0] as { customType?: unknown };
-      return current.customType === "remote-pi:received-image";
+      return current.customType === "remote-omp:received-image";
     });
     const preview = previewCall?.[0] as { content?: string; display?: boolean; details?: { messageId?: string; mime?: string; path?: string; size?: number; index?: number; text?: string; error?: string; reason?: string } } | undefined;
     expect(preview).toBeDefined();
@@ -1985,7 +1985,7 @@ describe("multi-channel broadcast (W2D)", () => {
 
     const expectedBasename = "msg-with-spaces-and-symbols-0.png";
     expect(preview?.details?.path).toContain(tmpdir());
-    expect(preview?.details?.path).toContain("pi-app-");
+    expect(preview?.details?.path).toContain("omp-app-");
     expect(readFileSync(preview!.details!.path!, "utf8")).toBe("ABC");
     expect(basename(preview?.details?.path ?? "")).toBe(expectedBasename);
     if (preview?.details?.path && process.platform !== "win32") {
@@ -2028,7 +2028,7 @@ describe("multi-channel broadcast (W2D)", () => {
 
     const previewCall = sentMessages.find((message) => {
       const current = message[0] as { customType?: unknown };
-      return current.customType === "remote-pi:received-image";
+      return current.customType === "remote-omp:received-image";
     });
     const preview = previewCall?.[0] as { details?: { path?: string; previewPath?: string } } | undefined;
     const previewPath = preview?.details?.previewPath;
@@ -2066,7 +2066,7 @@ describe("multi-channel broadcast (W2D)", () => {
 
     const previewCall = sentMessages.find((message) => {
       const current = message[0] as { customType?: unknown };
-      return current.customType === "remote-pi:received-image";
+      return current.customType === "remote-omp:received-image";
     });
     const preview = previewCall?.[0] as { details?: { path?: string; previewPath?: string } } | undefined;
     expect(preview?.details?.path).toContain("jpeg-big-preview-0.jpg");
@@ -2103,7 +2103,7 @@ describe("multi-channel broadcast (W2D)", () => {
 
     onAgentEnd({ type: "agent_end", messages: [] });
     expect(sentMessages).toHaveLength(1);
-    expect((sentMessages[0][0] as { customType?: unknown }).customType).toBe("remote-pi:received-image");
+    expect((sentMessages[0][0] as { customType?: unknown }).customType).toBe("remote-omp:received-image");
   });
 
   test("slow idle JPEG conversion defers preview if another turn starts first", async () => {
@@ -2140,12 +2140,12 @@ describe("multi-channel broadcast (W2D)", () => {
 
     onAgentEnd({ type: "agent_end", messages: [] });
     expect(sentMessages).toHaveLength(1);
-    expect((sentMessages[0][0] as { customType?: unknown }).customType).toBe("remote-pi:received-image");
+    expect((sentMessages[0][0] as { customType?: unknown }).customType).toBe("remote-omp:received-image");
   });
 
   test("received-image preview messages are filtered out of provider and compaction context", () => {
-    const previewMessage = { role: "custom", customType: "remote-pi:received-image", content: "", display: true, details: { path: "/tmp/photo.png" } };
-    const keepCustom = { role: "custom", customType: "remote-pi:mesh-message", content: "keep", display: true };
+    const previewMessage = { role: "custom", customType: "remote-omp:received-image", content: "", display: true, details: { path: "/tmp/photo.png" } };
+    const keepCustom = { role: "custom", customType: "remote-omp:mesh-message", content: "keep", display: true };
     const keepUser = { role: "user", content: "hello" };
 
     const onContext = captureEventHandler("context");
@@ -2172,14 +2172,14 @@ describe("multi-channel broadcast (W2D)", () => {
     expect(preparation.turnPrefixMessages).toEqual([keepCustom]);
   });
 
-  test("pure-data (display:false) remote-pi events are filtered out of provider and compaction context", () => {
+  test("pure-data (display:false) remote-omp events are filtered out of provider and compaction context", () => {
     // Issue #105: display:false only hides from the TUI; the entry still enters
     // the LLM context, so relay flaps / name collisions were replayed to the
     // model on every call.
-    const relayState = { role: "custom", customType: "remote-pi:relay-state", content: "Relay connected", display: false };
-    const nameAssigned = { role: "custom", customType: "remote-pi:name-assigned", content: "Mesh name reassigned", display: false };
-    const paired = { role: "custom", customType: "remote-pi:paired", content: "Paired with Phone", display: false };
-    const keepCustom = { role: "custom", customType: "remote-pi:mesh-message", content: "keep", display: true };
+    const relayState = { role: "custom", customType: "remote-omp:relay-state", content: "Relay connected", display: false };
+    const nameAssigned = { role: "custom", customType: "remote-omp:name-assigned", content: "Mesh name reassigned", display: false };
+    const paired = { role: "custom", customType: "remote-omp:paired", content: "Paired with Phone", display: false };
+    const keepCustom = { role: "custom", customType: "remote-omp:mesh-message", content: "keep", display: true };
     const keepForeign = { role: "custom", customType: "other-ext:data", content: "keep", display: false };
     const keepUser = { role: "user", content: "hello" };
 
@@ -2207,7 +2207,7 @@ describe("multi-channel broadcast (W2D)", () => {
     expect(preparation.turnPrefixMessages).toEqual([keepCustom]);
   });
 
-  test("registers and uses remote-pi image renderer with Saved fallback", () => {
+  test("registers and uses remote-omp image renderer with Saved fallback", () => {
     const { getRenderer } = captureMessageRenderer();
     const theme = {
       fg: (token: string, text: string) => `${token}:${text}`,
@@ -2215,7 +2215,7 @@ describe("multi-channel broadcast (W2D)", () => {
     };
     const dir = mkdtempSync(join(tmpdir(), "pi-ext-render-missing-"));
     const message = {
-      customType: "remote-pi:received-image",
+      customType: "remote-omp:received-image",
       content: "",
       display: true,
       details: {
@@ -2244,16 +2244,16 @@ describe("multi-channel broadcast (W2D)", () => {
       fg: (token: string, text: string) => `${token}:${text}`,
       bg: (token: string, text: string) => `${token}:${text}`,
     };
-    const dir = mkdtempSync(join(tmpdir(), "pi-ext-render-jpeg-preview-"));
+    const dir = mkdtempSync(join(tmpdir(), "omp-ext-render-jpeg-preview-"));
     const imagePath = join(dir, "photo.jpg");
     const previewPath = join(dir, "photo.preview.png");
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
     writeFileSync(imagePath, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x46, 0x49, 0x46]));
-    writeFileSync(previewPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    writeFileSync(previewPath, pngBytes);
 
-    const prevCaps = getCapabilities();
     const message = {
-      customType: "remote-pi:received-image",
+      customType: "remote-omp:received-image",
       content: "",
       display: true,
       details: {
@@ -2265,20 +2265,17 @@ describe("multi-channel broadcast (W2D)", () => {
         size: 10,
       },
     };
-    setCapabilities({ ...prevCaps, images: "kitty" as const });
 
     try {
       const renderer = getRenderer();
       const component = renderer(message, { expanded: false }, theme);
       const renderedLines = (component as { render: (width: number) => string[] }).render(120);
       const rendered = renderedLines.join("\n");
-      const imageLineIndex = renderedLines.findIndex((line) => line.includes("\x1b_G"));
       expect(rendered).toContain("📷 Photo from Android (msg-jpeg-preview #2)");
-      expect(imageLineIndex).toBeGreaterThanOrEqual(0);
-      expect(renderedLines.slice(imageLineIndex + 1).some((line) => line === "")).toBe(true);
       expect(rendered).toContain(imagePath);
+      // The image row is built from the PNG preview (never the JPEG) and follows the metadata box.
+      expect(renderedLines.at(-1)).toBe(`[image image/png ${pngBytes.toString("base64").length}b]`);
     } finally {
-      setCapabilities(prevCaps);
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -2812,7 +2809,7 @@ describe("user_input mirroring", () => {
         return _tokenStatus;
       },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
@@ -2972,10 +2969,16 @@ describe("user_input mirroring", () => {
     _setPiForTest({ sendUserMessage, sendMessage: () => undefined });
     const sendsBefore = relayRef.current!.send.mock.calls.length;
 
-    relayRef.current!.emit("message", makeInnerLine("peer-headless-plan", {
-      type: "user_message", id: "msg-plan-headless", text: "/plan make hello.txt",
-    }));
-    await new Promise<void>((r) => setImmediate(r));
+    // A daemon: omp's `--mode rpc` child, which has no plan mode (it is a TUI feature).
+    process.env["REMOTE_OMP_DAEMON"] = "1";
+    try {
+      relayRef.current!.emit("message", makeInnerLine("peer-headless-plan", {
+        type: "user_message", id: "msg-plan-headless", text: "/plan make hello.txt",
+      }));
+      await new Promise<void>((r) => setImmediate(r));
+    } finally {
+      delete process.env["REMOTE_OMP_DAEMON"];
+    }
 
     const sent = relayRef.current!.send.mock.calls.slice(sendsBefore)
       .map((c) => c[0] as string).map(decodeSentCt).map((d) => d.inner);
@@ -2986,6 +2989,443 @@ describe("user_input mirroring", () => {
     expect(sent.some((m) => m.type === "user_message")).toBe(false);
     expect(_getCurrentTurnIdForTest()).toBeNull();
     _setPiForTest(null);
+  });
+});
+
+// ── omp native plan review + session modes (plan 69: plan review G1, loop G12) ─
+//
+// omp 19 reports its plan review overlay (`plan_review_requested` /
+// `plan_review_resolved`), answers through `ctx.resolvePlanReview`, replays it
+// through `ctx.getPendingPlanReview`, and reports plan/loop state through
+// `ctx.sessionModes` + `mode_changed`. Nothing is typed or pressed.
+
+const OMP_PLAN_REVIEW = {
+  type: "plan_review_requested",
+  reviewId: "3f7c1a52-9d0e-4b8e-a6f4-0c2d5e8b1a77",
+  sessionId: "session-1",
+  title: "hello-txt",
+  planFilePath: "local://hello-txt-plan.md",
+  planContent: "# Plan: create hello.txt\n\n- Create `hello.txt`.\n",
+  options: [
+    { id: "execute", label: "Approve and execute", disabled: false },
+    { id: "compact", label: "Approve and compact context", disabled: false },
+    { id: "keep", label: "Approve and keep context (~19k / 1m)", disabled: false },
+    { id: "refine", label: "Refine plan", disabled: false },
+    { id: "save", label: "Save", disabled: false },
+  ],
+};
+const OMP_PLAN_WIRE_ID = `plan-review:${OMP_PLAN_REVIEW.reviewId}`;
+
+type OmpModeStatus = "inactive" | "active" | "paused";
+
+function ompModes(plan: OmpModeStatus, loop: OmpModeStatus) {
+  return { plan: { status: plan }, vibe: { status: "inactive" }, goal: { status: "inactive" }, loop: { status: loop } };
+}
+
+/** An omp 19 `ExtensionContext` as far as the plan/mode APIs go: resolving
+ *  answers false for another/closed review and a blank refine, `save` leaves
+ *  the review open, every other pick settles it. */
+function fakeOmpCtx(over: { headless?: boolean; plan?: OmpModeStatus; loop?: OmpModeStatus } = {}) {
+  const state = {
+    pending: undefined as typeof OMP_PLAN_REVIEW | undefined,
+    modes: ompModes(over.plan ?? "active", over.loop ?? "inactive"),
+  };
+  const resolvePlanReview = vi.fn((reviewId: string, choice: string, input?: { feedback?: string }) => {
+    if (!state.pending || state.pending.reviewId !== reviewId) return false;
+    if (choice === "refine" && !input?.feedback?.trim()) return false;
+    if (choice !== "save") state.pending = undefined;
+    return true;
+  });
+  const set = vi.fn(async (request: { mode: string; action: string }) => {
+    if (state.modes.goal.status !== "inactive") {
+      return { ok: false, code: "conflict", message: "Exit goal mode first.", state: state.modes };
+    }
+    state.modes = ompModes(request.action === "enter" ? "active" : "inactive", state.modes.loop.status as OmpModeStatus);
+    return { ok: true, changed: true, state: state.modes };
+  });
+  const openPlanReview = vi.fn(async () => false);
+  const ctx = {
+    ui: { notify: vi.fn() },
+    cwd: "/home/user/projects/remote_omp",
+    abort: vi.fn(),
+    compact: vi.fn(),
+    isIdle: () => true,
+    resolvePlanReview,
+    getPendingPlanReview: vi.fn(() => (state.pending ? structuredClone(state.pending) : undefined)),
+    openPlanReview,
+    // omp RPC / print / subagents: no `ctx.sessionModes`.
+    ...(over.headless ? {} : { sessionModes: { getState: () => structuredClone(state.modes), set } }),
+  };
+  return { ctx, state, resolvePlanReview, set, openPlanReview };
+}
+
+type OmpFrame = { type: string; [k: string]: unknown };
+
+function phoneFrames(sendsBefore: number): OmpFrame[] {
+  return relayRef.current!.send.mock.calls.slice(sendsBefore).map((c) => decodeSentCt(c[0] as string).inner);
+}
+
+function roomMetaUpdates(controlBefore: number): Array<{ room_id?: string; meta: Record<string, unknown> }> {
+  return relayRef.current!.sendControl.mock.calls.slice(controlBefore)
+    .map((c) => c[0] as { type: string; room_id?: string; meta: Record<string, unknown> })
+    .filter((f) => f.type === "room_meta_update");
+}
+
+async function phoneSends(peer: string, inner: object): Promise<void> {
+  relayRef.current!.emit("message", makeInnerLine(peer, inner));
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setImmediate(resolve);
+  await promise;
+}
+
+describe("omp native plan review + session modes (plan 69)", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    _knownPeers.length = 0;
+    _addedPeers.length = 0;
+    _removedPeers.length = 0;
+    _consumeCalls.length = 0;
+    _setRelayCalls.length = 0;
+    _savedRelayUrl = null;
+    _tokenStatus = "ok";
+    relayRef.current = null;
+    relayInstances.length = 0;
+    _defaultConnectImpl = async () => undefined;
+    const stop = captureHandler("remote-omp stop");
+    await stop("", makeMockCtx());
+  });
+
+  /** A paired phone and the extension bound to a fake omp ctx. */
+  async function boot(peer: string, ompOpts: Parameters<typeof fakeOmpCtx>[0] = {}) {
+    await _pairForTest(peer);
+    const omp = fakeOmpCtx(ompOpts);
+    const harness = captureEventHarness();
+    harness.handler("session_start")({ type: "session_start" }, omp.ctx);
+    return { omp, harness };
+  }
+
+  async function reviewOpened(peer: string, ompOpts: Parameters<typeof fakeOmpCtx>[0] = {}) {
+    const booted = await boot(peer, ompOpts);
+    booted.omp.state.pending = structuredClone(OMP_PLAN_REVIEW);
+    booted.harness.handler("plan_review_requested")(structuredClone(OMP_PLAN_REVIEW));
+    return booted;
+  }
+
+  test("plan_review_requested sends the phone the plan, omp's choices and the review state", async () => {
+    const { omp, harness } = await boot("peer-plan-1");
+    const before = relayRef.current!.send.mock.calls.length;
+    omp.state.pending = structuredClone(OMP_PLAN_REVIEW);
+    harness.handler("plan_review_requested")(structuredClone(OMP_PLAN_REVIEW));
+
+    const frames = phoneFrames(before);
+    expect(frames).toContainEqual({
+      type: "extension_ui_request",
+      id: OMP_PLAN_WIRE_ID,
+      method: "select",
+      title: "Plan ready for review: hello-txt",
+      options: [
+        "Approve and execute",
+        "Approve and compact context",
+        "Approve and keep context (~19k / 1m)",
+        "Refine plan",
+        "Save",
+      ],
+      plan: {
+        plan_file_path: "local://hello-txt-plan.md",
+        title: "hello-txt",
+        content: OMP_PLAN_REVIEW.planContent,
+        options: [
+          { action: "approve_execute", label: "Approve and execute" },
+          { action: "approve_compact", label: "Approve and compact context" },
+          { action: "approve_keep", label: "Approve and keep context (~19k / 1m)" },
+          { action: "refine", label: "Refine plan" },
+          { action: "save_quit", label: "Save" },
+        ],
+      },
+    });
+    expect(frames).toContainEqual({
+      type: "plan_state",
+      status: "review",
+      plan_file_path: "local://hello-txt-plan.md",
+      title: "hello-txt",
+    });
+  });
+
+  test.each([
+    ["approve_execute", "execute"],
+    ["approve_compact", "compact"],
+    ["approve_keep", "keep"],
+    ["save_quit", "save"],
+  ])("the phone's %s resolves omp's review with the native choice %s", async (action, choice) => {
+    const { omp } = await reviewOpened(`peer-plan-${action}`);
+    const before = relayRef.current!.send.mock.calls.length;
+    await phoneSends(`peer-plan-${action}`, { type: "extension_ui_response", id: OMP_PLAN_WIRE_ID, plan: { action } });
+
+    expect(omp.resolvePlanReview).toHaveBeenCalledTimes(1);
+    expect(omp.resolvePlanReview).toHaveBeenCalledWith(OMP_PLAN_REVIEW.reviewId, choice, undefined);
+    const notifies = phoneFrames(before).filter((f) => f.type === "extension_ui_request" && f.method === "notify");
+    if (choice === "save") {
+      // omp keeps the review open after Save: the phone's sheet stays, with a warning that stops its spinner.
+      expect(notifies).toEqual([expect.objectContaining({ id: OMP_PLAN_WIRE_ID, notify_type: "warning" })]);
+      expect(omp.state.pending).toBeDefined();
+    } else {
+      expect(notifies).toEqual([
+        { type: "extension_ui_request", id: OMP_PLAN_WIRE_ID, method: "notify", message: "Plan approved." },
+      ]);
+      expect(omp.state.pending).toBeUndefined();
+    }
+  });
+
+  test("Refine passes the feedback to omp as the next planning prompt and shows it on the phone", async () => {
+    const { omp } = await reviewOpened("peer-plan-refine");
+    const before = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-refine", {
+      type: "extension_ui_response",
+      id: OMP_PLAN_WIRE_ID,
+      plan: { action: "refine", feedback: "  add a fourth bullet  " },
+    });
+
+    expect(omp.resolvePlanReview).toHaveBeenCalledWith(OMP_PLAN_REVIEW.reviewId, "refine", {
+      feedback: "add a fourth bullet",
+    });
+    const frames = phoneFrames(before);
+    expect(frames).toContainEqual(expect.objectContaining({
+      type: "user_message", text: "add a fourth bullet",
+    }));
+    expect(frames).toContainEqual({
+      type: "extension_ui_request", id: OMP_PLAN_WIRE_ID, method: "notify", message: "Refining the plan.",
+    });
+    // omp starts that turn without an `input` event: the chunks need an open turn.
+    expect(_getCurrentTurnIdForTest()).toMatch(/^local_/);
+  });
+
+  test("Refine without feedback is refused on the sheet and omp is never called", async () => {
+    const { omp } = await reviewOpened("peer-plan-blank");
+    const before = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-blank", {
+      type: "extension_ui_response", id: OMP_PLAN_WIRE_ID, plan: { action: "refine", feedback: "  " },
+    });
+
+    expect(omp.resolvePlanReview).not.toHaveBeenCalled();
+    expect(phoneFrames(before)).toContainEqual(expect.objectContaining({
+      type: "extension_ui_request", id: OMP_PLAN_WIRE_ID, method: "notify", notify_type: "warning",
+    }));
+    expect(omp.state.pending).toBeDefined();
+  });
+
+  test("Keep planning closes only the phone's sheet; the next plain message refines the open review", async () => {
+    const { omp } = await reviewOpened("peer-plan-keep");
+    const sendUserMessage = vi.fn();
+    _setPiForTest({ sendUserMessage, sendMessage: () => undefined });
+    await phoneSends("peer-plan-keep", { type: "extension_ui_response", id: OMP_PLAN_WIRE_ID, cancelled: true });
+    expect(omp.resolvePlanReview).not.toHaveBeenCalled();
+
+    const before = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-keep", { type: "user_message", id: "msg-follow-up", text: "also cover the error path" });
+
+    expect(omp.resolvePlanReview).toHaveBeenCalledWith(OMP_PLAN_REVIEW.reviewId, "refine", {
+      feedback: "also cover the error path",
+    });
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    const frames = phoneFrames(before);
+    expect(frames).toContainEqual({ type: "user_message", id: "msg-follow-up", text: "also cover the error path" });
+    expect(frames.some((f) => f.type === "error")).toBe(false);
+    expect(_getCurrentTurnIdForTest()).toBe("msg-follow-up");
+    _setPiForTest(null);
+  });
+
+  test("a slash line typed while the review is open is refused: it would land on omp's overlay", async () => {
+    const { omp } = await reviewOpened("peer-plan-slash");
+    const sendUserMessage = vi.fn();
+    _setPiForTest({ sendUserMessage, sendMessage: () => undefined });
+    const before = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-slash", { type: "user_message", id: "msg-slash", text: "/compact" });
+
+    expect(omp.resolvePlanReview).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    expect(phoneFrames(before)).toContainEqual(expect.objectContaining({
+      type: "error", code: "plan_review_open", in_reply_to: "msg-slash",
+    }));
+    _setPiForTest(null);
+  });
+
+  test("once omp closes the review (plan_review_resolved) the phone's sheet closes and messages flow normally", async () => {
+    const { omp, harness } = await reviewOpened("peer-plan-closed");
+    const sendUserMessage = vi.fn();
+    _setPiForTest({ sendUserMessage, sendMessage: () => undefined });
+    omp.state.pending = undefined; // Esc on the PC
+    const before = relayRef.current!.send.mock.calls.length;
+    harness.handler("plan_review_resolved")({
+      type: "plan_review_resolved", reviewId: OMP_PLAN_REVIEW.reviewId, sessionId: "session-1", choice: undefined, by: "local",
+    });
+    expect(phoneFrames(before)).toContainEqual({
+      type: "extension_ui_request", id: OMP_PLAN_WIRE_ID, method: "notify", message: "Plan review closed — still planning.",
+    });
+
+    await phoneSends("peer-plan-closed", { type: "user_message", id: "msg-normal", text: "continue" });
+    expect(sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(omp.resolvePlanReview).not.toHaveBeenCalled();
+    _setPiForTest(null);
+  });
+
+  test("session_sync replays a review omp still holds, even when its event was never seen", async () => {
+    const { omp } = await boot("peer-plan-replay");
+    omp.state.pending = structuredClone(OMP_PLAN_REVIEW); // opened before this extension heard of it
+    const before = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-replay", { type: "session_sync", id: "sync-1" });
+
+    const frames = phoneFrames(before);
+    expect(frames).toContainEqual(expect.objectContaining({ type: "plan_state", status: "review" }));
+    expect(frames).toContainEqual(expect.objectContaining({
+      type: "extension_ui_request", id: OMP_PLAN_WIRE_ID, method: "select",
+    }));
+
+    // Settled: the next sync no longer carries it.
+    omp.state.pending = undefined;
+    const afterSettle = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-replay", { type: "session_sync", id: "sync-2" });
+    expect(phoneFrames(afterSettle).some((f) => f.type === "extension_ui_request" && f.method === "select")).toBe(false);
+  });
+
+  test("plan_mode enter/exit call ctx.sessionModes.set and the phone follows plan_state", async () => {
+    const { omp } = await boot("peer-plan-mode", { plan: "inactive" });
+    const before = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-mode", { type: "plan_mode", id: "pm-enter", action: "enter" });
+    expect(omp.set).toHaveBeenLastCalledWith({ mode: "plan", action: "enter" });
+    let frames = phoneFrames(before);
+    expect(frames).toContainEqual({ type: "action_ok", in_reply_to: "pm-enter", action: "plan_mode" });
+    expect(frames).toContainEqual(expect.objectContaining({ type: "plan_state", status: "active" }));
+
+    const afterEnter = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-mode", { type: "plan_mode", id: "pm-exit", action: "exit" });
+    expect(omp.set).toHaveBeenLastCalledWith({ mode: "plan", action: "exit" });
+    frames = phoneFrames(afterEnter);
+    expect(frames).toContainEqual({ type: "action_ok", in_reply_to: "pm-exit", action: "plan_mode" });
+    expect(frames).toContainEqual({ type: "plan_state", status: "idle" });
+  });
+
+  test("plan_mode refusals from omp reach the phone as the action error", async () => {
+    const { omp } = await boot("peer-plan-refuse", { plan: "inactive" });
+    omp.state.modes.goal.status = "active"; // omp: "Exit goal mode first."
+    const before = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-refuse", { type: "plan_mode", id: "pm-refused", action: "enter" });
+    expect(phoneFrames(before)).toContainEqual({
+      type: "action_error", in_reply_to: "pm-refused", action: "plan_mode", error: "Exit goal mode first.",
+    });
+  });
+
+  test("plan_mode review reopens omp's review through ctx.openPlanReview, or resends the open one", async () => {
+    const { omp } = await boot("peer-plan-review");
+    omp.openPlanReview.mockImplementationOnce(async () => {
+      omp.state.pending = structuredClone(OMP_PLAN_REVIEW);
+      return true;
+    });
+    const before = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-review", { type: "plan_mode", id: "pm-review", action: "review" });
+    expect(omp.openPlanReview).toHaveBeenCalledTimes(1);
+    let frames = phoneFrames(before);
+    expect(frames).toContainEqual({ type: "action_ok", in_reply_to: "pm-review", action: "plan_mode" });
+    expect(frames.filter((f) => f.type === "extension_ui_request" && f.method === "select")).toHaveLength(1);
+
+    // Already open: resent from the controller, omp is not asked to open another.
+    const again = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-review", { type: "plan_mode", id: "pm-review-2", action: "review" });
+    expect(omp.openPlanReview).toHaveBeenCalledTimes(1);
+    frames = phoneFrames(again);
+    expect(frames.filter((f) => f.type === "extension_ui_request" && f.method === "select")).toHaveLength(1);
+  });
+
+  test("headless omp (RPC / daemon): plan_mode says plan mode needs the TUI; nothing is called", async () => {
+    const { omp } = await boot("peer-plan-headless", { headless: true });
+    const before = relayRef.current!.send.mock.calls.length;
+    await phoneSends("peer-plan-headless", { type: "plan_mode", id: "pm-headless", action: "enter" });
+    expect(phoneFrames(before)).toContainEqual(expect.objectContaining({
+      type: "action_error", in_reply_to: "pm-headless", action: "plan_mode",
+      error: expect.stringContaining("interactive terminal"),
+    }));
+    expect(omp.set).not.toHaveBeenCalled();
+  });
+
+  test("a subagent's plan review and mode events never reach the phone", async () => {
+    const { omp } = await boot("peer-plan-sub");
+    const subagent = captureEventHarness(); // a second `pi` while the main session is live
+    subagent.handler("session_start")({ type: "session_start" }, { ...omp.ctx, hasUI: false });
+    const sends = relayRef.current!.send.mock.calls.length;
+    const controls = relayRef.current!.sendControl.mock.calls.length;
+
+    subagent.handler("plan_review_requested")(structuredClone(OMP_PLAN_REVIEW));
+    subagent.handler("mode_changed")({ type: "mode_changed", previous: ompModes("inactive", "inactive"), state: ompModes("active", "active") });
+
+    expect(phoneFrames(sends)).toEqual([]);
+    expect(roomMetaUpdates(controls)).toEqual([]);
+  });
+
+  test("the Loop button follows mode_changed.state.loop", async () => {
+    const { harness } = await boot("peer-loop-1");
+    const before = relayRef.current!.sendControl.mock.calls.length;
+    const changed = (plan: OmpModeStatus, loop: OmpModeStatus) =>
+      harness.handler("mode_changed")({
+        type: "mode_changed", previous: ompModes("inactive", "inactive"), state: ompModes(plan, loop),
+      });
+
+    changed("inactive", "active"); // /loop on the PC
+    changed("inactive", "active"); // unchanged: nothing sent twice
+    changed("inactive", "paused"); // Esc suspends it
+    changed("inactive", "inactive"); // it ended by itself
+
+    expect(roomMetaUpdates(before).map((u) => u.meta)).toEqual([
+      { loop: "active" },
+      { loop: "paused" },
+      { loop: "idle" },
+    ]);
+  });
+
+  test("typing /loop no longer guesses the state, and loop_updated (not an omp event) is not listened to", async () => {
+    await _pairForTest("peer-loop-guess");
+    const before = relayRef.current!.sendControl.mock.calls.length;
+    const harness = captureEventHarness();
+    harness.handler("input")({ type: "input", text: "/loop 5 run the tests", source: "interactive" });
+
+    expect(roomMetaUpdates(before)).toEqual([]);
+    expect(() => harness.handler("loop_updated")).toThrow(/not registered/);
+  });
+
+  test("mode_changed also drives plan_state: entering plan mode on the PC reaches the phone", async () => {
+    const { omp, harness } = await boot("peer-loop-plan", { plan: "inactive" });
+    omp.state.modes = ompModes("active", "inactive");
+    const before = relayRef.current!.send.mock.calls.length;
+    harness.handler("mode_changed")({
+      type: "mode_changed", previous: ompModes("inactive", "inactive"), state: ompModes("active", "inactive"),
+    });
+    expect(phoneFrames(before)).toContainEqual(expect.objectContaining({ type: "plan_state", status: "active" }));
+  });
+
+  test("a relay that starts after the loop did says so in its hello (seeded from ctx.sessionModes.getState)", async () => {
+    const capturedOpts: Array<{ roomMeta?: { loop?: string } }> = [];
+    _defaultConnectImpl = async (opts?: unknown) => {
+      capturedOpts.push(opts as { roomMeta?: { loop?: string } });
+    };
+    const omp = fakeOmpCtx({ plan: "inactive", loop: "paused" });
+    captureHandler("remote-omp");
+    const harness = captureEventHarness();
+    harness.handler("session_start")({ type: "session_start" }, omp.ctx);
+    await _connectForTest(makeMockCtx("/tmp/remote-omp-loop-seed"));
+
+    expect(capturedOpts[0]!.roomMeta?.loop).toBe("paused");
+  });
+
+  test("omp RPC has no loop: the hello carries none and a mode_changed-less session stays quiet", async () => {
+    const capturedOpts: Array<{ roomMeta?: { loop?: string } }> = [];
+    _defaultConnectImpl = async (opts?: unknown) => {
+      capturedOpts.push(opts as { roomMeta?: { loop?: string } });
+    };
+    const omp = fakeOmpCtx({ headless: true });
+    captureHandler("remote-omp");
+    const harness = captureEventHarness();
+    harness.handler("session_start")({ type: "session_start" }, omp.ctx);
+    await _connectForTest(makeMockCtx("/tmp/remote-omp-loop-rpc"));
+
+    expect(capturedOpts[0]!.roomMeta).not.toHaveProperty("loop");
   });
 });
 
@@ -3009,7 +3449,7 @@ describe("tool visibility", () => {
         return _tokenStatus;
       },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
@@ -3186,7 +3626,7 @@ describe("tool visibility", () => {
 
   test("tool_execution_start enriches edit args with numbered context hunks", async () => {
     await _pairForTest("peer-edit");
-    const cwd = mkdtempSync(join(tmpdir(), "remote-pi-edit-"));
+    const cwd = mkdtempSync(join(tmpdir(), "remote-omp-edit-"));
     const file = join(cwd, "sample.dart");
     writeFileSync(
       file,
@@ -3246,7 +3686,7 @@ describe("tool visibility", () => {
 
   test("tool_execution_start keeps unchanged edit lines as context", async () => {
     await _pairForTest("peer-edit-context");
-    const cwd = mkdtempSync(join(tmpdir(), "remote-pi-edit-context-"));
+    const cwd = mkdtempSync(join(tmpdir(), "remote-omp-edit-context-"));
     const file = join(cwd, "README.md");
     writeFileSync(
       file,
@@ -3419,33 +3859,33 @@ describe("tool visibility", () => {
   });
 });
 
-// ── /remote-pi set-relay + /remote-pi config ──────────────────────────────────
+// ── /remote-omp set-relay + /remote-omp config ──────────────────────────────────
 
-describe("/remote-pi set-relay + config", () => {
+describe("/remote-omp set-relay + config", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     _savedRelayUrl = null;
     _setRelayCalls.length = 0;
-    delete process.env["REMOTE_PI_RELAY"];
+    delete process.env["REMOTE_OMP_RELAY"];
     relayRef.current = null;
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
   test("set-relay empty arg → usage warning, nothing saved", async () => {
-    const setRelay = captureHandler("remote-pi set-relay");
+    const setRelay = captureHandler("remote-omp set-relay");
     const ctx = makeMockCtx();
     await setRelay("", ctx);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("Usage: /remote-pi set-relay"),
+      expect.stringContaining("Usage: /remote-omp set-relay"),
       "warning",
     );
     expect(_setRelayCalls).toHaveLength(0);
   });
 
   test("set-relay stores http:// as-is (canonical scheme)", async () => {
-    const setRelay = captureHandler("remote-pi set-relay");
+    const setRelay = captureHandler("remote-omp set-relay");
     const ctx = makeMockCtx();
     await setRelay("http://foo:3000", ctx);
 
@@ -3457,7 +3897,7 @@ describe("/remote-pi set-relay + config", () => {
   });
 
   test("set-relay stores https:// as-is (canonical scheme)", async () => {
-    const setRelay = captureHandler("remote-pi set-relay");
+    const setRelay = captureHandler("remote-omp set-relay");
     const ctx = makeMockCtx();
     await setRelay("https://relay.example.tld", ctx);
 
@@ -3469,7 +3909,7 @@ describe("/remote-pi set-relay + config", () => {
   });
 
   test("set-relay rejects ws:// scheme with conversion hint", async () => {
-    const setRelay = captureHandler("remote-pi set-relay");
+    const setRelay = captureHandler("remote-omp set-relay");
     const ctx = makeMockCtx();
     await setRelay("ws://foo:3000", ctx);
 
@@ -3481,7 +3921,7 @@ describe("/remote-pi set-relay + config", () => {
   });
 
   test("set-relay rejects wss:// scheme with conversion hint", async () => {
-    const setRelay = captureHandler("remote-pi set-relay");
+    const setRelay = captureHandler("remote-omp set-relay");
     const ctx = makeMockCtx();
     await setRelay("wss://relay.example.tld", ctx);
 
@@ -3493,7 +3933,7 @@ describe("/remote-pi set-relay + config", () => {
   });
 
   test("set-relay rejects malformed URL", async () => {
-    const setRelay = captureHandler("remote-pi set-relay");
+    const setRelay = captureHandler("remote-omp set-relay");
     const ctx = makeMockCtx();
     await setRelay("not a url at all", ctx);
 
@@ -3505,7 +3945,7 @@ describe("/remote-pi set-relay + config", () => {
   });
 
   test("set-relay persists http:// URL via saveConfig (canonical form)", async () => {
-    const setRelay = captureHandler("remote-pi set-relay");
+    const setRelay = captureHandler("remote-omp set-relay");
     const ctx = makeMockCtx();
     await setRelay("http://192.168.1.10:3000", ctx);
 
@@ -3520,7 +3960,7 @@ describe("/remote-pi set-relay + config", () => {
   // had no handler — every `relay …` fell through to the status panel, so a
   // user following the README silently stayed on the community relay.
   test("relay url persists the URL through the same writer as set-relay", async () => {
-    const relay = captureHandler("remote-pi relay");
+    const relay = captureHandler("remote-omp relay");
     const ctx = makeMockCtx();
     await relay("url http://192.168.1.20:3000", ctx);
 
@@ -3532,7 +3972,7 @@ describe("/remote-pi set-relay + config", () => {
   });
 
   test("relay url rejects ws:// like set-relay does", async () => {
-    const relay = captureHandler("remote-pi relay");
+    const relay = captureHandler("remote-omp relay");
     const ctx = makeMockCtx();
     await relay("url ws://foo:3000", ctx);
 
@@ -3544,7 +3984,7 @@ describe("/remote-pi set-relay + config", () => {
   });
 
   test("relay stop on an idle relay reports it instead of silently reprinting status", async () => {
-    const relay = captureHandler("remote-pi relay");
+    const relay = captureHandler("remote-omp relay");
     const ctx = makeMockCtx();
     await relay("stop", ctx);
 
@@ -3555,12 +3995,12 @@ describe("/remote-pi set-relay + config", () => {
   });
 
   test("relay with an unknown verb prints usage", async () => {
-    const relay = captureHandler("remote-pi relay");
+    const relay = captureHandler("remote-omp relay");
     const ctx = makeMockCtx();
     await relay("frobnicate", ctx);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("Usage: /remote-pi relay"),
+      expect.stringContaining("Usage: /remote-omp relay"),
       "warning",
     );
   });
@@ -3578,16 +4018,16 @@ describe("/remote-pi set-relay + config", () => {
     expect(resolveRelayUrl()).toEqual({ url: "http://config.test", source: "config" });
 
     // 3) Env set → env wins over config. Same defensive coercion.
-    process.env["REMOTE_PI_RELAY"] = "wss://env.test";
+    process.env["REMOTE_OMP_RELAY"] = "wss://env.test";
     expect(resolveRelayUrl()).toEqual({ url: "https://env.test", source: "env" });
-    delete process.env["REMOTE_PI_RELAY"];
+    delete process.env["REMOTE_OMP_RELAY"];
   });
 
-  test("/remote-pi status shows the saved URL after set-relay", async () => {
-    const setRelay = captureHandler("remote-pi set-relay");
+  test("/remote-omp status shows the saved URL after set-relay", async () => {
+    const setRelay = captureHandler("remote-omp set-relay");
     await setRelay("http://10.0.0.5:4000", makeMockCtx());
 
-    const status = captureHandler("remote-pi status");
+    const status = captureHandler("remote-omp status");
     const ctx = makeMockCtx();
     await status("", ctx);
 
@@ -3595,8 +4035,8 @@ describe("/remote-pi set-relay + config", () => {
     expect(text).toContain("http://10.0.0.5:4000");
   });
 
-  test("/remote-pi status shows the default URL when nothing set", async () => {
-    const status = captureHandler("remote-pi status");
+  test("/remote-omp status shows the default URL when nothing set", async () => {
+    const status = captureHandler("remote-omp status");
     const ctx = makeMockCtx();
     await status("", ctx);
 
@@ -3604,23 +4044,23 @@ describe("/remote-pi set-relay + config", () => {
     expect(text).toContain("https://relay-rp1.jacobmoura.work");
   });
 
-  test("/remote-pi status reflects env override (canonicalized to https://)", async () => {
+  test("/remote-omp status reflects env override (canonicalized to https://)", async () => {
     // Env var with wss:// is coerced back to https:// by resolveRelayUrl.
-    process.env["REMOTE_PI_RELAY"] = "wss://from-env.test";
-    const status = captureHandler("remote-pi status");
+    process.env["REMOTE_OMP_RELAY"] = "wss://from-env.test";
+    const status = captureHandler("remote-omp status");
     const ctx = makeMockCtx();
     await status("", ctx);
 
     const text = (ctx.ui.notify.mock.calls[0]![0]) as string;
     expect(text).toContain("https://from-env.test");
-    delete process.env["REMOTE_PI_RELAY"];
+    delete process.env["REMOTE_OMP_RELAY"];
   });
 
   test("saved URL is used by _cmdStart on next connect (http:// stored as-is)", async () => {
-    const setRelay = captureHandler("remote-pi set-relay");
+    const setRelay = captureHandler("remote-omp set-relay");
     await setRelay("http://10.0.0.5:4000", makeMockCtx());
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     const ctx = makeMockCtx();
     await _connectForTest(ctx);
 
@@ -3637,8 +4077,8 @@ describe("/remote-pi set-relay + config", () => {
     );
   });
 
-  test("/remote-pi notify set/mode/status/clear updates notify config", async () => {
-    const notifyCmd = captureHandler("remote-pi notify");
+  test("/remote-omp notify set/mode/status/clear updates notify config", async () => {
+    const notifyCmd = captureHandler("remote-omp notify");
     try {
       const ctx1 = makeMockCtx();
       await notifyCmd("set https://ntfy.sh/rp-test --token tok123 --mode always", ctx1);
@@ -3693,8 +4133,8 @@ describe("routeClientMessage cancel handling", () => {
         return _tokenStatus;
       },
     );
-    const stop = captureHandler("remote-pi stop");
-    await stop("", { ui: { notify: vi.fn() }, cwd: "/tmp/remote-pi-cancel-reset" } as ReturnType<typeof makeMockCtx>);
+    const stop = captureHandler("remote-omp stop");
+    await stop("", { ui: { notify: vi.fn() }, cwd: "/tmp/remote-omp-cancel-reset" } as ReturnType<typeof makeMockCtx>);
   });
 
   test("cancel uses freshest session_start ctx and ignores stale _lastCtx abort", async () => {
@@ -3703,13 +4143,13 @@ describe("routeClientMessage cancel handling", () => {
 
     await _pairForTestWithCtx("owner-cancel-1", {
       ui: { notify: vi.fn() },
-      cwd: "/tmp/remote-pi-cancel-stale",
+      cwd: "/tmp/remote-omp-cancel-stale",
     });
 
-    const status = captureHandler("remote-pi status");
+    const status = captureHandler("remote-omp status");
     await status("", {
       ui: { notify: vi.fn() },
-      cwd: "/tmp/remote-pi-cancel-stale",
+      cwd: "/tmp/remote-omp-cancel-stale",
       abort: staleAbort,
     });
 
@@ -3756,14 +4196,14 @@ describe("routeClientMessage cancel handling", () => {
     const owner = OWNER_STANDARD_FIXTURE;
     await _pairForTestWithCtx(owner, {
       ui: { notify: vi.fn(), setStatus: vi.fn(), setTitle: vi.fn() },
-      cwd: "/tmp/remote-pi-stale-ui",
+      cwd: "/tmp/remote-omp-stale-ui",
     });
 
     // Plant a command ctx whose ui GETTER throws (real SDK stale-ctx behaviour).
     // The status handler assigns _lastCtx = ctx before touching ui.
-    const status = captureHandler("remote-pi status");
+    const status = captureHandler("remote-omp status");
     const staleCtx = {
-      cwd: "/tmp/remote-pi-stale-ui",
+      cwd: "/tmp/remote-omp-stale-ui",
       get ui() {
         throw new Error("This extension ctx is stale after session replacement or reload.");
       },
@@ -3804,7 +4244,7 @@ describe("routeClientMessage cancel handling", () => {
 
     await _pairForTestWithCtx("owner-cancel-nopi", {
       ui: { notify: vi.fn() },
-      cwd: "/tmp/remote-pi-cancel-nopi",
+      cwd: "/tmp/remote-omp-cancel-nopi",
     });
 
     const onSessionStart = captureEventHandler("session_start");
@@ -3842,7 +4282,7 @@ describe("routeClientMessage cancel handling", () => {
   test("cancel with no real abort context returns error and does not send cancelled", async () => {
     await _pairForTestWithCtx("owner-cancel-2", {
       ui: { notify: vi.fn() },
-      cwd: "/tmp/remote-pi-cancel-nonreal",
+      cwd: "/tmp/remote-omp-cancel-nonreal",
       // Intentionally omit abort: the router must not claim success.
     } as unknown as { ui: { notify: ReturnType<typeof vi.fn> }; cwd: string });
 
@@ -3882,7 +4322,7 @@ describe("routeClientMessage cancel handling", () => {
 
     await _pairForTestWithCtx("owner-cancel-3", {
       ui: { notify: vi.fn() },
-      cwd: "/tmp/remote-pi-cancel-throw",
+      cwd: "/tmp/remote-omp-cancel-throw",
       abort: aborting,
     });
 
@@ -3978,7 +4418,7 @@ describe("rooms wiring", () => {
     relayRef.current = null;
     relayInstances.length = 0;
     _defaultConnectImpl = async () => undefined;
-    delete process.env["REMOTE_PI_RELAY"];
+    delete process.env["REMOTE_OMP_RELAY"];
     const qr = await import("./pairing/qr.js");
     (qr.qrSession.consumeToken as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       (token: string) => {
@@ -3986,7 +4426,7 @@ describe("rooms wiring", () => {
         return _tokenStatus;
       },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
@@ -3996,15 +4436,15 @@ describe("rooms wiring", () => {
       capturedOpts.push(opts);
     };
 
-    captureHandler("remote-pi");
-    await _connectForTest(makeMockCtx("/tmp/remote-pi-test-room"));
+    captureHandler("remote-omp");
+    await _connectForTest(makeMockCtx("/tmp/remote-omp-test-room"));
 
     expect(capturedOpts).toHaveLength(1);
     const opts = capturedOpts[0] as { roomId?: string; roomMeta?: { name: string; cwd: string } };
     expect(opts.roomId).toBeTruthy();
     expect(opts.roomId).toMatch(/^[A-Za-z0-9_-]{12}$/);
-    expect(opts.roomMeta?.cwd).toBe("/tmp/remote-pi-test-room");
-    expect(opts.roomMeta?.name).toContain("remote-pi-test-room");
+    expect(opts.roomMeta?.cwd).toBe("/tmp/remote-omp-test-room");
+    expect(opts.roomMeta?.name).toContain("remote-omp-test-room");
   });
 
   test("_cmdStart with different cwds uses different roomIds", async () => {
@@ -4013,13 +4453,13 @@ describe("rooms wiring", () => {
       capturedOpts.push(opts as { roomId?: string });
     };
 
-    captureHandler("remote-pi");
-    await _connectForTest(makeMockCtx("/tmp/remote-pi-A"));
+    captureHandler("remote-omp");
+    await _connectForTest(makeMockCtx("/tmp/remote-omp-A"));
 
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
 
-    await _connectForTest(makeMockCtx("/tmp/remote-pi-B"));
+    await _connectForTest(makeMockCtx("/tmp/remote-omp-B"));
 
     expect(capturedOpts).toHaveLength(2);
     expect(capturedOpts[0]!.roomId).not.toBe(capturedOpts[1]!.roomId);
@@ -4030,8 +4470,8 @@ describe("rooms wiring", () => {
       throw new MockRoomAlreadyOpenError("AbCdEfGhIjKl");
     };
 
-    captureHandler("remote-pi");
-    const ctx = makeMockCtx("/tmp/remote-pi-dup");
+    captureHandler("remote-omp");
+    const ctx = makeMockCtx("/tmp/remote-omp-dup");
     await _connectForTest(ctx);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
@@ -4046,8 +4486,8 @@ describe("rooms wiring", () => {
     const failure = new Error("initial Relay failed");
     _defaultConnectImpl = async () => { throw failure; };
 
-    captureHandler("remote-pi");
-    const ctx = makeMockCtx("/tmp/remote-pi-initial-failure");
+    captureHandler("remote-omp");
+    const ctx = makeMockCtx("/tmp/remote-omp-initial-failure");
     await _connectForTest(ctx);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
@@ -4059,8 +4499,8 @@ describe("rooms wiring", () => {
   });
 
   test("PeerChannel outer envelope omits `room` field (defensive, until W1.A/C ready)", async () => {
-    captureHandler("remote-pi");
-    await _connectForTest(makeMockCtx("/tmp/remote-pi-room-test"));
+    captureHandler("remote-omp");
+    await _connectForTest(makeMockCtx("/tmp/remote-omp-room-test"));
 
     relayRef.current!.emit("message", JSON.stringify({
       peer: "peer-room-test",
@@ -4108,7 +4548,7 @@ describe("session sync", () => {
         return _tokenStatus;
       },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
     _setMessageBufferForTest([]);
     _setSessionStartedAtForTest(null);
@@ -4138,7 +4578,7 @@ describe("session sync", () => {
   });
 
   test("no limit in request → server uses env default (30)", async () => {
-    delete process.env["REMOTE_PI_SYNC_LIMIT"];
+    delete process.env["REMOTE_OMP_SYNC_LIMIT"];
     await _pairForTest("peer-ss-mirror-1");
 
     const sessionTs = 1_700_000_000_000;
@@ -4167,7 +4607,7 @@ describe("session sync", () => {
   });
 
   test("client limit < env → server respects client limit + truncated true if overflow", async () => {
-    delete process.env["REMOTE_PI_SYNC_LIMIT"];  // default 30
+    delete process.env["REMOTE_OMP_SYNC_LIMIT"];  // default 30
     await _pairForTest("peer-ss-mirror-2");
 
     const ts = 1_700_000_000_000;
@@ -4197,7 +4637,7 @@ describe("session sync", () => {
   });
 
   test("client limit > env → server clamps to env", async () => {
-    process.env["REMOTE_PI_SYNC_LIMIT"] = "5";
+    process.env["REMOTE_OMP_SYNC_LIMIT"] = "5";
     await _pairForTest("peer-ss-mirror-3");
 
     const ts = 1_700_000_000_000;
@@ -4224,11 +4664,11 @@ describe("session sync", () => {
     expect(events[4]!.ts).toBe(ts + 9);
     expect(h.inner["truncated"]).toBe(true);
 
-    delete process.env["REMOTE_PI_SYNC_LIMIT"];
+    delete process.env["REMOTE_OMP_SYNC_LIMIT"];
   });
 
   test("buffer with 5 events → returns 5, truncated:false", async () => {
-    delete process.env["REMOTE_PI_SYNC_LIMIT"];
+    delete process.env["REMOTE_OMP_SYNC_LIMIT"];
     await _pairForTest("peer-ss-mirror-4");
 
     const ts = 1_700_000_000_000;
@@ -4255,7 +4695,7 @@ describe("session sync", () => {
   });
 
   test("buffer with 50 events + default env → returns all 50, truncated:false", async () => {
-    delete process.env["REMOTE_PI_SYNC_LIMIT"];  // default 1000
+    delete process.env["REMOTE_OMP_SYNC_LIMIT"];  // default 1000
     await _pairForTest("peer-ss-mirror-5");
 
     const ts = 1_700_000_000_000;
@@ -4284,8 +4724,8 @@ describe("session sync", () => {
     expect(h.inner["truncated"]).toBe(false);
   });
 
-  test("REMOTE_PI_SYNC_LIMIT=10 → server respects env override", async () => {
-    process.env["REMOTE_PI_SYNC_LIMIT"] = "10";
+  test("REMOTE_OMP_SYNC_LIMIT=10 → server respects env override", async () => {
+    process.env["REMOTE_OMP_SYNC_LIMIT"] = "10";
     await _pairForTest("peer-ss-mirror-6");
 
     const ts = 1_700_000_000_000;
@@ -4310,13 +4750,13 @@ describe("session sync", () => {
     expect((h.inner["events"] as unknown[]).length).toBe(10);
     expect(h.inner["truncated"]).toBe(true);
 
-    delete process.env["REMOTE_PI_SYNC_LIMIT"];
+    delete process.env["REMOTE_OMP_SYNC_LIMIT"];
   });
 
   // The composer's history recall used to see only the prompts inside the
   // event window; a few tool-heavy turns pushed all but ~5 out of it.
   test("prompts carry the session's recent prompts beyond the event window", async () => {
-    process.env["REMOTE_PI_SYNC_LIMIT"] = "4";
+    process.env["REMOTE_OMP_SYNC_LIMIT"] = "4";
     await _pairForTest("peer-ss-prompts");
 
     const ts = 1_700_000_000_000;
@@ -4350,7 +4790,7 @@ describe("session sync", () => {
     expect(prompts[0]).toBe("prompt 20");
     expect(prompts[99]).toBe("prompt 119");
 
-    delete process.env["REMOTE_PI_SYNC_LIMIT"];
+    delete process.env["REMOTE_OMP_SYNC_LIMIT"];
   });
 
   test("mapping: assistant with TextContent + ToolCall → 2 events", () => {
@@ -4588,15 +5028,15 @@ describe("bye on teardown", () => {
         return _tokenStatus;
       },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
-  test("paired + /remote-pi stop → channel.send sees bye{peer_stop} BEFORE detach", async () => {
+  test("paired + /remote-omp stop → channel.send sees bye{peer_stop} BEFORE detach", async () => {
     await _pairForTest("peer-bye-1");
     const sendsBefore = relayRef.current!.send.mock.calls.length;
 
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
 
     const sent = relayRef.current!.send.mock.calls.slice(sendsBefore).map((c) => c[0] as string);
@@ -4611,12 +5051,12 @@ describe("bye on teardown", () => {
     expect(_getState()).toBe("idle");
   });
 
-  test("/remote-pi stop invalidates Relay and producer before a deferred mesh leave", async () => {
-    captureHandler("remote-pi");
+  test("/remote-omp stop invalidates Relay and producer before a deferred mesh leave", async () => {
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
     const relay = relayRef.current!;
     const staleProducer = selfRevokeHarness.options.at(-1)!;
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     const sendMessage = vi.fn();
     _setPiForTest({ sendMessage, sendUserMessage: () => undefined });
 
@@ -4657,7 +5097,7 @@ describe("bye on teardown", () => {
       await staleTopologyCallback;
       expect(topologySpy).not.toHaveBeenCalled();
       expect(sendMessage.mock.calls.some(([message]) =>
-        (message as { customType?: string }).customType === "remote-pi:mesh-revoked"
+        (message as { customType?: string }).customType === "remote-omp:mesh-revoked"
       )).toBe(false);
     } finally {
       leaveGate.resolve(undefined);
@@ -4667,13 +5107,13 @@ describe("bye on teardown", () => {
     }
   });
 
-  test("started (no peer paired) + /remote-pi stop → no bye sent (channel is null)", async () => {
-    captureHandler("remote-pi");
+  test("started (no peer paired) + /remote-omp stop → no bye sent (channel is null)", async () => {
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
     expect(_getState()).toBe("started");
     const sendsBefore = relayRef.current!.send.mock.calls.length;
 
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
 
     const sent = relayRef.current!.send.mock.calls.slice(sendsBefore).map((c) => c[0] as string);
@@ -4689,7 +5129,7 @@ describe("bye on teardown", () => {
     await _pairForTest(ACTIVE);
     const sendsBefore = relayRef.current!.send.mock.calls.length;
 
-    const revoke = captureHandler("remote-pi revoke");
+    const revoke = captureHandler("remote-omp revoke");
     await revoke(OWNER_STANDARD_FIXTURE.slice(0, 8), makeMockCtx());
 
     const sent = relayRef.current!.send.mock.calls.slice(sendsBefore).map((c) => c[0] as string);
@@ -4719,7 +5159,7 @@ describe("session_shutdown teardown", () => {
     relayInstances.length = 0;
     _defaultConnectImpl = async () => undefined;
     _setDisposedForTest(false); // shared module — clear the per-instance flag
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
@@ -4764,7 +5204,7 @@ describe("session_shutdown teardown", () => {
   });
 
   test("firing session_shutdown while started tears down mesh + relay → idle", async () => {
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
     expect(_getState()).toBe("started");
     const relay = relayRef.current!;
@@ -4823,7 +5263,7 @@ describe("session_shutdown teardown", () => {
     expect(_getState()).toBe("idle");
   });
   test("session_shutdown ignores subagent session and preserves parent mesh + relay", async () => {
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
     expect(_getState()).toBe("started");
 
@@ -4835,7 +5275,7 @@ describe("session_shutdown teardown", () => {
         getEntries: () => [{ type: "session_init", task: "do work" }],
       },
       ui: { notify: vi.fn() },
-      cwd: "/home/user/projects/remote_pi",
+      cwd: "/home/user/projects/remote_omp",
     };
 
     await shutdown({ type: "session_shutdown", reason: "dispose" }, subagentCtx as unknown as Parameters<typeof shutdown>[1]);
@@ -4859,7 +5299,7 @@ describe("session_shutdown teardown", () => {
         getEntries: () => [{ type: "session_init", task: "do work" }],
       },
       ui: { notify: vi.fn() },
-      cwd: "/home/user/projects/remote_pi",
+      cwd: "/home/user/projects/remote_omp",
     };
     expect(_isSubagentSession(subagentCtx)).toBe(true);
     expect(_isSubagentSession(makeMockCtx())).toBe(false);
@@ -4938,7 +5378,7 @@ describe("session_shutdown teardown", () => {
     // _cmdJoin connects-then-leaves (no lingering mesh node), and _cmdStart's
     // pre-side-effect authority check returns immediately after key lookup — no
     // Relay candidate or WebSocket is constructed at all.
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
     expect(_hasMeshNodeForTest()).toBe(false);
     expect(_getState()).toBe("idle");
@@ -4953,7 +5393,7 @@ describe("session_shutdown teardown", () => {
   // connecting as a ghost that holds the room — and the replacement instance is
   // then refused with `room_already_open`, never entering the cross-PC mesh.
   test("session_shutdown DURING _cmdStart's relay.connect() closes the relay (no ghost holds the room)", async () => {
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
 
     // Park relay.connect() until we release it — emulates the RTT window.
     let releaseConnect!: () => void;
@@ -4984,12 +5424,12 @@ describe("session_shutdown teardown", () => {
     let firstSettled = false;
     let connectAttempts = 0;
     let outgoingRoot: Promise<void> | undefined;
-    const cwd = `/tmp/remote-pi-session-relay-success-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-session-relay-success-${process.pid}-${Date.now()}`;
     const outgoingCtx = makeMockCtx(cwd);
     const replacementCtx = makeMockCtx(cwd);
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "session-relay-success",
         auto_start_relay: true,
       });
@@ -4999,7 +5439,7 @@ describe("session_shutdown teardown", () => {
         return connectAttempts === 1 ? firstConnect.promise : Promise.resolve();
       };
 
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       outgoingRoot = root("", outgoingCtx);
       await vi.waitFor(() => expect(relayInstances).toHaveLength(1));
       const outgoingRelay = relayInstances[0]!;
@@ -5022,8 +5462,8 @@ describe("session_shutdown teardown", () => {
     } finally {
       if (!firstSettled) firstConnect.resolve(undefined);
       await outgoingRoot?.catch(() => undefined);
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", replacementCtx);
       _resetCwdLockForTest();
       _setAutoInitedForTest(false);
@@ -5047,13 +5487,13 @@ describe("session_shutdown teardown", () => {
       _setDisposedForTest(false);
       _resetAutoInitedForTest();
       _resetCwdLockForTest();
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", makeMockCtx());
       _resetAutoInitedForTest();
       _resetCwdLockForTest();
     });
     afterEach(() => {
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
       _resetCwdLockForTest();
     });
 
@@ -5062,8 +5502,8 @@ describe("session_shutdown teardown", () => {
     // run — by SDK semantics a session_start following _disposed IS the
     // replacement main session — instead of leaving the relay off forever.
     test("replacement session_start with subagent-shaped ctx still re-arms the relay", async () => {
-      const cwd = `/tmp/remote-pi-rearm-subagent-${process.pid}-${Date.now()}`;
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      const cwd = `/tmp/remote-omp-rearm-subagent-${process.pid}-${Date.now()}`;
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "rearm-subagent",
         auto_start_relay: true,
       });
@@ -5100,8 +5540,8 @@ describe("session_shutdown teardown", () => {
     // (config read on a syncing Dropbox cwd, keyring hiccup, …) silently
     // killed the relay for the rest of the process lifetime.
     test("transient rearm failure retries with backoff instead of dying silently", async () => {
-      const cwd = `/tmp/remote-pi-rearm-retry-${process.pid}-${Date.now()}`;
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      const cwd = `/tmp/remote-omp-rearm-retry-${process.pid}-${Date.now()}`;
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "rearm-retry",
         auto_start_relay: true,
       });
@@ -5137,12 +5577,12 @@ describe("session_shutdown teardown", () => {
     let firstSettled = false;
     let connectAttempts = 0;
     let outgoingRoot: Promise<void> | undefined;
-    const cwd = `/tmp/remote-pi-session-relay-reject-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-session-relay-reject-${process.pid}-${Date.now()}`;
     const outgoingCtx = makeMockCtx(cwd);
     const replacementCtx = makeMockCtx(cwd);
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "session-relay-reject",
         auto_start_relay: true,
       });
@@ -5152,7 +5592,7 @@ describe("session_shutdown teardown", () => {
         return connectAttempts === 1 ? firstConnect.promise : Promise.resolve();
       };
 
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       outgoingRoot = root("", outgoingCtx);
       await vi.waitFor(() => expect(relayInstances).toHaveLength(1));
       const outgoingRelay = relayInstances[0]!;
@@ -5179,8 +5619,8 @@ describe("session_shutdown teardown", () => {
     } finally {
       if (!firstSettled) firstConnect.resolve(undefined);
       await outgoingRoot?.catch(() => undefined);
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", replacementCtx);
       _resetCwdLockForTest();
       _setAutoInitedForTest(false);
@@ -5201,17 +5641,17 @@ describe("session_shutdown teardown", () => {
           ? firstJoin.promise
           : Promise.resolve("session-mesh-success");
       });
-    const cwd = `/tmp/remote-pi-session-mesh-success-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-session-mesh-success-${process.pid}-${Date.now()}`;
     const outgoingCtx = makeMockCtx(cwd);
     const replacementCtx = makeMockCtx(cwd);
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "session-mesh-success",
         auto_start_relay: true,
       });
       _setAutoInitedForTest(true);
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       outgoingRoot = root("", outgoingCtx);
       await vi.waitFor(() => expect(connectSpy).toHaveBeenCalledTimes(1));
       const outgoingCandidate = connectSpy.mock.instances[0]!;
@@ -5236,8 +5676,8 @@ describe("session_shutdown teardown", () => {
     } finally {
       if (!firstSettled) firstJoin.resolve("session-mesh-success");
       await outgoingRoot?.catch(() => undefined);
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", replacementCtx);
       _resetCwdLockForTest();
       _setAutoInitedForTest(false);
@@ -5260,17 +5700,17 @@ describe("session_shutdown teardown", () => {
           ? firstJoin.promise
           : Promise.resolve("session-mesh-reject");
       });
-    const cwd = `/tmp/remote-pi-session-mesh-reject-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-session-mesh-reject-${process.pid}-${Date.now()}`;
     const outgoingCtx = makeMockCtx(cwd);
     const replacementCtx = makeMockCtx(cwd);
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "session-mesh-reject",
         auto_start_relay: true,
       });
       _setAutoInitedForTest(true);
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       outgoingRoot = root("", outgoingCtx);
       await vi.waitFor(() => expect(connectSpy).toHaveBeenCalledTimes(1));
       const outgoingCandidate = connectSpy.mock.instances[0]!;
@@ -5299,8 +5739,8 @@ describe("session_shutdown teardown", () => {
     } finally {
       if (!firstSettled) firstJoin.resolve("session-mesh-reject");
       await outgoingRoot?.catch(() => undefined);
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", replacementCtx);
       _resetCwdLockForTest();
       _setAutoInitedForTest(false);
@@ -5326,18 +5766,18 @@ describe("session_shutdown teardown", () => {
           ? firstLockGate.promise
           : Promise.resolve({ ok: true as const, release: releaseFreshLock });
       });
-    const cwd = `/tmp/remote-pi-root-lock-reject-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-root-lock-reject-${process.pid}-${Date.now()}`;
     const outgoingCtx = makeMockCtx(cwd);
     const replacementCtx = makeMockCtx(cwd);
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "root-lock-reject",
         auto_start_relay: true,
       });
       _setAutoInitedForTest(true);
 
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       const outgoingRoot = root("", outgoingCtx);
       observedOutgoing = outgoingRoot.then(
         () => ({ status: "resolved" as const }),
@@ -5371,8 +5811,8 @@ describe("session_shutdown teardown", () => {
     } finally {
       if (!firstLockSettled) firstLockGate.reject(outgoingFailure);
       await observedOutgoing?.catch(() => undefined);
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", replacementCtx);
       _resetCwdLockForTest();
       _setAutoInitedForTest(false);
@@ -5380,18 +5820,18 @@ describe("session_shutdown teardown", () => {
     }
   });
 
-  test("/remote-pi stop cancels a replacement root pending cwd-lock publication", async () => {
+  test("/remote-omp stop cancels a replacement root pending cwd-lock publication", async () => {
     const lockGate = deferred<Awaited<ReturnType<typeof acquireCwdLock>>>();
     const releaseAcquiredLock = vi.fn();
     let lockSettled = false;
     const cwdLockModule = await import("./session/cwd_lock.js");
     const acquireSpy = vi.spyOn(cwdLockModule, "acquireCwdLock")
       .mockImplementation(() => lockGate.promise);
-    const cwd = `/tmp/remote-pi-root-lock-stop-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-root-lock-stop-${process.pid}-${Date.now()}`;
     const replacementCtx = makeMockCtx(cwd);
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "root-lock-stop",
         auto_start_relay: true,
       });
@@ -5403,7 +5843,7 @@ describe("session_shutdown teardown", () => {
       void sessionStart({ type: "session_start" }, replacementCtx);
       await vi.waitFor(() => expect(acquireSpy).toHaveBeenCalledTimes(1));
 
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", replacementCtx);
 
       lockSettled = true;
@@ -5415,8 +5855,8 @@ describe("session_shutdown teardown", () => {
       expect(_getState()).toBe("idle");
     } finally {
       if (!lockSettled) lockGate.resolve({ ok: true, release: releaseAcquiredLock });
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", replacementCtx);
       _resetCwdLockForTest();
       _setAutoInitedForTest(false);
@@ -5431,11 +5871,11 @@ describe("session_shutdown teardown", () => {
     const cwdLockModule = await import("./session/cwd_lock.js");
     const acquireSpy = vi.spyOn(cwdLockModule, "acquireCwdLock")
       .mockImplementation(() => lockGate.promise);
-    const cwd = `/tmp/remote-pi-root-lock-relay-off-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-root-lock-relay-off-${process.pid}-${Date.now()}`;
     const replacementCtx = makeMockCtx(cwd);
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "root-lock-relay-off",
         auto_start_relay: true,
       });
@@ -5458,8 +5898,8 @@ describe("session_shutdown teardown", () => {
       expect(_getState()).toBe("idle");
     } finally {
       if (!lockSettled) lockGate.resolve({ ok: true, release: releaseAcquiredLock });
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", replacementCtx);
       _resetCwdLockForTest();
       _setAutoInitedForTest(false);
@@ -5481,12 +5921,12 @@ describe("session_shutdown teardown", () => {
           ? firstLockGate.promise
           : Promise.resolve({ ok: true as const, release: releaseNewestLock });
       });
-    const cwd = `/tmp/remote-pi-root-lock-replacement-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-root-lock-replacement-${process.pid}-${Date.now()}`;
     const firstReplacementCtx = makeMockCtx(cwd);
     const newestReplacementCtx = makeMockCtx(cwd);
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "root-lock-replacement",
         auto_start_relay: true,
       });
@@ -5518,8 +5958,8 @@ describe("session_shutdown teardown", () => {
       if (!firstLockSettled) {
         firstLockGate.resolve({ ok: true, release: releaseSupersededLock });
       }
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", newestReplacementCtx);
       _resetCwdLockForTest();
       _setAutoInitedForTest(false);
@@ -5529,15 +5969,15 @@ describe("session_shutdown teardown", () => {
 
   test("after a clean reset, connect works again (flag is per-instance, not sticky)", async () => {
     // beforeEach already reset _disposed → a fresh connect must join the mesh.
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
     expect(_hasMeshNodeForTest()).toBe(true);
   });
 });
 
-// ── remote-pi:name-assigned event (Cockpit consumes the effective name) ────────
+// ── remote-omp:name-assigned event (Cockpit consumes the effective name) ────────
 
-describe("remote-pi:name-assigned event", () => {
+describe("remote-omp:name-assigned event", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     _knownPeers.length = 0;
@@ -5551,14 +5991,14 @@ describe("remote-pi:name-assigned event", () => {
     relayInstances.length = 0;
     _defaultConnectImpl = async () => undefined;
     _setDisposedForTest(false);
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
   // Contract for the Cockpit: on join the extension emits a pure-data
   // (display:false) custom message carrying the requested + effective mesh
   // name, so the client can rename the agent when the broker appended a `#N`.
-  test("join emits remote-pi:name-assigned with requested + assigned + changed", async () => {
+  test("join emits remote-omp:name-assigned with requested + assigned + changed", async () => {
     const sendMessage = vi.fn();
     const spyPi = {
       on: () => undefined, registerCommand: () => undefined,
@@ -5567,19 +6007,19 @@ describe("remote-pi:name-assigned event", () => {
       registerMessageRenderer: () => undefined,
       sendMessage, sendUserMessage: () => undefined,
     } as unknown as ExtensionAPI;
-    captureHandler("remote-pi");   // factory side-effects (matches other connect tests)
+    captureHandler("remote-omp");   // factory side-effects (matches other connect tests)
     _setPiForTest(spyPi);          // …then route sendMessage through the spy
     expect(_hasMeshNodeForTest()).toBe(false);
 
     const ctx = makeMockCtx(
-      `/tmp/remote-pi-name-assigned-${process.pid}-${Date.now()}`,
+      `/tmp/remote-omp-name-assigned-${process.pid}-${Date.now()}`,
     );
     await _connectForTest(ctx);
     expect(_hasMeshNodeForTest()).toBe(true); // join succeeded → emit ran
 
     const ev = sendMessage.mock.calls
       .map((c) => c[0] as { customType?: string; display?: boolean; details?: Record<string, unknown> })
-      .find((m) => m?.customType === "remote-pi:name-assigned");
+      .find((m) => m?.customType === "remote-omp:name-assigned");
     expect(ev).toBeDefined();
     expect(ev!.display).toBe(false);
     expect(ev!.details).toMatchObject({ changed: false });
@@ -5591,18 +6031,18 @@ describe("remote-pi:name-assigned event", () => {
 
 // ── Local config owns mesh name ───────────────────────────────────────────────
 describe("local config owns mesh name", () => {
-  test("join ignores the Pi session display name", async () => {
-    process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+  test("join ignores the omp session display name", async () => {
+    process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
       agent_name: "crow", auto_start_relay: false,
     });
-    const root = captureHandler("remote-pi");
+    const root = captureHandler("remote-omp");
     _setPiForTest({ getSessionName: () => "pi-subagent-poison" });
-    const cwd = `/tmp/remote-pi-name-config-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-name-config-${process.pid}-${Date.now()}`;
 
     await root("", makeMockCtx(cwd));
 
     expect(_getLockedNameForTest()?.replace(/#\d+$/, "")).toBe("crow");
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx(cwd));
     _resetCwdLockForTest();
   });
@@ -5624,7 +6064,7 @@ describe("relay control channel + relay-state event", () => {
     sendMessage.mock.calls
       .map((c) => c[0] as { customType?: string; display?: boolean; details?: Record<string, unknown> })
       .reverse()
-      .find((m) => m?.customType === "remote-pi:relay-state");
+      .find((m) => m?.customType === "remote-omp:relay-state");
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -5637,17 +6077,19 @@ describe("relay control channel + relay-state event", () => {
     relayInstances.length = 0;
     _defaultConnectImpl = async () => undefined;
     _setDisposedForTest(false);
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
   // Transparency: a CTRL_PREFIX-tagged input is swallowed by the `input` hook
   // so it never reaches the LLM or the transcript — the path the Cockpit button
-  // uses to toggle the relay without a visible turn.
-  test("input hook swallows a CTRL_PREFIX control message (action:handled)", () => {
+  // uses to toggle the relay without a visible turn. omp reads `result.handled`
+  // (InputEventResult); the Pi-era `{action:"handled"}` is ignored by it, which let
+  // every control frame through to the model (plan 69 step 4, G5).
+  test("input hook swallows a CTRL_PREFIX control message (handled:true, omp's InputEventResult)", () => {
     const input = captureEventHandler("input");
     const result = input({ type: "input", text: `${CTRL_PREFIX}relay:status`, source: "rpc" });
-    expect(result).toEqual({ action: "handled" });
+    expect(result).toEqual({ handled: true });
   });
 
   test("a normal (non-control) input is NOT swallowed", () => {
@@ -5656,9 +6098,9 @@ describe("relay control channel + relay-state event", () => {
     expect(result).toBeUndefined();
   });
 
-  test("relay:status emits remote-pi:relay-state 'disconnected' while idle", async () => {
+  test("relay:status emits remote-omp:relay-state 'disconnected' while idle", async () => {
     const sendMessage = vi.fn();
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     _setPiForTest(makeSpyPi(sendMessage));
     expect(_getState()).toBe("idle");
 
@@ -5672,7 +6114,7 @@ describe("relay control channel + relay-state event", () => {
 
   test("relay:on → relay up + 'connected'; relay:off → relay down + 'disconnected'", async () => {
     const sendMessage = vi.fn();
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     _setPiForTest(makeSpyPi(sendMessage));
 
     await _handleControl("relay:on");
@@ -5686,7 +6128,7 @@ describe("relay control channel + relay-state event", () => {
   });
 
   test("relay:toggle flips idle → started → idle", async () => {
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     _setPiForTest(makeSpyPi(vi.fn()));
     expect(_getState()).toBe("idle");
     await _handleControl("relay:toggle");
@@ -5697,7 +6139,7 @@ describe("relay control channel + relay-state event", () => {
 
   test("rename:<name> renames live (broker re-register + relay swap), process/session survive", async () => {
     const sendMessage = vi.fn();
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     _setPiForTest(makeSpyPi(sendMessage));
     await _connectForTest(makeMockCtx());
     expect(_getState()).toBe("started");
@@ -5709,11 +6151,11 @@ describe("relay control channel + relay-state event", () => {
     // The mesh node + relay survive (no process restart); relay back up.
     expect(_hasMeshNodeForTest()).toBe(true);
     expect(_getState()).toBe("started");
-    // Cockpit is told the new effective name via remote-pi:name-assigned.
+    // Cockpit is told the new effective name via remote-omp:name-assigned.
     const ev = sendMessage.mock.calls
       .map((c) => c[0] as { customType?: string; display?: boolean; details?: Record<string, unknown> })
       .reverse()
-      .find((m) => m?.customType === "remote-pi:name-assigned");
+      .find((m) => m?.customType === "remote-omp:name-assigned");
     expect(ev).toBeDefined();
     expect(ev!.display).toBe(false);
     expect(ev!.details).toMatchObject({ requested: "Renamed", assigned: "Renamed", changed: false });
@@ -5721,13 +6163,13 @@ describe("relay control channel + relay-state event", () => {
     // Clean up: rename churns the real UDS broker (leave+rejoin) and leaves the
     // mesh/relay live — tear down so it can't leak into later tests (an orphaned
     // broker socket makes a subsequent bind flaky).
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
     _resetCwdLockForTest();
   });
 
   test("empty rename is a no-op", async () => {
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     _setPiForTest(makeSpyPi(vi.fn()));
     await expect(_handleControl("rename:")).resolves.toBeUndefined();
   });
@@ -5748,7 +6190,7 @@ describe("same-folder same-name → #N suffix (no refusal)", () => {
     _defaultConnectImpl = async () => undefined;
     _setDisposedForTest(false);
     _resetCwdLockForTest();
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
@@ -5756,16 +6198,16 @@ describe("same-folder same-name → #N suffix (no refusal)", () => {
   // second "Backoffice" must NOT be refused — it comes up as "Backoffice#2"
   // (and the name-assigned event reports the change), matching the broker.
   test("a second same-name agent joins as <name>#2 instead of being refused", async () => {
-    process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+    process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
       agent_name: "Backoffice",
       auto_start_relay: false, // keep the test off the relay
     });
-    const cwd = "/home/user/projects/remote_pi";
+    const cwd = "/home/user/projects/remote_omp";
     // Simulate the first agent already holding (cwd, "Backoffice").
     const first = await acquireCwdLock(cwd, "Backoffice");
     expect(first.ok).toBe(true);
     try {
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       await root("", makeMockCtx(cwd));
       // Lock seeker skipped the taken base name and reserved the #2 variant…
       expect(_getLockedNameForTest()).toBe("Backoffice#2");
@@ -5773,19 +6215,19 @@ describe("same-folder same-name → #N suffix (no refusal)", () => {
       expect(_hasMeshNodeForTest()).toBe(true);
     } finally {
       if (first.ok) first.release();
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
       _resetCwdLockForTest();
     }
   });
 
   test("concurrent startup in one extension instance does not self-suffix", async () => {
-    process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+    process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
       agent_name: "Backoffice",
       auto_start_relay: false,
     });
-    const cwd = "/home/user/projects/remote_pi-concurrent";
+    const cwd = "/home/user/projects/remote_omp-concurrent";
     try {
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       await Promise.all([
         root("", makeMockCtx(cwd)),
         root("", makeMockCtx(cwd)),
@@ -5794,22 +6236,22 @@ describe("same-folder same-name → #N suffix (no refusal)", () => {
       expect(_getLockedNameForTest()).toBe("Backoffice");
       expect(_hasMeshNodeForTest()).toBe(true);
     } finally {
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
       _resetCwdLockForTest();
     }
   });
 
   test("a supervised daemon refuses a busy base lock instead of joining as <name>#2", async () => {
-    process.env["REMOTE_PI_DAEMON"] = "1";
-    process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+    process.env["REMOTE_OMP_DAEMON"] = "1";
+    process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
       agent_name: "Backoffice",
       auto_start_relay: false,
     });
-    const cwd = "/home/user/projects/remote_pi";
+    const cwd = "/home/user/projects/remote_omp";
     const first = await acquireCwdLock(cwd, "Backoffice");
     expect(first.ok).toBe(true);
     try {
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       const ctx = makeMockCtx(cwd);
       await root("", ctx);
 
@@ -5821,8 +6263,8 @@ describe("same-folder same-name → #N suffix (no refusal)", () => {
       );
     } finally {
       if (first.ok) first.release();
-      delete process.env["REMOTE_PI_DAEMON"];
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
+      delete process.env["REMOTE_OMP_DAEMON"];
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
       _resetCwdLockForTest();
     }
   });
@@ -5841,24 +6283,24 @@ describe("session_start auto-init skips relay in print/-p mode (#44)", () => {
     _setDisposedForTest(false);
     _resetAutoInitedForTest();
     _resetCwdLockForTest();
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
     _resetAutoInitedForTest();
   });
   afterEach(() => {
     process.argv = savedArgv;
-    delete process.env["REMOTE_PI_DIRECT_CONFIG"];
+    delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
     _resetCwdLockForTest();
   });
 
-  // A one-shot `pi -p "..."` prints its answer and must exit. Auto-starting the
+  // A one-shot `omp -p "..."` prints its answer and must exit. Auto-starting the
   // relay opens a WS that is never `.unref()`'d, so the process would hang.
-  test("`pi -p` does NOT bring up the mesh/relay on session_start", async () => {
-    process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+  test("`omp -p` does NOT bring up the mesh/relay on session_start", async () => {
+    process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
       agent_name: "PrintAgent",
       auto_start_relay: true,
     });
-    process.argv = ["node", "pi", "-p", "Say hello in one word."];
+    process.argv = ["node", "omp", "-p", "Say hello in one word."];
     const onSessionStart = captureEventHandler("session_start");
     _resetAutoInitedForTest();
     onSessionStart({ type: "session_start" }, makeMockCtx("/home/user/projects/rp-print"));
@@ -5871,11 +6313,11 @@ describe("session_start auto-init skips relay in print/-p mode (#44)", () => {
   // Guard the negative: a normal interactive session_start (no -p/--print) still
   // auto-starts exactly as before, so the fix doesn't disable auto-init at large.
   test("interactive session_start (no -p) still auto-starts the mesh", async () => {
-    process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+    process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
       agent_name: "InteractiveAgent",
       auto_start_relay: true,
     });
-    process.argv = ["node", "pi"];
+    process.argv = ["node", "omp"];
     const onSessionStart = captureEventHandler("session_start");
     _resetAutoInitedForTest();
     onSessionStart({ type: "session_start" }, makeMockCtx("/home/user/projects/rp-interactive"));
@@ -5907,11 +6349,11 @@ describe("relay reconnect", () => {
         return _tokenStatus;
       },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
-  test("/remote-pi stop cancels a pending mesh join before Relay startup", async () => {
+  test("/remote-omp stop cancels a pending mesh join before Relay startup", async () => {
     const joinGate = deferred<string>();
     let joinReleased = false;
     let rootPromise: Promise<void> | undefined;
@@ -5921,14 +6363,14 @@ describe("relay reconnect", () => {
     const attachBridgeSpy = vi.spyOn(meshNodeModule.MeshNode.prototype, "attachBridge")
       .mockResolvedValue(undefined);
     let candidateCloseSpy: ReturnType<typeof vi.spyOn> | undefined;
-    const cwd = `/tmp/remote-pi-join-cancel-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-join-cancel-${process.pid}-${Date.now()}`;
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "join-cancel",
         auto_start_relay: true,
       });
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       rootPromise = root("", makeMockCtx(cwd));
       await vi.waitFor(() => expect(connectSpy).toHaveBeenCalledTimes(1));
       const candidate = connectSpy.mock.instances[0]!;
@@ -5936,7 +6378,7 @@ describe("relay reconnect", () => {
       expect(_hasMeshNodeForTest()).toBe(false);
       expect(_getState()).toBe("idle");
 
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", makeMockCtx(cwd));
 
       joinReleased = true;
@@ -5951,8 +6393,8 @@ describe("relay reconnect", () => {
     } finally {
       if (!joinReleased) joinGate.resolve("join-cancel");
       await rootPromise?.catch(() => undefined);
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", makeMockCtx(cwd));
       _resetCwdLockForTest();
       candidateCloseSpy?.mockRestore();
@@ -5961,7 +6403,7 @@ describe("relay reconnect", () => {
     }
   });
 
-  test("/remote-pi stop cancels delayed keypair resolve before any Relay side effect", async () => {
+  test("/remote-omp stop cancels delayed keypair resolve before any Relay side effect", async () => {
     const storage = await import("./pairing/storage.js");
     const getKeypair = vi.mocked(storage.getOrCreateEd25519Keypair);
     const keypairGate = deferred<Awaited<ReturnType<typeof storage.getOrCreateEd25519Keypair>>>();
@@ -5970,7 +6412,7 @@ describe("relay reconnect", () => {
       secretKey: new Uint8Array(32).fill(0x22),
     };
     const cacheBefore = _getCachedPublicKeyForTest();
-    const ctx = makeMockCtx("/tmp/remote-pi-keypair-stop-resolve");
+    const ctx = makeMockCtx("/tmp/remote-omp-keypair-stop-resolve");
     let settled = false;
     let starting: Promise<void> | undefined;
 
@@ -5979,7 +6421,7 @@ describe("relay reconnect", () => {
       starting = _startRelayForTest(ctx);
       await vi.waitFor(() => expect(getKeypair).toHaveBeenCalledTimes(1));
 
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", ctx);
 
       settled = true;
@@ -5995,18 +6437,18 @@ describe("relay reconnect", () => {
     } finally {
       if (!settled) keypairGate.resolve(staleKeypair);
       await starting?.catch(() => undefined);
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", ctx);
     }
   });
 
-  test("/remote-pi stop silences delayed keypair rejection before any Relay side effect", async () => {
+  test("/remote-omp stop silences delayed keypair rejection before any Relay side effect", async () => {
     const storage = await import("./pairing/storage.js");
     const getKeypair = vi.mocked(storage.getOrCreateEd25519Keypair);
     const keypairGate = deferred<Awaited<ReturnType<typeof storage.getOrCreateEd25519Keypair>>>();
     const staleFailure = new storage.KeyringUnavailableError("late keyring denial");
     const cacheBefore = _getCachedPublicKeyForTest();
-    const ctx = makeMockCtx("/tmp/remote-pi-keypair-stop-reject");
+    const ctx = makeMockCtx("/tmp/remote-omp-keypair-stop-reject");
     let settled = false;
     let starting: Promise<void> | undefined;
 
@@ -6015,7 +6457,7 @@ describe("relay reconnect", () => {
       starting = _startRelayForTest(ctx);
       await vi.waitFor(() => expect(getKeypair).toHaveBeenCalledTimes(1));
 
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", ctx);
 
       settled = true;
@@ -6031,7 +6473,7 @@ describe("relay reconnect", () => {
     } finally {
       if (!settled) keypairGate.reject(staleFailure);
       await starting?.catch(() => undefined);
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", ctx);
     }
   });
@@ -6044,21 +6486,21 @@ describe("relay reconnect", () => {
       publicKey: new Uint8Array(32).fill(0x33),
       secretKey: new Uint8Array(32).fill(0x44),
     };
-    const cwd = `/tmp/remote-pi-keypair-replace-resolve-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-keypair-replace-resolve-${process.pid}-${Date.now()}`;
     const outgoingCtx = makeMockCtx(cwd);
     const replacementCtx = makeMockCtx(cwd);
     let settled = false;
     let outgoingRoot: Promise<void> | undefined;
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "keypair-replace-resolve",
         auto_start_relay: true,
       });
       _setAutoInitedForTest(true);
       getKeypair.mockImplementationOnce(() => keypairGate.promise);
 
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       outgoingRoot = root("", outgoingCtx);
       await vi.waitFor(() => expect(getKeypair).toHaveBeenCalledTimes(1));
       expect(_hasMeshNodeForTest()).toBe(true);
@@ -6088,8 +6530,8 @@ describe("relay reconnect", () => {
     } finally {
       if (!settled) keypairGate.resolve(staleKeypair);
       await outgoingRoot?.catch(() => undefined);
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", replacementCtx);
       _resetCwdLockForTest();
       _setAutoInitedForTest(false);
@@ -6101,7 +6543,7 @@ describe("relay reconnect", () => {
     const getKeypair = vi.mocked(storage.getOrCreateEd25519Keypair);
     const keypairGate = deferred<Awaited<ReturnType<typeof storage.getOrCreateEd25519Keypair>>>();
     const staleFailure = new Error("outgoing keypair lookup failed late");
-    const cwd = `/tmp/remote-pi-keypair-replace-reject-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-keypair-replace-reject-${process.pid}-${Date.now()}`;
     const outgoingCtx = makeMockCtx(cwd);
     const replacementCtx = makeMockCtx(cwd);
     let settled = false;
@@ -6110,14 +6552,14 @@ describe("relay reconnect", () => {
     > | undefined;
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "keypair-replace-reject",
         auto_start_relay: true,
       });
       _setAutoInitedForTest(true);
       getKeypair.mockImplementationOnce(() => keypairGate.promise);
 
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       const outgoingRoot = root("", outgoingCtx);
       observedOutgoing = outgoingRoot.then(
         () => ({ status: "resolved" as const }),
@@ -6148,8 +6590,8 @@ describe("relay reconnect", () => {
     } finally {
       if (!settled) keypairGate.reject(staleFailure);
       await observedOutgoing?.catch(() => undefined);
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", replacementCtx);
       _resetCwdLockForTest();
       _setAutoInitedForTest(false);
@@ -6159,7 +6601,7 @@ describe("relay reconnect", () => {
   test("relay close schedules reconnect; advancing past 1s triggers a new connect", async () => {
     vi.useFakeTimers();
     try {
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       await _connectForTest(makeMockCtx());
       expect(relayInstances).toHaveLength(1);
       expect(_getState()).toBe("started");
@@ -6184,7 +6626,7 @@ describe("relay reconnect", () => {
   test("backoff progression 1s, 2s, 5s, 10s, 30s, 30s (capped) when connects keep failing", async () => {
     vi.useFakeTimers();
     try {
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       await _connectForTest(makeMockCtx());
       expect(relayInstances).toHaveLength(1);
 
@@ -6205,17 +6647,17 @@ describe("relay reconnect", () => {
     }
   });
 
-  test("/remote-pi stop during reconnect cancels the timer and no new RelayClient is created", async () => {
+  test("/remote-omp stop during reconnect cancels the timer and no new RelayClient is created", async () => {
     vi.useFakeTimers();
     try {
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       await _connectForTest(makeMockCtx());
       expect(relayInstances).toHaveLength(1);
 
       relayInstances[0]!.emit("close");
       expect(_hasPendingReconnect()).toBe(true);
 
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", makeMockCtx());
       expect(_hasPendingReconnect()).toBe(false);
       expect(_getState()).toBe("idle");
@@ -6242,7 +6684,7 @@ describe("relay reconnect", () => {
         remote_epk: OWNER_STANDARD_FIXTURE,
         paired_at: "now",
       });
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       await _connectForTest(makeMockCtx());
       const originalRelay = relayInstances[0]!;
 
@@ -6263,7 +6705,7 @@ describe("relay reconnect", () => {
       expect(staleRelay.connect).toHaveBeenCalledTimes(1);
       vi.useRealTimers();
 
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", makeMockCtx());
       expect(_getState()).toBe("idle");
 
@@ -6317,7 +6759,7 @@ describe("relay reconnect", () => {
       await staleConnect.promise;
       await Promise.resolve();
       if (!cleanedUp) {
-        const stop = captureHandler("remote-pi stop");
+        const stop = captureHandler("remote-omp stop");
         await stop("", makeMockCtx());
       }
       attachBridgeSpy.mockRestore();
@@ -6338,7 +6780,7 @@ describe("relay reconnect", () => {
         remote_epk: OWNER_STANDARD_FIXTURE,
         paired_at: "now",
       });
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       await _connectForTest(makeMockCtx());
       const originalRelay = relayInstances[0]!;
 
@@ -6359,7 +6801,7 @@ describe("relay reconnect", () => {
       expect(staleRelay.connect).toHaveBeenCalledTimes(1);
       vi.useRealTimers();
 
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", makeMockCtx());
       await _connectForTest(makeMockCtx());
       expect(relayInstances).toHaveLength(3);
@@ -6395,14 +6837,14 @@ describe("relay reconnect", () => {
       if (!staleSettled) staleConnect.reject(new Error("test cleanup"));
       await staleConnect.promise.catch(() => undefined);
       if (!cleanedUp) {
-        const stop = captureHandler("remote-pi stop");
+        const stop = captureHandler("remote-omp stop");
         await stop("", makeMockCtx());
       }
       attachBridgeSpy.mockRestore();
     }
   });
 
-  test("/remote-pi stop cancels a deferred initial Relay lifecycle", async () => {
+  test("/remote-omp stop cancels a deferred initial Relay lifecycle", async () => {
     const connectGate = deferred<void>();
     let connectReleased = false;
     let connecting: Promise<void> | undefined;
@@ -6411,7 +6853,7 @@ describe("relay reconnect", () => {
       .mockResolvedValue(undefined);
 
     try {
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       _defaultConnectImpl = () => connectGate.promise;
       connecting = _connectForTest(makeMockCtx());
       await vi.waitFor(() => expect(relayInstances).toHaveLength(1));
@@ -6419,7 +6861,7 @@ describe("relay reconnect", () => {
       expect(candidateRelay.connect).toHaveBeenCalledTimes(1);
       expect(_getState()).toBe("idle");
 
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", makeMockCtx());
       expect(_getState()).toBe("idle");
 
@@ -6433,7 +6875,7 @@ describe("relay reconnect", () => {
     } finally {
       if (!connectReleased) connectGate.resolve(undefined);
       await connecting?.catch(() => undefined);
-      const stop = captureHandler("remote-pi stop");
+      const stop = captureHandler("remote-omp stop");
       await stop("", makeMockCtx());
       attachBridgeSpy.mockRestore();
     }
@@ -6446,14 +6888,14 @@ describe("relay reconnect", () => {
     const meshNodeModule = await import("./session/mesh_node.js");
     const attachBridgeSpy = vi.spyOn(meshNodeModule.MeshNode.prototype, "attachBridge")
       .mockResolvedValue(undefined);
-    const cwd = `/tmp/remote-pi-control-cancel-${process.pid}-${Date.now()}`;
+    const cwd = `/tmp/remote-omp-control-cancel-${process.pid}-${Date.now()}`;
 
     try {
-      process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
         agent_name: "control-cancel",
         auto_start_relay: false,
       });
-      const root = captureHandler("remote-pi");
+      const root = captureHandler("remote-omp");
       await root("", makeMockCtx(cwd));
       expect(_hasMeshNodeForTest()).toBe(true);
       expect(_getState()).toBe("idle");
@@ -6477,8 +6919,8 @@ describe("relay reconnect", () => {
     } finally {
       if (!connectReleased) connectGate.resolve(undefined);
       await starting?.catch(() => undefined);
-      delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-      const stop = captureHandler("remote-pi stop");
+      delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      const stop = captureHandler("remote-omp stop");
       await stop("", makeMockCtx(cwd));
       _resetCwdLockForTest();
       attachBridgeSpy.mockRestore();
@@ -6488,7 +6930,7 @@ describe("relay reconnect", () => {
   test("successful reconnect preserves _sessionStartedAt and _messageBuffer", async () => {
     vi.useFakeTimers();
     try {
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       await _connectForTest(makeMockCtx());
       const sessionTs = 1_700_000_000_000;
       _setSessionStartedAtForTest(sessionTs);
@@ -6523,7 +6965,7 @@ describe("relay reconnect", () => {
   test("reconnect that succeeds clears attempt counter (next close starts at 1s again)", async () => {
     vi.useFakeTimers();
     try {
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       await _connectForTest(makeMockCtx());
 
       // First close → reconnect after 1s (succeeds)
@@ -6568,7 +7010,7 @@ describe("cumulative buffer", () => {
         return _tokenStatus;
       },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
     _setMessageBufferForTest([]);
     _setSessionStartedAtForTest(null);
@@ -6718,9 +7160,9 @@ describe("cumulative buffer", () => {
     expect(events[3]!.tool_call_id).toBe("tc_1");
   });
 
-  test("_cmdStart preserves buffer across stop/start cycle (Pi session outlives relay)", async () => {
-    // Simulates: user runs /remote-pi start, exchanges messages, /remote-pi
-    // stop, types in terminal (message_end fires while idle), /remote-pi
+  test("_cmdStart preserves buffer across stop/start cycle (omp session outlives relay)", async () => {
+    // Simulates: user runs /remote-omp start, exchanges messages, /remote-omp
+    // stop, types in terminal (message_end fires while idle), /remote-omp
     // start again. The terminal turns must NOT be wiped by the second start.
     _setMessageBufferForTest([
       { role: "user", content: "old", timestamp: 1 },
@@ -6728,14 +7170,14 @@ describe("cumulative buffer", () => {
     ]);
     expect(_getMessageBufferForTest()).toHaveLength(2);
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
     expect(_getMessageBufferForTest()).toHaveLength(2);  // PRESERVED
   });
 
-  test("_goIdle preserves buffer + sessionStartedAt across /remote-pi stop", async () => {
-    captureHandler("remote-pi");
+  test("_goIdle preserves buffer + sessionStartedAt across /remote-omp stop", async () => {
+    captureHandler("remote-omp");
     await _connectForTest(makeMockCtx());
 
     const onMsgEnd = captureEventHandler("message_end");
@@ -6743,7 +7185,7 @@ describe("cumulative buffer", () => {
     onMsgEnd({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "y" }], timestamp: 200 } });
     expect(_getMessageBufferForTest()).toHaveLength(2);
 
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
     expect(_getState()).toBe("idle");
     expect(_getMessageBufferForTest()).toHaveLength(2);  // PRESERVED across stop
@@ -6761,7 +7203,7 @@ describe("cumulative buffer", () => {
   test("_onRelayClose preserves buffer (regression — buffer must survive reconnect)", async () => {
     vi.useFakeTimers();
     try {
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       await _connectForTest(makeMockCtx());
 
       const onMsgEnd = captureEventHandler("message_end");
@@ -6798,7 +7240,7 @@ describe("model meta", () => {
     relayRef.current = null;
     relayInstances.length = 0;
     _defaultConnectImpl = async () => undefined;
-    delete process.env["REMOTE_PI_RELAY"];
+    delete process.env["REMOTE_OMP_RELAY"];
     _setCurrentModelForTest(undefined);
     const qr = await import("./pairing/qr.js");
     (qr.qrSession.consumeToken as unknown as ReturnType<typeof vi.fn>).mockImplementation(
@@ -6807,7 +7249,7 @@ describe("model meta", () => {
         return _tokenStatus;
       },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
@@ -6817,10 +7259,10 @@ describe("model meta", () => {
       capturedOpts.push(opts as { roomMeta?: { model?: string; name?: string; cwd?: string } });
     };
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     const ctx = {
       ui: { notify: vi.fn() },
-      cwd: "/tmp/remote-pi-model-test",
+      cwd: "/tmp/remote-omp-model-test",
       abort: vi.fn(),
       model: { id: "claude-sonnet-4-5", name: "claude-sonnet-4.5" },
     } as unknown as ReturnType<typeof makeMockCtx>;
@@ -6829,7 +7271,7 @@ describe("model meta", () => {
     expect(capturedOpts).toHaveLength(1);
     expect(capturedOpts[0]!.roomMeta?.model).toBe("claude-sonnet-4.5");
     expect(capturedOpts[0]!.roomMeta?.name).toBeTruthy();
-    expect(capturedOpts[0]!.roomMeta?.cwd).toBe("/tmp/remote-pi-model-test");
+    expect(capturedOpts[0]!.roomMeta?.cwd).toBe("/tmp/remote-omp-model-test");
   });
 
   test("hello carries `model` from getModel() when ctx.model is absent (daemon path)", async () => {
@@ -6838,13 +7280,13 @@ describe("model meta", () => {
       capturedOpts.push(opts as { roomMeta?: { model?: string } });
     };
 
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     // A headless daemon never fires model_select and has no `ctx.model`, but
     // its session resolved a default model that getModel() exposes — the fix
     // seeds room_meta from there so the app no longer shows "unknown".
     const ctx = {
       ui: { notify: vi.fn() },
-      cwd: "/tmp/remote-pi-daemon-model",
+      cwd: "/tmp/remote-omp-daemon-model",
       abort: vi.fn(),
       getModel: () => ({ id: "claude-opus-4-8", name: "claude-opus-4.8" }),
     } as unknown as ReturnType<typeof makeMockCtx>;
@@ -6866,8 +7308,8 @@ describe("model meta", () => {
         capturedOpts.push(opts as { roomMeta?: { model?: string } });
       };
 
-      captureHandler("remote-pi");
-      await _connectForTest(makeMockCtx("/tmp/remote-pi-no-model"));
+      captureHandler("remote-omp");
+      await _connectForTest(makeMockCtx("/tmp/remote-omp-no-model"));
 
       expect(capturedOpts).toHaveLength(1);
       expect(capturedOpts[0]!.roomMeta?.model).toBeUndefined();
@@ -6877,63 +7319,41 @@ describe("model meta", () => {
     }
   });
 
-  test("hello carries `model` from configured default settings (idle daemon path)", async () => {
-    // A headless daemon has no ctx.model/getModel at connect (the SDK resolves
-    // the session model lazily at the first turn). The fix reads the configured
-    // default from <cwd>/.pi/settings.json — the model the daemon WILL use.
-    const cwd = mkdtempSync(join(tmpdir(), "pi-daemon-cfg-"));
-    mkdirSync(join(cwd, ".pi"), { recursive: true });
-    writeFileSync(
-      join(cwd, ".pi", "settings.json"),
-      JSON.stringify({ defaultProvider: "acme", defaultModel: "acme-model-zzz" }),
-    );
-    const prevAgentDir = process.env["PI_CODING_AGENT_DIR"];
-    process.env["PI_CODING_AGENT_DIR"] = "/tmp/pi-no-such-agent-dir-daemon";
-    try {
-      const capturedOpts: Array<{ roomMeta?: { model?: string } }> = [];
-      _defaultConnectImpl = async (opts?: unknown) => {
-        capturedOpts.push(opts as { roomMeta?: { model?: string } });
-      };
+  test("hello carries `model` from omp's configured default model (idle daemon path)", async () => {
+    // A headless daemon has no ctx.model/getModel at connect (omp resolves the
+    // session model lazily at the first turn). The fix reads `modelRoles.default`
+    // from the live session's settings — the model the daemon WILL use.
+    const capturedOpts: Array<{ roomMeta?: { model?: string } }> = [];
+    _defaultConnectImpl = async (opts?: unknown) => {
+      capturedOpts.push(opts as { roomMeta?: { model?: string } });
+    };
 
-      captureHandler("remote-pi");
-      await _connectForTest(makeMockCtx(cwd));  // ctx has no model/getModel
+    captureHandler("remote-omp");
+    _setPiForTest({
+      pi: {
+        MAIN_AGENT_ID: "Main",
+        AgentRegistry: {
+          global: () => ({
+            get: () => ({
+              session: { settings: { getModelRole: (role: string) => (role === "default" ? "acme/acme-model-zzz:high" : undefined) } },
+            }),
+          }),
+        },
+      },
+    } as never);
+    await _connectForTest(makeMockCtx("/tmp/remote-omp-daemon-cfg"));  // ctx has no model/getModel
 
-      expect(capturedOpts).toHaveLength(1);
-      // The test registry won't know "acme-model-zzz" → falls back to the id.
-      expect(capturedOpts[0]!.roomMeta?.model).toBe("acme-model-zzz");
-    } finally {
-      if (prevAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
-      else process.env["PI_CODING_AGENT_DIR"] = prevAgentDir;
-      rmSync(cwd, { recursive: true, force: true });
-    }
+    expect(capturedOpts).toHaveLength(1);
+    // The test registry won't know "acme-model-zzz" → falls back to the id.
+    expect(capturedOpts[0]!.roomMeta?.model).toBe("acme-model-zzz");
   });
 
-  test("pi.on('model_select') fires room_meta_update via relay.sendControl", async () => {
-    captureHandler("remote-pi");
-    await _connectForTest(makeMockCtx("/tmp/remote-pi-model-switch"));
-
-    const onModelSelect = captureEventHandler("model_select");
-    onModelSelect({
-      type: "model_select",
-      model: { id: "gpt-4o-2024-08-06", name: "gpt-4o" },
-    });
-
-    const sendControlCalls = relayRef.current!.sendControl.mock.calls.map((c) => c[0] as {
-      type: string;
-      room_id?: string;
-      meta?: { model?: string };
-    });
-    const updates = sendControlCalls.filter((f) => f.type === "room_meta_update");
-    expect(updates).toHaveLength(1);
-    expect(updates[0]!.meta?.model).toBe("gpt-4o");
-    expect(updates[0]!.room_id).toMatch(/^[A-Za-z0-9_-]{12}$/);
-  });
   test("poll detects model change and publishes room_meta_update while idle", async () => {
-    captureHandler("remote-pi");
+    captureHandler("remote-omp");
     let currentModel = { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" };
     const ctx = {
       ui: { notify: vi.fn() },
-      cwd: "/tmp/remote-pi-model-poll",
+      cwd: "/tmp/remote-omp-model-poll",
       abort: vi.fn(),
       model: currentModel,
       models: {
@@ -7003,8 +7423,8 @@ describe("model meta", () => {
         capturedOpts.push(opts as { roomMeta?: { model?: string; thinking?: string } });
       };
       const branch = capture.branch.slice(0, 5);
-      const ctx = ompCtx("/tmp/remote-pi-footer-auto", capture.models.opus, branch);
-      captureHandler("remote-pi");
+      const ctx = ompCtx("/tmp/remote-omp-footer-auto", capture.models.opus, branch);
+      captureHandler("remote-omp");
       captureEventHandler("session_start")({ type: "session_start" }, ctx);
       const setThinkingLevel = vi.fn();
       _setPiForTest({ getThinkingLevel: () => "high", setThinkingLevel });
@@ -7040,8 +7460,8 @@ describe("model meta", () => {
         { type: "thinking_level_change", id: "00239cab", parentId: "fa78d4d2", timestamp: "2026-10-10T01:22:49.487Z", thinkingLevel: "high", configured: "high" },
         { type: "thinking_level_change", id: "263622c4", parentId: "00239cab", timestamp: "2026-10-10T01:22:50.445Z", thinkingLevel: "xhigh", configured: "xhigh" },
       ];
-      const ctx = ompCtx("/tmp/remote-pi-footer-uts", capture.models.opus, branch);
-      captureHandler("remote-pi");
+      const ctx = ompCtx("/tmp/remote-omp-footer-uts", capture.models.opus, branch);
+      captureHandler("remote-omp");
       captureEventHandler("session_start")({ type: "session_start" }, ctx);
       let level = "xhigh";
       const setThinkingLevel = vi.fn();
@@ -7072,8 +7492,8 @@ describe("model meta", () => {
       { type: "message", id: "u1", parentId: "5f8f1378", timestamp: "2026-10-10T01:58:03.811Z", message: { role: "user", content: "hi", timestamp: 1 } },
       { type: "message", id: "a1", parentId: "u1", timestamp: "2026-10-10T01:58:05.384Z", message: { role: "assistant", content: [{ type: "text", text: "ok" }], model: "claude-opus-5-5", provider: "anthropic", timestamp: 2 } },
     ];
-    const ctx = ompCtx("/tmp/remote-pi-footer-model", capture.models.opus, branch);
-    captureHandler("remote-pi");
+    const ctx = ompCtx("/tmp/remote-omp-footer-model", capture.models.opus, branch);
+    captureHandler("remote-omp");
     captureEventHandler("session_start")({ type: "session_start" }, ctx);
     _setPiForTest({ getThinkingLevel: () => "high", setThinkingLevel: vi.fn() });
     await _connectForTest(ctx);
@@ -7083,8 +7503,8 @@ describe("model meta", () => {
 
 
   test("plan/32: pi.on('turn_start') publishes working=true via room_meta_update", async () => {
-    captureHandler("remote-pi");
-    await _connectForTest(makeMockCtx("/tmp/remote-pi-working-on"));
+    captureHandler("remote-omp");
+    await _connectForTest(makeMockCtx("/tmp/remote-omp-working-on"));
 
     const onTurnStart = captureEventHandler("turn_start");
     onTurnStart({ type: "turn_start", turnIndex: 0, timestamp: 0 });
@@ -7098,8 +7518,8 @@ describe("model meta", () => {
   });
 
   test("plan/32: pi.on('turn_end') publishes working=false via room_meta_update", async () => {
-    captureHandler("remote-pi");
-    await _connectForTest(makeMockCtx("/tmp/remote-pi-working-off"));
+    captureHandler("remote-omp");
+    await _connectForTest(makeMockCtx("/tmp/remote-omp-working-off"));
 
     const onTurnEnd = captureEventHandler("turn_end");
     onTurnEnd({ type: "turn_end", turnIndex: 0 });
@@ -7112,8 +7532,8 @@ describe("model meta", () => {
   });
 
   test("plan/32: pi.on('session_before_compact') publishes working=true", async () => {
-    captureHandler("remote-pi");
-    await _connectForTest(makeMockCtx("/tmp/remote-pi-compact-working"));
+    captureHandler("remote-omp");
+    await _connectForTest(makeMockCtx("/tmp/remote-omp-compact-working"));
 
     const onBefore = captureEventHandler("session_before_compact");
     onBefore({ type: "session_before_compact" });
@@ -7125,33 +7545,7 @@ describe("model meta", () => {
     expect(updates[0]!.meta?.working).toBe(true);
   });
 
-  test("model_select with no model.name falls back to model.id", async () => {
-    captureHandler("remote-pi");
-    await _connectForTest(makeMockCtx("/tmp/remote-pi-model-fallback"));
 
-    const onModelSelect = captureEventHandler("model_select");
-    onModelSelect({
-      type: "model_select",
-      model: { id: "internal-fallback-id" },  // no name
-    });
-
-    const updates = relayRef.current!.sendControl.mock.calls
-      .map((c) => c[0] as { type: string; meta?: { model?: string } })
-      .filter((f) => f.type === "room_meta_update");
-    expect(updates).toHaveLength(1);
-    expect(updates[0]!.meta?.model).toBe("internal-fallback-id");
-  });
-
-  test("model_select with no model (undefined) is silently ignored", async () => {
-    captureHandler("remote-pi");
-    await _connectForTest(makeMockCtx("/tmp/remote-pi-model-noop"));
-
-    const sendControlBefore = relayRef.current!.sendControl.mock.calls.length;
-    const onModelSelect = captureEventHandler("model_select");
-    onModelSelect({ type: "model_select" });  // event arrived but model field missing
-
-    expect(relayRef.current!.sendControl.mock.calls.length).toBe(sendControlBefore);
-  });
 
   test("reconnect replays the same room_id + room_meta from _cmdStart (no phantom 'legacy session')", async () => {
     vi.useFakeTimers();
@@ -7161,10 +7555,10 @@ describe("model meta", () => {
         capturedOpts.push(opts as typeof capturedOpts[number]);
       };
 
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       const ctx = {
         ui: { notify: vi.fn() },
-        cwd: "/tmp/remote-pi-reconnect-room",
+        cwd: "/tmp/remote-omp-reconnect-room",
         abort: vi.fn(),
         model: { id: "claude-sonnet-4-5", name: "claude-sonnet-4.5" },
       } as unknown as ReturnType<typeof makeMockCtx>;
@@ -7183,48 +7577,13 @@ describe("model meta", () => {
       // bucketed it as a default-room peer.)
       expect(capturedOpts).toHaveLength(2);
       expect(capturedOpts[1]!.roomId).toBe(initialRoomId);
-      expect(capturedOpts[1]!.roomMeta?.cwd).toBe("/tmp/remote-pi-reconnect-room");
+      expect(capturedOpts[1]!.roomMeta?.cwd).toBe("/tmp/remote-omp-reconnect-room");
       expect(capturedOpts[1]!.roomMeta?.model).toBe("claude-sonnet-4.5");
     } finally {
       vi.useRealTimers();
     }
   });
 
-  test("reconnect after model_select carries the updated model in room_meta", async () => {
-    vi.useFakeTimers();
-    try {
-      const capturedOpts: Array<{ roomMeta?: { model?: string } }> = [];
-      _defaultConnectImpl = async (opts?: unknown) => {
-        capturedOpts.push(opts as { roomMeta?: { model?: string } });
-      };
-
-      captureHandler("remote-pi");
-      const ctx = {
-        ui: { notify: vi.fn() },
-        cwd: "/tmp/remote-pi-reconnect-model",
-        abort: vi.fn(),
-        model: { id: "claude-sonnet-4-5", name: "claude-sonnet-4.5" },
-      } as unknown as ReturnType<typeof makeMockCtx>;
-      await _connectForTest(ctx);
-
-      // User switches model
-      const onModelSelect = captureEventHandler("model_select");
-      onModelSelect({
-        type: "model_select",
-        model: { id: "gpt-4o-2024-08-06", name: "gpt-4o" },
-      });
-
-      // Relay drops → reconnect uses the NEW model in its hello
-      relayInstances[0]!.emit("close");
-      await vi.advanceTimersByTimeAsync(1_000);
-
-      expect(capturedOpts).toHaveLength(2);
-      expect(capturedOpts[0]!.roomMeta?.model).toBe("claude-sonnet-4.5");  // initial
-      expect(capturedOpts[1]!.roomMeta?.model).toBe("gpt-4o");             // post-switch
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 });
 
 describe("session history hydration from disk", () => {
@@ -7597,8 +7956,8 @@ describe("terminal slash command execution from mobile", () => {
     // Headless ctx (no UI methods)
     sessionStart({ type: "session_start" }, { ui: {} } as unknown as Parameters<typeof sessionStart>[1]);
 
-    const prevDaemon = process.env["REMOTE_PI_DAEMON"];
-    process.env["REMOTE_PI_DAEMON"] = "1";
+    const prevDaemon = process.env["REMOTE_OMP_DAEMON"];
+    process.env["REMOTE_OMP_DAEMON"] = "1";
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as unknown as (code?: string | number | null | undefined) => never);
     vi.useFakeTimers();
     try {
@@ -7610,9 +7969,9 @@ describe("terminal slash command execution from mobile", () => {
       vi.useRealTimers();
       exitSpy.mockRestore();
       if (prevDaemon !== undefined) {
-        process.env["REMOTE_PI_DAEMON"] = prevDaemon;
+        process.env["REMOTE_OMP_DAEMON"] = prevDaemon;
       } else {
-        delete process.env["REMOTE_PI_DAEMON"];
+        delete process.env["REMOTE_OMP_DAEMON"];
       }
     }
   });
@@ -7621,8 +7980,8 @@ describe("terminal slash command execution from mobile", () => {
     const sessionStart = captureEventHandler("session_start");
     sessionStart({ type: "session_start" }, { ui: {} } as unknown as Parameters<typeof sessionStart>[1]);
 
-    const prevDaemon = process.env["REMOTE_PI_DAEMON"];
-    process.env["REMOTE_PI_DAEMON"] = "1";
+    const prevDaemon = process.env["REMOTE_OMP_DAEMON"];
+    process.env["REMOTE_OMP_DAEMON"] = "1";
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as unknown as (code?: string | number | null | undefined) => never);
     vi.useFakeTimers();
     try {
@@ -7642,9 +8001,9 @@ describe("terminal slash command execution from mobile", () => {
       vi.useRealTimers();
       exitSpy.mockRestore();
       if (prevDaemon !== undefined) {
-        process.env["REMOTE_PI_DAEMON"] = prevDaemon;
+        process.env["REMOTE_OMP_DAEMON"] = prevDaemon;
       } else {
-        delete process.env["REMOTE_PI_DAEMON"];
+        delete process.env["REMOTE_OMP_DAEMON"];
       }
     }
   });
@@ -7662,13 +8021,13 @@ describe("terminal slash command execution from mobile", () => {
 
     const dataListener = vi.fn();
     process.stdin.on("data", dataListener);
-    const prevDaemon = process.env["REMOTE_PI_DAEMON"];
+    const prevDaemon = process.env["REMOTE_OMP_DAEMON"];
     const prevArgv = process.argv;
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as unknown as (code?: string | number | null | undefined) => never);
     vi.useFakeTimers();
     try {
-      // 1. Daemon with realistic pi --mode rpc UI stubs + stdin data listener
-      process.env["REMOTE_PI_DAEMON"] = "1";
+      // 1. Daemon with realistic omp --mode rpc UI stubs + stdin data listener
+      process.env["REMOTE_OMP_DAEMON"] = "1";
       expect(_tryExecuteTerminalInput("/exit")).toBe(false);
       expect(rpcUiCtx.ui.setEditorText).not.toHaveBeenCalled();
       expect(dataListener).not.toHaveBeenCalled();
@@ -7692,10 +8051,10 @@ describe("terminal slash command execution from mobile", () => {
       expect(exitSpy).toHaveBeenCalledWith(EXIT_DAEMON_RESTART);
 
       // 2. Non-daemon --mode rpc argv guard
-      delete process.env["REMOTE_PI_DAEMON"];
-      process.argv = ["node", "pi", "--mode", "rpc"];
+      delete process.env["REMOTE_OMP_DAEMON"];
+      process.argv = ["node", "omp", "--mode", "rpc"];
       expect(_tryExecuteTerminalInput("hello")).toBe(false);
-      process.argv = ["node", "pi", "--mode=rpc"];
+      process.argv = ["node", "omp", "--mode=rpc"];
       expect(_tryExecuteTerminalInput("hello")).toBe(false);
       expect(dataListener).not.toHaveBeenCalled();
     } finally {
@@ -7704,11 +8063,433 @@ describe("terminal slash command execution from mobile", () => {
       process.stdin.removeListener("data", dataListener);
       process.argv = prevArgv;
       if (prevDaemon !== undefined) {
-        process.env["REMOTE_PI_DAEMON"] = prevDaemon;
+        process.env["REMOTE_OMP_DAEMON"] = prevDaemon;
       } else {
-        delete process.env["REMOTE_PI_DAEMON"];
+        delete process.env["REMOTE_OMP_DAEMON"];
       }
     }
+  });
+});
+
+// ── Slash commands typed on the phone (plan 69 step 4, G3 / G9) ───────────────
+//
+// omp runs a `/…` line differently per host. In the TUI the extension types it into the
+// editor, exactly like the PC user would (everything works). A supervised daemon runs
+// `omp --mode rpc`: the line reaches omp's own command pipeline as an RPC `prompt` frame
+// written by the supervisor (control socket `send`) — `pi.sendUserMessage` never runs
+// commands, so every `/compact`, `/model`, `/skill:x` or extension command used to reach the
+// model as literal text. Builtins omp's RPC mode cannot run (`/new`, `/goal`…) must never
+// leak either.
+
+describe("slash commands typed on the phone", () => {
+  // A slice of omp 19.0.1's builtin registry (flags read off the real one).
+  const OMP_BUILTINS: BuiltinCommand[] = [
+    { name: "compact", aliases: [], description: "Manually compact the session context", headlessDescription: "Compact the conversation", hint: "[focus]", headless: true },
+    { name: "model", aliases: ["models"], description: "Switch model for this session", headless: true },
+    { name: "new", aliases: [], description: "Start a new session", headless: false },
+    { name: "goal", aliases: [], description: "Toggle goal mode", headless: false },
+    { name: "plan", aliases: [], description: "Toggle plan mode", headless: false },
+    { name: "exit", aliases: [], description: "Exit the application", headless: false },
+    { name: "quit", aliases: ["q"], description: "Quit the application", headless: false },
+    { name: "restart", aliases: [], description: "Restart omp", headless: false },
+  ];
+  const HOST_COMMANDS = [
+    { name: "prompt", description: "Choose the composer prompt symbol", source: "extension" },
+    { name: "remote-omp status", description: "Show status", source: "extension" },
+    { name: "review", description: "Review a diff", source: "prompt" },
+    { name: "skill:audit-paper", description: "Audit manuscripts", source: "skill" },
+  ];
+  const DAEMON_ID = "a1b2c3d4";
+
+  type Frame = { type: string; [k: string]: unknown };
+  const framesSince = (before: number): Frame[] =>
+    relayRef.current!.send.mock.calls.slice(before).map((c) => decodeSentCt(c[0] as string).inner as Frame);
+  const phoneSays = async (peer: string, id: string, text: string): Promise<void> => {
+    relayRef.current!.emit("message", makeInnerLine(peer, { type: "user_message", id, text }));
+    await new Promise<void>((r) => setImmediate(r));
+  };
+  const supervisorSends: ControlRequest[] = [];
+  let sendUserMessage: Mock;
+  /** Delivers `session_start` with `ctx` to a fresh factory instance (omp's hook signature has the ctx second). */
+  const startSession = (ctx: Record<string, unknown>): void => {
+    (captureEventHandler("session_start") as (event: AnyEvent, ctx: unknown) => unknown)({ type: "session_start" }, ctx);
+  };
+  const savedArgv = process.argv;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    _knownPeers.length = 0;
+    _addedPeers.length = 0;
+    _removedPeers.length = 0;
+    _consumeCalls.length = 0;
+    _setRelayCalls.length = 0;
+    _savedRelayUrl = null;
+    _tokenStatus = "ok";
+    relayRef.current = null;
+    relayInstances.length = 0;
+    _defaultConnectImpl = async () => undefined;
+    const qr = await import("./pairing/qr.js");
+    (qr.qrSession.consumeToken as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (token: string) => { _consumeCalls.push(token); return _tokenStatus; },
+    );
+    const stop = captureHandler("remote-omp stop");
+    await stop("", makeMockCtx());
+    supervisorSends.length = 0;
+    _setBuiltinCommandsForTest(OMP_BUILTINS);
+    _setSupervisorCallForTest((async (req: ControlRequest) => {
+      supervisorSends.push(req);
+      return { id: DAEMON_ID, delivered: true };
+    }) as never);
+    sendUserMessage = vi.fn().mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    process.argv = savedArgv;
+    delete process.env["REMOTE_OMP_DAEMON"];
+    delete process.env["REMOTE_OMP_DAEMON_ID"];
+    _setBuiltinCommandsForTest(null);
+    _setSupervisorCallForTest();
+    _setPiForTest(null);
+  });
+
+  /** The extension as a supervised `omp --mode rpc` child sees itself. */
+  const bootDaemon = async (peer: string, ctxExtra: Record<string, unknown> = { mode: "rpc" }) => {
+    await _pairForTest(peer);
+    startSession({
+      ui: { notify: vi.fn(), setEditorText: vi.fn(), getEditorText: () => "" },
+      cwd: process.cwd(),
+      ...ctxExtra,
+    });
+    _setPiForTest({ sendUserMessage, sendMessage: () => undefined, getCommands: () => HOST_COMMANDS });
+    process.env["REMOTE_OMP_DAEMON"] = "1";
+    process.env["REMOTE_OMP_DAEMON_ID"] = DAEMON_ID;
+  };
+
+  describe("supervised daemon (omp --mode rpc)", () => {
+    test.each([
+      ["a builtin with a text-mode handler", "/compact keep the schema work"],
+      ["a builtin that shows the model", "/model"],
+      ["a skill", "/skill:audit-paper check section 2"],
+      ["an extension command", "/prompt ✦"],
+      ["a prompt command", "/review the diff"],
+    ])("%s runs through omp's own command pipeline, not as model text", async (_what, line) => {
+      await bootDaemon("peer-rpc-run");
+      const before = relayRef.current!.send.mock.calls.length;
+
+      await phoneSays("peer-rpc-run", "msg-cmd", line);
+
+      // The supervisor writes it to the child's stdin as a `prompt` frame; the frame
+      // names a streaming behavior so omp accepts it while a run is streaming.
+      expect(supervisorSends).toEqual([
+        { op: "send", id: DAEMON_ID, text: line, streaming_behavior: "steer" },
+      ]);
+      expect(sendUserMessage).not.toHaveBeenCalled();
+      // the phone's bubble is confirmed, as a plain message (a command is not a steer)
+      expect(framesSince(before)).toContainEqual(
+        expect.objectContaining({ type: "user_message", id: "msg-cmd", text: line }),
+      );
+      expect(framesSince(before).filter((f) => f.type === "error")).toEqual([]);
+      expect(framesSince(before)).not.toContainEqual(expect.objectContaining({ streaming_behavior: "steer" }));
+    });
+
+    test("the line coming back through omp's input hook is the phone's own, not a PC user's typing", async () => {
+      await bootDaemon("peer-rpc-own");
+      await phoneSays("peer-rpc-own", "msg-own", "/compact");
+      const before = relayRef.current!.send.mock.calls.length;
+      const onInput = captureEventHandler("input");
+
+      // omp hands the frame to the hook as source "rpc": nothing is mirrored, nobody typed on the PC
+      expect(onInput({ type: "input", text: "/compact", source: "rpc" })).toBeUndefined();
+      expect(framesSince(before)).toEqual([]);
+
+      // a second one nobody here asked for is a real RPC client's: mirrored as before (as a steer,
+      // the phone's command turn being still open)
+      onInput({ type: "input", text: "/compact", source: "rpc" });
+      expect(framesSince(before)).toEqual([
+        expect.objectContaining({ type: "user_message", text: "/compact", streaming_behavior: "steer" }),
+      ]);
+    });
+
+    test("/new starts a fresh session through the New session action, never model text", async () => {
+      await bootDaemon("peer-rpc-new");
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as unknown as (code?: string | number | null | undefined) => never);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const before = relayRef.current!.send.mock.calls.length;
+      try {
+        await phoneSays("peer-rpc-new", "msg-new", "/new");
+        vi.advanceTimersByTime(150);
+        expect(exitSpy).toHaveBeenCalledWith(EXIT_DAEMON_FRESH_SESSION);
+      } finally {
+        exitSpy.mockRestore();
+      }
+      expect(supervisorSends).toEqual([]);
+      expect(sendUserMessage).not.toHaveBeenCalled();
+      expect(framesSince(before)).toContainEqual(
+        expect.objectContaining({ type: "action_ok", in_reply_to: "msg-new", action: "session_new" }),
+      );
+      // the old conversation is dropped on every owner
+      expect(framesSince(before)).toContainEqual(
+        expect.objectContaining({ type: "session_history", events: [] }),
+      );
+      expect(_getCurrentTurnIdForTest()).toBeNull();
+    });
+
+    test.each(["/exit", "/quit", "/q"])("%s ends the daemon's session (exit 0), never model text", async (line) => {
+      await bootDaemon("peer-rpc-exit");
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as unknown as (code?: string | number | null | undefined) => never);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        await phoneSays("peer-rpc-exit", "msg-exit", line);
+        vi.advanceTimersByTime(150);
+        expect(exitSpy).toHaveBeenCalledWith(0);
+      } finally {
+        exitSpy.mockRestore();
+      }
+      expect(sendUserMessage).not.toHaveBeenCalled();
+      expect(supervisorSends).toEqual([]);
+    });
+
+    test("builtins omp's RPC mode cannot run get an error naming the command, never model text", async () => {
+      await bootDaemon("peer-rpc-tui-only");
+      const before = relayRef.current!.send.mock.calls.length;
+
+      await phoneSays("peer-rpc-tui-only", "msg-goal", "/goal ship the release");
+
+      expect(sendUserMessage).not.toHaveBeenCalled();
+      expect(supervisorSends).toEqual([]);
+      expect(framesSince(before)).toContainEqual(expect.objectContaining({
+        type: "error", code: "command_unavailable", in_reply_to: "msg-goal",
+        message: expect.stringContaining("/goal"),
+      }));
+      expect(framesSince(before).some((f) => f.type === "user_message")).toBe(false);
+      expect(_getCurrentTurnIdForTest()).toBeNull();
+    });
+
+    test("an unreachable supervisor fails the line with an error, gives the turn back, and does not expect an input", async () => {
+      await bootDaemon("peer-rpc-offline");
+      _setSupervisorCallForTest((async () => {
+        throw new SupervisorOfflineError("/tmp/supervisor.sock");
+      }) as never);
+      const before = relayRef.current!.send.mock.calls.length;
+
+      await phoneSays("peer-rpc-offline", "msg-offline", "/compact");
+
+      expect(sendUserMessage).not.toHaveBeenCalled();
+      expect(framesSince(before)).toContainEqual(expect.objectContaining({
+        type: "error", code: "command_unavailable", in_reply_to: "msg-offline",
+        message: expect.stringMatching(/supervisor is not running/i),
+      }));
+      expect(framesSince(before).some((f) => f.type === "user_message")).toBe(false);
+      expect(_getCurrentTurnIdForTest()).toBeNull();
+      // the failed line is not waiting to be recognised: a real RPC client typing it is mirrored
+      const after = relayRef.current!.send.mock.calls.length;
+      captureEventHandler("input")({ type: "input", text: "/compact", source: "rpc" });
+      expect(framesSince(after).filter((f) => f.type === "user_input")).toHaveLength(1);
+    });
+
+    test("prose that merely starts with a slash is an ordinary prompt", async () => {
+      await bootDaemon("peer-rpc-prose");
+
+      await phoneSays("peer-rpc-prose", "msg-prose", "/etc/hosts is broken");
+
+      await vi.waitFor(() => expect(sendUserMessage).toHaveBeenCalledWith("/etc/hosts is broken", undefined));
+      expect(supervisorSends).toEqual([]);
+    });
+
+    test("a name omp does not list is still offered to omp (file-based commands exist), not sent as model text", async () => {
+      await bootDaemon("peer-rpc-file-cmd");
+
+      await phoneSays("peer-rpc-file-cmd", "msg-file", "/team-standup monday");
+
+      expect(supervisorSends).toEqual([
+        { op: "send", id: DAEMON_ID, text: "/team-standup monday", streaming_behavior: "steer" },
+      ]);
+      expect(sendUserMessage).not.toHaveBeenCalled();
+    });
+
+    test("a queued slash line is run the same way when the queue drains", async () => {
+      await bootDaemon("peer-rpc-queue");
+      const before = relayRef.current!.send.mock.calls.length;
+
+      relayRef.current!.emit("message", makeInnerLine("peer-rpc-queue", {
+        type: "queued_message_set", id: "queued-1", text: "/compact",
+      }));
+      await vi.waitFor(() => {
+        expect(framesSince(before)).toContainEqual(
+          expect.objectContaining({ type: "user_message", id: "queued-1", text: "/compact" }),
+        );
+      });
+
+      expect(supervisorSends).toEqual([{ op: "send", id: DAEMON_ID, text: "/compact", streaming_behavior: "steer" }]);
+      expect(sendUserMessage).not.toHaveBeenCalled();
+    });
+
+    test("a queued slash line that cannot be delivered stays in the queue, marked failed", async () => {
+      await bootDaemon("peer-rpc-queue-fail");
+      _setSupervisorCallForTest((async () => {
+        throw new SupervisorOfflineError("/tmp/supervisor.sock");
+      }) as never);
+      const before = relayRef.current!.send.mock.calls.length;
+
+      relayRef.current!.emit("message", makeInnerLine("peer-rpc-queue-fail", {
+        type: "queued_message_set", id: "queued-2", text: "/compact",
+      }));
+      await vi.waitFor(() => {
+        expect(framesSince(before)).toContainEqual(expect.objectContaining({
+          type: "error", in_reply_to: "queued-2", code: "command_unavailable",
+        }));
+      });
+
+      const states = framesSince(before).filter((f) => f.type === "queued_message_state");
+      expect(states.at(-1)).toMatchObject({ items: [expect.objectContaining({ id: "queued-2", text: "/compact" })] });
+      expect(sendUserMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("a headless host the supervisor does not manage (plain --mode rpc)", () => {
+    test("a command omp lists is refused with a reason instead of reaching the model", async () => {
+      await bootDaemon("peer-rpc-unmanaged");
+      delete process.env["REMOTE_OMP_DAEMON"];
+      delete process.env["REMOTE_OMP_DAEMON_ID"];
+      const before = relayRef.current!.send.mock.calls.length;
+
+      await phoneSays("peer-rpc-unmanaged", "msg-unmanaged", "/compact");
+
+      expect(sendUserMessage).not.toHaveBeenCalled();
+      expect(supervisorSends).toEqual([]);
+      expect(framesSince(before)).toContainEqual(expect.objectContaining({
+        type: "error", code: "command_unavailable", in_reply_to: "msg-unmanaged",
+        message: expect.stringContaining("/compact"),
+      }));
+    });
+
+    test("ordinary prompts and unlisted names still reach the agent", async () => {
+      await bootDaemon("peer-rpc-unmanaged-text");
+      delete process.env["REMOTE_OMP_DAEMON"];
+      delete process.env["REMOTE_OMP_DAEMON_ID"];
+
+      await phoneSays("peer-rpc-unmanaged-text", "msg-text", "hello there");
+      await phoneSays("peer-rpc-unmanaged-text", "msg-unlisted", "/team-standup monday");
+
+      await vi.waitFor(() => expect(sendUserMessage).toHaveBeenCalledTimes(2));
+      expect(supervisorSends).toEqual([]);
+    });
+  });
+
+  describe("omp TUI", () => {
+    const tuiHost = async (peer: string) => {
+      await _pairForTest(peer);
+      let editorText = "";
+      const setEditorText = vi.fn((text: string) => { editorText = text; });
+      const ctx = {
+        mode: "tui",
+        ui: { notify: vi.fn(), getEditorText: () => editorText, setEditorText },
+      };
+      startSession(ctx);
+      _setPiForTest({ sendUserMessage, sendMessage: () => undefined, getCommands: () => HOST_COMMANDS });
+      const dataListener = vi.fn();
+      process.stdin.on("data", dataListener);
+      return { setEditorText, dataListener, stop: () => process.stdin.removeListener("data", dataListener) };
+    };
+
+    test.each([
+      "/compact",
+      "/new",
+      "/model",
+      "/skill:audit-paper check section 2",
+      "/prompt ✦",
+    ])("%s is typed into omp's editor and submitted, like the PC user would", async (line) => {
+      const host = await tuiHost("peer-tui-run");
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const before = relayRef.current!.send.mock.calls.length;
+      try {
+        await phoneSays("peer-tui-run", "msg-tui", line);
+        expect(host.setEditorText).toHaveBeenCalledWith(line);
+        expect(host.dataListener).toHaveBeenCalledWith("\r");
+        // flush the injection window (the input hook must not take it for PC typing)
+        vi.advanceTimersByTime(150);
+      } finally {
+        host.stop();
+      }
+      expect(sendUserMessage).not.toHaveBeenCalled();
+      expect(supervisorSends).toEqual([]);
+      expect(framesSince(before)).toContainEqual(
+        expect.objectContaining({ type: "user_message", id: "msg-tui", text: line }),
+      );
+    });
+
+    test("a TUI whose editor cannot be reached refuses a command omp lists instead of sending it to the model", async () => {
+      await _pairForTest("peer-tui-stale");
+      // stale ctx: reading `ui` throws, as after a session replacement
+      const stale = { mode: "tui", get ui(): never { throw new Error("stale after session replacement or reload"); } };
+      startSession(stale);
+      _setPiForTest({ sendUserMessage, sendMessage: () => undefined, getCommands: () => HOST_COMMANDS });
+      const before = relayRef.current!.send.mock.calls.length;
+
+      await phoneSays("peer-tui-stale", "msg-stale", "/compact");
+      await phoneSays("peer-tui-stale", "msg-stale-text", "hello");
+
+      expect(framesSince(before)).toContainEqual(expect.objectContaining({
+        type: "error", code: "command_unavailable", in_reply_to: "msg-stale",
+      }));
+      // …while ordinary text still goes to the agent
+      await vi.waitFor(() => expect(sendUserMessage).toHaveBeenCalledTimes(1));
+      expect(sendUserMessage).toHaveBeenCalledWith("hello", undefined);
+    });
+  });
+
+  describe("slash menu data (session_sync)", () => {
+    const syncSkillsList = async (peer: string): Promise<Frame> => {
+      const before = relayRef.current!.send.mock.calls.length;
+      relayRef.current!.emit("message", makeInnerLine(peer, { type: "session_sync", id: "sync-1" }));
+      await vi.waitFor(() => expect(framesSince(before).some((f) => f.type === "skills_list")).toBe(true));
+      return framesSince(before).find((f) => f.type === "skills_list")!;
+    };
+
+    test("the app gets omp's own list: runnable builtins, extension/prompt commands, skills as /skill:<name>", async () => {
+      await bootDaemon("peer-menu");
+
+      const frame = await syncSkillsList("peer-menu");
+
+      expect(frame["in_reply_to"]).toBe("sync-1");
+      expect(frame["skills"]).toEqual([{ name: "skill:audit-paper", description: "Audit manuscripts" }]);
+      const commands = frame["commands"] as Array<{ name: string; source: string; description: string; hint?: string }>;
+      // headless: only what omp's RPC prompt runs, plus what the extension does itself
+      expect(commands.filter((c) => c.source === "builtin").map((c) => c.name)).toEqual([
+        "compact", "model", "new", "exit", "quit", "restart",
+      ]);
+      expect(commands.find((c) => c.name === "compact")).toEqual({
+        name: "compact", description: "Compact the conversation", source: "builtin", hint: "[focus]",
+      });
+      // names with a space are autocomplete-only registrations
+      expect(commands.filter((c) => c.source !== "builtin")).toEqual([
+        { name: "prompt", description: "Choose the composer prompt symbol", source: "extension" },
+        { name: "review", description: "Review a diff", source: "prompt" },
+      ]);
+    });
+
+    test("in the TUI every builtin is offered", async () => {
+      await _pairForTest("peer-menu-tui");
+      startSession({ mode: "tui", ui: { notify: vi.fn() } });
+      _setPiForTest({ sendUserMessage, sendMessage: () => undefined, getCommands: () => HOST_COMMANDS });
+
+      const frame = await syncSkillsList("peer-menu-tui");
+
+      const names = (frame["commands"] as Array<{ name: string; source: string }>)
+        .filter((c) => c.source === "builtin").map((c) => c.name);
+      expect(names).toEqual(OMP_BUILTINS.map((c) => c.name));
+    });
+
+    test("no host command list (outside omp) still answers the sync", async () => {
+      await _pairForTest("peer-menu-bare");
+      startSession({ ui: { notify: vi.fn() } });
+      _setPiForTest({ sendUserMessage, sendMessage: () => undefined });
+
+      const frame = await syncSkillsList("peer-menu-bare");
+
+      expect(frame["skills"]).toEqual([]);
+    });
   });
 });
 
@@ -7724,24 +8505,24 @@ describe("always-on daemon boot retries & parseCreateArgs", () => {
     _setDisposedForTest(false);
     _resetAutoInitedForTest();
     _resetCwdLockForTest();
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
     _resetAutoInitedForTest();
   });
   afterEach(async () => {
     vi.useRealTimers();
     process.argv = savedArgv;
-    delete process.env["REMOTE_PI_DAEMON"];
-    delete process.env["REMOTE_PI_DIRECT_CONFIG"];
-    const stop = captureHandler("remote-pi stop");
+    delete process.env["REMOTE_OMP_DAEMON"];
+    delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
     _resetCwdLockForTest();
   });
 
   test("daemon session_start retries initial relay.connect() failure until relay recovers", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    process.env["REMOTE_PI_DAEMON"] = "1";
-    process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+    process.env["REMOTE_OMP_DAEMON"] = "1";
+    process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
       agent_name: "BootRetry",
       auto_start_relay: true,
     });
@@ -7766,8 +8547,8 @@ describe("always-on daemon boot retries & parseCreateArgs", () => {
 
   test("daemon session_start retries transient cwd-lock contention until old daemon exits", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    process.env["REMOTE_PI_DAEMON"] = "1";
-    process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+    process.env["REMOTE_OMP_DAEMON"] = "1";
+    process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({
       agent_name: "LockRetry",
       auto_start_relay: true,
     });
@@ -7790,18 +8571,13 @@ describe("always-on daemon boot retries & parseCreateArgs", () => {
   });
 
   test("parseCreateArgs handles =flags, quoted cwds with spaces, flags inside --name, and errors", () => {
-    expect(parseCreateArgs('"/tmp/My Dir" --name "My --harness omp" --harness=omp')).toEqual({
+    expect(parseCreateArgs('"/tmp/My Dir" --name "My --flag value"')).toEqual({
       cwdRaw: "/tmp/My Dir",
-      name: "My --harness omp",
-      harnessFlag: "omp",
+      name: "My --flag value",
     });
-    expect(parseCreateArgs("--harness omp --name=\"Door\" ~")).toEqual({
-      cwdRaw: "~",
-      name: "Door",
-      harnessFlag: "omp",
-    });
-    expect(parseCreateArgs("/tmp/dir --harness").error).toMatch(/--harness requires a value/);
-    expect(parseCreateArgs("/tmp/dir --harnes omp").error).toMatch(/unknown option/);
+    expect(parseCreateArgs("--name=\"Door\" ~")).toEqual({ cwdRaw: "~", name: "Door" });
+    expect(parseCreateArgs("/tmp/dir --name").error).toMatch(/--name requires a value/);
+    expect(parseCreateArgs("/tmp/dir --harness omp").error).toMatch(/unknown option "--harness"/);
     expect(parseCreateArgs('/tmp/dir --name "unclosed').error).toMatch(/unterminated quote/);
   });
 });
@@ -7882,7 +8658,7 @@ describe("omp in-process subagents", () => {
     (qr.qrSession.consumeToken as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       (token: string) => { _consumeCalls.push(token); return _tokenStatus; },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
@@ -8139,7 +8915,7 @@ describe("plan/65 send_to_phone + phone presence", () => {
   // must not push the agent to send what it can show: a `read` image renders
   // in the chat; files are sent only on request.
   const NOTE =
-    "The user is on Remote Pi (phone app or web) and cannot see this PC's screen or files. " +
+    "The user is on Remote OMP (phone app or web) and cannot see this PC's screen or files. " +
     "To show an image, `read` the image file: it appears in their chat. " +
     "Use `send_to_phone` only when the user asks for a file on their phone.";
 
@@ -8194,7 +8970,7 @@ describe("plan/65 send_to_phone + phone presence", () => {
   }
 
   function notes(messages: unknown[]): unknown[] {
-    return messages.filter((m) => (m as { customType?: string }).customType === "remote-pi:phone-presence");
+    return messages.filter((m) => (m as { customType?: string }).customType === "remote-omp:phone-presence");
   }
 
   beforeEach(async () => {
@@ -8215,7 +8991,7 @@ describe("plan/65 send_to_phone + phone presence", () => {
         return _tokenStatus;
       },
     );
-    const stop = captureHandler("remote-pi stop");
+    const stop = captureHandler("remote-omp stop");
     await stop("", makeMockCtx());
   });
 
@@ -8232,7 +9008,7 @@ describe("plan/65 send_to_phone + phone presence", () => {
     const out = context(h, [u1]);
     expect(out[0]).toBe(u1);
     expect(out).toHaveLength(2);
-    expect(out[1]).toMatchObject({ role: "custom", customType: "remote-pi:phone-presence", display: false });
+    expect(out[1]).toMatchObject({ role: "custom", customType: "remote-omp:phone-presence", display: false });
     expect((out[1] as { content: string }).content).toBe(NOTE);
   });
 
@@ -8335,7 +9111,7 @@ describe("plan/65 send_to_phone + phone presence", () => {
     _knownPeers.push({ name: "Phone", remote_epk: OWNER_STANDARD_FIXTURE, paired_at: new Date().toISOString() });
     vi.useFakeTimers();
     try {
-      captureHandler("remote-pi");
+      captureHandler("remote-omp");
       await _connectForTest(makeMockCtx());
       await vi.advanceTimersByTimeAsync(0);
       const frames = (r: MockRelay) => r.sendControl.mock.calls.map((c) => c[0] as { type: string; peers?: string[] })
@@ -8388,7 +9164,7 @@ describe("plan/65 send_to_phone + phone presence", () => {
         await vi.advanceTimersByTimeAsync(1_000);
       }
       expect(String(err)).toContain(
-        "phone_offline: Remote Pi is not connected on the phone. Ask the user to open the app, then try again.",
+        "phone_offline: Remote OMP is not connected on the phone. Ask the user to open the app, then try again.",
       );
       // 20 s wait (+ the fake clock may run ahead while stat runs under load).
       expect(Date.now() - started).toBeLessThan(30_000);
@@ -8442,5 +9218,208 @@ describe("plan/65 send_to_phone + phone presence", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("plan/68 phone → PC upload", () => {
+  let home: string;
+  let prevHome: string | undefined;
+  let prevReserve: string | undefined;
+
+  function fromPhone(peer: string, inner: object): void {
+    relayRef.current!.emit("message", makeInnerLine(peer, inner));
+  }
+
+  /** `upload_*` frames the extension sent since `from`, with their destination peer. */
+  function uploadFrames(from: number): Array<{ peer: string; inner: { type: string; [k: string]: unknown } }> {
+    return relayRef.current!.send.mock.calls
+      .slice(from)
+      .map((c) => decodeSentCt(c[0] as string))
+      .filter((d) => d.inner.type.startsWith("upload_"));
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    _knownPeers.length = 0;
+    _addedPeers.length = 0;
+    _removedPeers.length = 0;
+    _consumeCalls.length = 0;
+    _setRelayCalls.length = 0;
+    _savedRelayUrl = null;
+    _tokenStatus = "ok";
+    relayRef.current = null;
+    _setDisposedForTest(false);  // an earlier session_shutdown leaves the shared module disposed
+    const qr = await import("./pairing/qr.js");
+    (qr.qrSession.consumeToken as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (token: string) => {
+        _consumeCalls.push(token);
+        return _tokenStatus;
+      },
+    );
+    const stop = captureHandler("remote-omp stop");
+    await stop("", makeMockCtx());
+    home = mkdtempSync(join(tmpdir(), "rp-upload-"));
+    prevHome = process.env["REMOTE_OMP_HOME"];
+    prevReserve = process.env["REMOTE_OMP_UPLOAD_RESERVE_MIB"];
+    process.env["REMOTE_OMP_HOME"] = home;
+    process.env["REMOTE_OMP_UPLOAD_RESERVE_MIB"] = "0"; // the tests must not depend on the host's free disk
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env["REMOTE_OMP_HOME"];
+    else process.env["REMOTE_OMP_HOME"] = prevHome;
+    if (prevReserve === undefined) delete process.env["REMOTE_OMP_UPLOAD_RESERVE_MIB"];
+    else process.env["REMOTE_OMP_UPLOAD_RESERVE_MIB"] = prevReserve;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test("a paired phone uploads a file: the frames are answered on its channel and the file is stored", async () => {
+    await _pairForTest("peer-A");
+    const bytes = Buffer.from("%PDF-1.7 hello from the phone");
+    const before = relayRef.current!.send.mock.calls.length;
+
+    fromPhone("peer-A", {
+      type: "upload_start",
+      id: "r1",
+      upload_id: "up-1",
+      name: "../notes.pdf",
+      size: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    await vi.waitFor(() => expect(uploadFrames(before)).toHaveLength(1));
+    fromPhone("peer-A", { type: "upload_chunk", id: "r2", upload_id: "up-1", seq: 0, data: bytes.toString("base64") });
+    fromPhone("peer-A", { type: "upload_end", id: "r3", upload_id: "up-1" });
+    await vi.waitFor(() => expect(uploadFrames(before).some((d) => d.inner.type === "upload_done")).toBe(true));
+
+    const frames = uploadFrames(before);
+    expect(frames.every((d) => d.peer === "peer-A")).toBe(true);
+    expect(frames.map((d) => d.inner.type)).toEqual(["upload_ack", "upload_ack", "upload_done"]);
+    expect(frames[0]!.inner).toMatchObject({ upload_id: "up-1", seq: 0, received: 0 });
+    expect(frames[1]!.inner).toMatchObject({ upload_id: "up-1", seq: 1, received: bytes.length });
+    const done = frames[2]!.inner as { path: string; size: number };
+    expect(done.size).toBe(bytes.length);
+    expect(done.path).toMatch(new RegExp(`^${home.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}/\\.omp/remote/uploads/\\d{4}-\\d{2}-\\d{2}/notes\\.pdf$`));
+    expect(readFileSync(done.path)).toEqual(bytes);
+  });
+
+  test("another paired phone cannot finish or cancel the upload", async () => {
+    await _pairForTest("peer-A");
+    await _pairAdditionalForTest("peer-B", "Tablet");
+    const before = relayRef.current!.send.mock.calls.length;
+    fromPhone("peer-A", { type: "upload_start", id: "r1", upload_id: "up-1", name: "a.bin", size: 4 });
+    await vi.waitFor(() => expect(uploadFrames(before)).toHaveLength(1));
+
+    fromPhone("peer-B", { type: "upload_chunk", id: "r2", upload_id: "up-1", seq: 0, data: Buffer.from("EVIL").toString("base64") });
+    fromPhone("peer-B", { type: "upload_end", id: "r3", upload_id: "up-1" });
+    fromPhone("peer-B", { type: "upload_cancel", id: "r4", upload_id: "up-1" });
+    await vi.waitFor(() => expect(uploadFrames(before)).toHaveLength(3));
+    expect(uploadFrames(before).slice(1).map((d) => [d.peer, d.inner.type, d.inner["code"]])).toEqual([
+      ["peer-B", "upload_error", "unknown_upload"],
+      ["peer-B", "upload_error", "unknown_upload"],
+    ]);
+
+    fromPhone("peer-A", { type: "upload_chunk", id: "r5", upload_id: "up-1", seq: 0, data: Buffer.from("GOOD").toString("base64") });
+    fromPhone("peer-A", { type: "upload_end", id: "r6", upload_id: "up-1" });
+    await vi.waitFor(() => expect(uploadFrames(before).some((d) => d.inner.type === "upload_done")).toBe(true));
+    const done = uploadFrames(before).find((d) => d.inner.type === "upload_done")!;
+    expect(done.peer).toBe("peer-A");
+    expect(readFileSync(done.inner["path"] as string, "utf8")).toBe("GOOD");
+  });
+
+  test("stopping the relay drops the uploads in progress and their .part files", async () => {
+    await _pairForTest("peer-A");
+    const before = relayRef.current!.send.mock.calls.length;
+    fromPhone("peer-A", { type: "upload_start", id: "r1", upload_id: "up-1", name: "big.bin", size: 8 });
+    await vi.waitFor(() => expect(uploadFrames(before)).toHaveLength(1));
+    const incoming = join(home, ".omp", "remote", "uploads", ".incoming");
+    expect(readdirSync(incoming)).toHaveLength(1);
+
+    const stop = captureHandler("remote-omp stop");
+    await stop("", makeMockCtx());
+    await vi.waitFor(() => expect(readdirSync(incoming)).toEqual([]));
+  });
+});
+
+describe("plan/68 retry_turn + failed-turn replay", () => {
+  type Sent = Array<Record<string, unknown>>;
+  const makeSender = () => {
+    const sent: Sent = [];
+    return { sent, send: (m: Record<string, unknown>) => { sent.push(m); } };
+  };
+  /** The slice of omp's SDK the extension reaches the live main session through. */
+  const ompApi = (session: object | null) => ({
+    pi: {
+      MAIN_AGENT_ID: "main",
+      AgentRegistry: { global: () => ({ get: (id: string) => (id === "main" ? { session } : undefined) }) },
+    },
+  });
+  const route = (sender: ReturnType<typeof makeSender>, id: string) =>
+    _routeClientMessageFrom(
+      sender as unknown as Parameters<typeof _routeClientMessageFrom>[0],
+      { type: "retry_turn", id },
+      { abort: vi.fn() } as unknown as Parameters<typeof _routeClientMessageFrom>[2],
+    );
+
+  afterEach(() => {
+    _resetMainSessionForTest();
+    _setPiForTest(null);
+  });
+
+  test("omp: runs the session's own retry(), acks, and refuses a second tap until the continuation starts", async () => {
+    const retry = vi.fn(async () => true);
+    _setPiForTest(ompApi({ retry }));
+
+    const first = makeSender();
+    route(first, "r1");
+    await vi.waitFor(() => expect(first.sent).toEqual([{ type: "action_ok", in_reply_to: "r1", action: "retry_turn" }]));
+    expect(retry).toHaveBeenCalledTimes(1);
+
+    const second = makeSender();
+    route(second, "r2");
+    await vi.waitFor(() => expect(second.sent).toHaveLength(1));
+    expect(second.sent[0]).toMatchObject({ type: "error", in_reply_to: "r2", code: "busy" });
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  test("omp: no failed turn left → error nothing_to_retry", async () => {
+    _setPiForTest(ompApi({ retry: vi.fn(async () => false) }));
+    const s = makeSender();
+    route(s, "r1");
+    await vi.waitFor(() => expect(s.sent).toHaveLength(1));
+    expect(s.sent[0]).toMatchObject({ type: "error", in_reply_to: "r1", code: "nothing_to_retry" });
+  });
+
+  test("a host without omp's registry answers unsupported and re-sends nothing", async () => {
+    const sendUserMessage = vi.fn();
+    _setPiForTest({ sendUserMessage });
+    const s = makeSender();
+    route(s, "r1");
+    await vi.waitFor(() => expect(s.sent).toHaveLength(1));
+    expect(s.sent[0]).toMatchObject({ type: "error", in_reply_to: "r1", code: "unsupported" });
+    expect(sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  test("a failed turn replays as an error-tagged agent_message (the app's Retry anchor)", () => {
+    const events = _mapAgentMessagesToEvents([
+      { role: "user", content: "run it", timestamp: 1_000 },
+      { role: "assistant", content: [], stopReason: "error", errorMessage: "529 overloaded", timestamp: 2_000 },
+    ]);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ type: "user_input", text: "run it" });
+    expect(events[1]).toEqual({
+      ts: 2_000,
+      type: "agent_message",
+      in_reply_to: "sync_1000",
+      text: "⚠ provider_error: 529 overloaded",
+      error_code: "provider_error",
+    });
+  });
+
+  test("an ordinary assistant turn replays without an error_code", () => {
+    const events = _mapAgentMessagesToEvents([
+      { role: "user", content: "hi", timestamp: 1_000 },
+      { role: "assistant", content: [{ type: "text", text: "hello" }], stopReason: "stop", timestamp: 2_000 },
+    ]);
+    expect(events[1]).not.toHaveProperty("error_code");
   });
 });

@@ -1,4 +1,7 @@
 import 'package:app/data/actions/actions_repository.dart' show ActionFailure;
+import 'package:app/config/dependencies.dart' show injector;
+import 'package:app/data/local/saved_prompts_store.dart';
+import 'package:app/ui/chat/widgets/file_mention.dart' show kFileMentionLimit;
 import 'package:app/data/preferences/preferences.dart';
 import 'package:app/domain/contracts/file_actions.dart';
 import 'package:app/domain/session_state.dart';
@@ -8,6 +11,7 @@ import 'package:app/ui/core/themes/themes.dart';
 import 'package:app/ui/chat/quick_actions/widgets/quick_actions_sheet.dart';
 import 'package:app/ui/chat/attachment/states/attachment_state.dart';
 import 'package:app/ui/chat/attachment/viewmodels/attachment_viewmodel.dart';
+import 'package:app/ui/chat/upload/viewmodels/upload_viewmodel.dart';
 import 'package:app/ui/chat/states/chat_state.dart';
 import 'package:app/ui/chat/viewmodels/chat_viewmodel.dart';
 import 'package:app/ui/chat/voice/viewmodels/voice_input_viewmodel.dart';
@@ -22,6 +26,8 @@ import 'package:app/ui/chat/widgets/activity_panel.dart';
 import 'package:app/ui/chat/widgets/todo_panel.dart';
 import 'package:app/ui/chat/widgets/extension_ui_sheet.dart';
 import 'package:app/ui/chat/widgets/git_changes_sheet.dart';
+import 'package:app/ui/chat/widgets/retry_turn_button.dart';
+import 'package:app/ui/chat/widgets/session_switcher_sheet.dart';
 import 'package:app/ui/chat/widgets/plan_review_sheet.dart';
 import 'package:app/ui/settings/settings_sheet.dart';
 import 'package:app_settings/app_settings.dart';
@@ -35,7 +41,7 @@ class ChatPage extends StatefulWidget {
   /// Plan/24-fix-title: optional title hint passed via `go_router`
   /// `extra` from the Home tile. Used as the peer-label fallback in
   /// the AppBar so the user sees the right name *immediately* on
-  /// navigation, instead of "—" / "Remote Pi" until the PeerRecord
+  /// navigation, instead of "—" / "Remote OMP" until the PeerRecord
   /// is loaded by the ViewModel and the first `room_meta_updated`
   /// arrives.
   final String? initialTitle;
@@ -132,7 +138,9 @@ class _ChatPageState extends State<ChatPage> {
   Widget _fullscreenBack(Widget child) => PopScope(
     canPop: !_fullscreen,
     onPopInvokedWithResult: (didPop, _) {
-      if (!didPop) _exitFullscreen();
+      // Also called when another PopScope (e.g. the composer's @ menu)
+      // blocked the pop; only act when fullscreen is what Back should close.
+      if (!didPop && _fullscreen) _exitFullscreen();
     },
     child: child,
   );
@@ -307,6 +315,11 @@ class _ChatPageState extends State<ChatPage> {
     // Home passed), NOT `initialTitle` (the room name) — so it shows the right
     // device from frame 1 and doesn't flip when the PeerRecord loads.
     final peerLabel = _peerDisplayName(peer, widget.initialDevice);
+    // Plan/68 - the session identity for the colour bar and the switcher: the
+    // selection Home wrote before navigating, right from frame 1.
+    final prefs = context.read<Preferences>();
+    final sessionEpk = prefs.selectedPeerEpk ?? vm.activePeer?.remoteEpk ?? '';
+    final sessionRoom = prefs.selectedRoomId ?? vm.activeRoom?.roomId ?? 'main';
 
     return Container(
       height: 56,
@@ -327,7 +340,17 @@ class _ChatPageState extends State<ChatPage> {
           else
             const SizedBox(width: 16),
           Expanded(
-            child: Column(
+            // Plan/68 - the session colour, and a tap that opens the switcher.
+            child: SessionTitleButton(
+              key: const Key('chat_title_switcher'),
+              peerEpk: sessionEpk,
+              roomId: sessionRoom,
+              onTap: () => showSessionSwitcherSheet(
+                context,
+                currentEpk: sessionEpk,
+                currentRoomId: sessionRoom,
+              ),
+              child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -400,6 +423,7 @@ class _ChatPageState extends State<ChatPage> {
                   ],
                 ),
               ],
+              ),
             ),
           ),
           // Plan/32g follow-up: ALWAYS render the info button. Gating it on the
@@ -522,11 +546,11 @@ class _ChatPageState extends State<ChatPage> {
       return _inferSessionName(state.messages);
     }
     // Plan/24-fix-title: Home knows the peer label before /chat
-    // mounts; use it instead of the generic 'Remote Pi' placeholder
+    // mounts; use it instead of the generic 'Remote OMP' placeholder
     // while we wait for the first room_meta_updated to populate
     // `room.name`.
     if (initialTitle != null && initialTitle.isNotEmpty) return initialTitle;
-    return 'Remote Pi';
+    return 'Remote OMP';
   }
 
   static String _peerDisplayName(PeerRecord? peer, String? fallback) {
@@ -686,6 +710,8 @@ class _ChatPageState extends State<ChatPage> {
           workingLabel: workingLabel,
           onCancel: onCancel,
           fileCard: (m) => _buildFileCard(context, vm, m),
+          retryMessageId: vm.retryMessageId,
+          onRetry: () => _retryTurn(context, vm),
         );
       }(),
     };
@@ -718,6 +744,25 @@ class _ChatPageState extends State<ChatPage> {
       onInstall: () => run(vm.installFile(file)),
       onCancel: () => vm.cancelFile(file.fileId),
     );
+  }
+
+  /// Plan 68 - Retry under a failed turn. A refusal shows as a snackbar and
+  /// resolves false; once the extension scheduled the retry the turn streams
+  /// like any other and the button goes away.
+  static Future<bool> _retryTurn(BuildContext context, ChatViewModel vm) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final failure = await vm.retryTurn();
+    if (failure == null) return true;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(failure),
+          duration: const Duration(seconds: 6),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    return false;
   }
 
   Widget _buildInput(BuildContext context, ChatState state, ChatViewModel vm) {
@@ -771,6 +816,7 @@ class _ChatPageState extends State<ChatPage> {
       streaming: isWorking,
       messageHistory: messageHistory,
       dynamicSkills: vm.dynamicSkills,
+      hostCommands: vm.hostCommands,
       activeModel: vm.activeRoom?.model,
       activeThinking: vm.activeRoom?.thinking?.name,
       goalStatus: vm.activeRoom?.goal,
@@ -798,12 +844,20 @@ class _ChatPageState extends State<ChatPage> {
       // empty) caption. Attach-button gating by vision / already-attached is
       // internal to InputBar; the host only gates by channel availability.
       attachment: context.read<AttachmentViewModel>(),
+      // Plan/68 — files uploaded to the PC. Null where the chat is pumped
+      // without the uploader (widget tests): the attach sheet then offers
+      // images only.
+      upload: context.read<UploadViewModel?>(),
       onOpenQuickActions: actionsEnabled
           ? () => showQuickActionsSheet(context)
           : null,
       onOpenAttach: actionsEnabled
           ? () => _openAttach(context, context.read<AttachmentViewModel>())
           : null,
+      onSearchFiles: actionsEnabled
+          ? (query) => vm.searchFiles(query, limit: kFileMentionLimit)
+          : null,
+      savedPrompts: _savedPromptsOrNull(),
       onSend: (text) {
         prefs.clearDraft(peerEpk, roomId);
         final image = context.read<AttachmentViewModel>().takeImageForSend();
@@ -811,6 +865,16 @@ class _ChatPageState extends State<ChatPage> {
         _scrollToBottom();
       },
     );
+  }
+
+  /// The app-wide saved-prompts store, or null where the injector isn't set
+  /// up (widget tests that pump the page without the full app wiring).
+  static SavedPromptsStore? _savedPromptsOrNull() {
+    try {
+      return injector.get<SavedPromptsStore>();
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Dispatches a `plan_mode` action; a failure (offline / timeout / the Pi's
@@ -842,16 +906,29 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  /// Open the Camera/Gallery sheet and drive the picker. Captures the
+  /// Open the Camera/Gallery/File sheet and drive the picker. Captures the
   /// messenger up front so a permission-denied hint can deep-link to Settings
-  /// after the async pick.
+  /// after the async pick. A file goes to the upload ViewModel, which reports
+  /// progress and failures inside the composer.
   static Future<void> _openAttach(
     BuildContext context,
     AttachmentViewModel vm,
   ) async {
     final messenger = ScaffoldMessenger.of(context);
-    final source = await showAttachSheet(context);
+    final upload = context.read<UploadViewModel?>();
+    // A text-only model or an image already attached rules the photo sources
+    // out; File needs neither.
+    final imagesBlocked = vm.hasImage || vm.state.attachBlockedByVision;
+    final source = await showAttachSheet(
+      context,
+      images: !imagesBlocked,
+      file: upload != null,
+    );
     if (source == null) return;
+    if (source == AttachSource.file) {
+      await upload?.pickAndUpload();
+      return;
+    }
     AttachHint? hint;
     final sub = vm.hints.listen((h) => hint = h);
     switch (source) {
@@ -859,6 +936,8 @@ class _ChatPageState extends State<ChatPage> {
         await vm.pickFromCamera();
       case AttachSource.gallery:
         await vm.pickFromGallery();
+      case AttachSource.file:
+        break; // Handled above.
     }
     await Future<void>.delayed(Duration.zero); // flush the hint microtask
     await sub.cancel();
@@ -961,7 +1040,7 @@ class _ChatPageState extends State<ChatPage> {
     for (final m in msgs) {
       if (m is UserMsg) return m.text.substring(0, m.text.length.clamp(0, 32));
     }
-    return 'Remote Pi';
+    return 'Remote OMP';
   }
 }
 
@@ -989,9 +1068,15 @@ class _MessageList extends StatelessWidget {
     this.workingLabel,
     this.onCancel,
     this.fileCard,
+    this.retryMessageId,
+    this.onRetry,
   });
 
   final VoidCallback? onCancel;
+
+  /// Plan 68 - the failed turn to offer Retry under, and what Retry does.
+  final String? retryMessageId;
+  final Future<bool> Function()? onRetry;
 
   /// Plan 65 — builds the card for a received file.
   final Widget Function(FileMsg msg)? fileCard;
@@ -1043,6 +1128,15 @@ class _MessageList extends StatelessWidget {
           key: ValueKey('${msg.runtimeType}_${msg.id}_$msgIdx'),
           child: switch (msg) {
             UserMsg() => UserBubble(msg),
+            AssistantMsg() when msg.id == retryMessageId && onRetry != null =>
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AssistantBubble(msg, showThinking: showThinking),
+                  const SizedBox(height: 10),
+                  RetryTurnButton(onRetry: onRetry!),
+                ],
+              ),
             AssistantMsg() => AssistantBubble(msg, showThinking: showThinking),
             ToolEvent() when toolDisplay == ToolCallDisplay.hidden =>
               ToolResultImages(toolResultImages(msg)),

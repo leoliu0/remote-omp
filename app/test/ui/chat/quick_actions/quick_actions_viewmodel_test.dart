@@ -63,6 +63,9 @@ class _FakeActionsRepository implements IActionsRepository {
   Future<void> setPlanMode(PlanModeAction action) async {}
 
   @override
+  Future<void> retryTurn() async {}
+
+  @override
   Future<List<WireModelRole>> listModelRoles({String? role}) async =>
       const [];
 
@@ -114,6 +117,10 @@ class _FakeActionsRepository implements IActionsRepository {
         staged: staged,
         diff: '',
       );
+
+  @override
+  Future<FilesListResult> listFiles(String query, {int? limit}) async =>
+      const FilesListResult(inReplyTo: 'fake', root: '/', files: []);
 
   @override
   void dispose() {}

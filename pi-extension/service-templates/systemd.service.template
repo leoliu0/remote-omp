@@ -1,6 +1,6 @@
 [Unit]
-Description=Remote Pi daemon supervisor (plan/26)
-Documentation=https://remote-pi.jacobmoura.work
+Description=Remote OMP daemon supervisor (plan/26)
+Documentation=https://github.com/leoliu0/remote-omp
 After=basic.target
 StartLimitIntervalSec=0
 
@@ -18,7 +18,7 @@ OOMPolicy=continue
 StandardOutput=journal
 StandardError=journal
 # Baseline PATH/HOME before supervisord overlays the login-shell environment
-# at start (so `pi`/`omp` and user API keys/proxies resolve as in a terminal).
+# at start (so `omp` and user API keys/proxies resolve as in a terminal).
 Environment="PATH={PATH}"
 Environment="HOME={HOME}"
 

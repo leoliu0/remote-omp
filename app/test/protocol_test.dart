@@ -195,11 +195,11 @@ void main() {
         'session_started_at': 1700000000000,
         'room_id': 'room-xyz',
         'hostname': 'Mac do Jacob',
-        'harness': {'name': 'Pi coding agent', 'version': '0.4.2'},
+        'harness': {'name': 'omp coding agent', 'version': '0.4.2'},
       });
       expect(msg.hostname, 'Mac do Jacob');
       expect(msg.harness, isNotNull);
-      expect(msg.harness!.name, 'Pi coding agent');
+      expect(msg.harness!.name, 'omp coding agent');
       expect(msg.harness!.version, '0.4.2');
     });
 

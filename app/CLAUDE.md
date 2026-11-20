@@ -1,6 +1,6 @@
-# Remote Pi — App (Flutter)
+# Remote OMP — App (Flutter)
 
-Mobile client (iOS + Android) for Remote Pi. QR code pairing, Pi session listing,
+Mobile client (iOS + Android) for Remote OMP. QR code pairing, omp session listing,
 streaming chat, and approval cards for tool calls.
 
 ## Stack

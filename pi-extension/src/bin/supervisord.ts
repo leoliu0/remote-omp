@@ -1,21 +1,23 @@
 #!/usr/bin/env node
 /**
- * `pi-supervisord` — long-running daemon supervisor.
+ * `remote-omp-supervisord` — long-running daemon supervisor.
  *
- * Entry point of the `pi-supervisord` binary (plan/26 W2, plan/67). Run by
+ * Entry point of the `remote-omp-supervisord` binary (plan/26 W2, plan/67). Run by
  * systemd/launchd/Task Scheduler in production, or directly during dev:
  *
  *   pnpm build
  *   node dist/bin/supervisord.js
  *
  * Once running, it:
- *   - Reads `~/.pi/remote/daemons.json`
- *   - Binds `~/.pi/remote/supervisor.sock` (or Windows named pipe) for CLI control
+ *   - Copies `~/.pi/remote` to `~/.omp/remote` on the first start after the Remote
+ *     OMP rename (the old directory is left untouched; plan 69)
+ *   - Reads `~/.omp/remote/daemons.json`
+ *   - Binds `~/.omp/remote/supervisor.sock` (or Windows named pipe) for CLI control
  *   - Loads the login-shell environment on POSIX so daemons get terminal API keys/proxies
- *   - Spawns `<harness> --mode rpc -e <remote-pi/dist/index.js>` (`pi` or `omp`) per entry
+ *   - Spawns `omp --mode rpc -e <remote-omp/dist/index.js>` per entry
  *   - Respawns any daemon exit it did not request (crash, kill, or clean exit)
  *
- * Exits cleanly on SIGTERM/SIGINT (used by `remote-pi uninstall` / service stop).
+ * Exits cleanly on SIGTERM/SIGINT (used by `remote-omp uninstall` / service stop).
  */
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -26,19 +28,27 @@ import {
   Supervisor,
   SupervisorAlreadyRunningError,
 } from "../daemon/supervisor.js";
+import {
+  DataDirMigrationError,
+  describeDataDirMigration,
+  ensureDataDirMigrated,
+} from "../legacy_migration.js";
 
-const HELP_TEXT = `pi-supervisord — Remote Pi daemon supervisor
+/** The migration module tags its messages `[remote-omp]`; here they carry the supervisor's own prefix. */
+const MODULE_TAG = /^\[remote-omp\]\s*/;
 
-Usage: pi-supervisord
+const HELP_TEXT = `remote-omp-supervisord — Remote OMP daemon supervisor
 
-Runs the long-lived supervisor: reads ~/.pi/remote/daemons.json, spawns one
-<harness> --mode rpc child (pi or omp) per entry, and listens on the control
-socket (~/.pi/remote/supervisor.sock on POSIX) for requests from \`remote-pi\`.
+Usage: remote-omp-supervisord
+
+Runs the long-lived supervisor: reads ~/.omp/remote/daemons.json, spawns one
+omp --mode rpc child per entry, and listens on the control socket
+(~/.omp/remote/supervisor.sock on POSIX) for requests from \`remote-omp\`.
 
 This binary takes NO arguments — it is normally launched by systemd/launchd
-(via \`remote-pi install\`), not by hand. Manage the fleet with:
-  remote-pi daemon start | stop | restart | status
-  remote-pi daemons
+(via \`remote-omp install\`), not by hand. Manage the fleet with:
+  remote-omp daemon start | stop | restart | status
+  remote-omp daemons
 
 Options:
   -h, --help      Show this help and exit
@@ -54,19 +64,19 @@ async function resolveChildEnvFromLoginShell(): Promise<NodeJS.ProcessEnv | unde
       shell = userInfo().shell?.trim() || undefined;
     } catch (err) {
       process.stderr.write(
-        `[pi-supervisord] could not determine login shell via userInfo: ${String(err)}\n`,
+        `[remote-omp-supervisord] could not determine login shell via userInfo: ${String(err)}\n`,
       );
     }
   }
   if (!shell) {
-    process.stderr.write("[pi-supervisord] SHELL is unset; using the service environment\n");
+    process.stderr.write("[remote-omp-supervisord] SHELL is unset; using the service environment\n");
     return undefined;
   }
 
   const res = await loginShellEnv({ shell });
   if (!res.ok) {
     process.stderr.write(
-      `[pi-supervisord] could not read env from ${shell} (${res.reason})` +
+      `[remote-omp-supervisord] could not read env from ${shell} (${res.reason})` +
         `${res.stderr ? `: ${res.stderr}` : ""}; using the service environment\n`,
     );
     return undefined;
@@ -74,14 +84,14 @@ async function resolveChildEnvFromLoginShell(): Promise<NodeJS.ProcessEnv | unde
 
   const filtered = filterLoginShellEnv(res.env, process.env);
   process.stderr.write(
-    `[pi-supervisord] loaded ${Object.keys(filtered).length} env vars from ${shell}\n`,
+    `[remote-omp-supervisord] loaded ${Object.keys(filtered).length} env vars from ${shell}\n`,
   );
   return { ...process.env, ...filtered };
 }
 
 async function main(): Promise<void> {
   // Guard: any stray argument used to fall through and start a FULL
-  // supervisor (a `pi-supervisord --help` once ran for days). Handle the
+  // supervisor (a `remote-omp-supervisord --help` once ran for days). Handle the
   // conventional flags explicitly and reject unknown args instead of
   // silently spawning the daemon fleet.
   const args = process.argv.slice(2);
@@ -90,16 +100,23 @@ async function main(): Promise<void> {
     return;
   }
   if (args.includes("-v") || args.includes("--version")) {
-    process.stdout.write("pi-supervisord (remote-pi)\n");
+    process.stdout.write("remote-omp-supervisord (remote-omp)\n");
     return;
   }
   if (args.length > 0) {
     process.stderr.write(
-      `pi-supervisord: unexpected argument(s): ${args.join(" ")}\n` +
-        "This binary takes no arguments. Run `pi-supervisord --help`.\n",
+      `remote-omp-supervisord: unexpected argument(s): ${args.join(" ")}\n` +
+        "This binary takes no arguments. Run `remote-omp-supervisord --help`.\n",
     );
     process.exit(2);
   }
+
+  // Carry the data directory over from the pre-rename location (a COPY: sessions of the old
+  // version may still run from it) before anything reads the registry or binds the socket.
+  // `Supervisor` itself never migrates. A failure throws `DataDirMigrationError`, handled
+  // below: starting on an empty directory would mint a new identity and orphan every paired phone.
+  const copied = describeDataDirMigration(await ensureDataDirMigrated());
+  if (copied) process.stderr.write(`[remote-omp-supervisord] ${copied.replace(MODULE_TAG, "")}\n`);
 
   // The supervisor needs to point each spawned daemon at the extension
   // entry it's bundled with. We're at `dist/bin/supervisord.js` after
@@ -117,20 +134,20 @@ async function main(): Promise<void> {
   });
   await supervisor.start();
   process.stderr.write(
-    `[pi-supervisord] up — UDS: ${getSupervisorSockPath()}, extension: ${extensionPath}\n`,
+    `[remote-omp-supervisord] up — UDS: ${getSupervisorSockPath()}, extension: ${extensionPath}\n`,
   );
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    process.stderr.write(`[pi-supervisord] received ${signal}, shutting down\n`);
+    process.stderr.write(`[remote-omp-supervisord] received ${signal}, shutting down\n`);
     try {
       await supervisor.stop();
       process.exit(0);
     } catch (err) {
       process.stderr.write(
-        `[pi-supervisord] shutdown error on ${signal}: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`,
+        `[remote-omp-supervisord] shutdown error on ${signal}: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`,
       );
       process.exit(1);
     }
@@ -144,11 +161,17 @@ main().catch((err) => {
   // exit 0 so the unit isn't marked `failed`, while `Restart=always` / `KeepAlive`
   // retries cleanly after `RestartSec=5s` until the other instance exits.
   if (err instanceof SupervisorAlreadyRunningError) {
-    process.stderr.write(`[pi-supervisord] ${err.message}\n`);
+    process.stderr.write(`[remote-omp-supervisord] ${err.message}\n`);
     process.exit(0);
   }
+  // The data directory could not be carried over: exit non-zero (the service manager retries)
+  // instead of starting on an empty one while the old directory holds the paired identity.
+  if (err instanceof DataDirMigrationError) {
+    process.stderr.write(`[remote-omp-supervisord] ${err.message.replace(MODULE_TAG, "")}\n`);
+    process.exit(1);
+  }
   process.stderr.write(
-    `[pi-supervisord] fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`,
+    `[remote-omp-supervisord] fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`,
   );
   process.exit(1);
 });

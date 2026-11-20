@@ -8,12 +8,11 @@
  * write, and its file watcher carries a settings save to every other running
  * omp process.
  *
- * How the live instance is reached: omp's extension loader maps imports of
- * `@oh-my-pi/pi-coding-agent/*` (and the `@earendil-works/…` / `@mariozechner/…`
- * aliases) to the modules bundled into the running omp binary, so
- * `config/settings` → `settings` is the same object the TUI's `/model` view
- * uses. Proven live on omp 18.12.2 (plan 66 step 1).
- * Under upstream pi the imports fail and `loadOmpRoleApi()` returns null.
+ * How the live instance is reached: through `ExtensionAPI.pi.AgentRegistry`
+ * (the live main session's `settings`), see `loadOmpRoleApi()`. Importing omp's
+ * `config/settings` from an extension yields an uninitialized second copy of the
+ * bundled module. Under upstream pi there is no `ExtensionAPI.pi` and
+ * `loadOmpRoleApi()` returns null.
  *
  * Handlers take the API as a parameter so tests pass a fake.
  */
@@ -26,6 +25,7 @@ import type {
   WireModelRole,
 } from "../protocol/types.js";
 import { wireFromModel, type ActionReplySender, type SdkModelLike } from "./handlers.js";
+import { ompDefaultsSession } from "./omp_defaults.js";
 
 /** The slice of omp's `Settings` this feature calls. */
 export interface OmpRoleSettings {
@@ -89,57 +89,102 @@ function asThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
   return THINKING_LEVELS.includes(value as ThinkingLevel) ? (value as ThinkingLevel) : undefined;
 }
 
-let _loaded: Promise<OmpRoleApi | null> | null = null;
+/** omp's pure role helpers, as imported from its package (see {@link loadOmpRoleApi}). */
+export type OmpRoleHelpers = Omit<OmpRoleApi, "settings">;
 
-/**
- * Imports omp's live settings + role helpers. Resolves null outside omp (or if
- * an omp update moved them). Cached after the first success.
- */
-export async function loadOmpRoleApi(): Promise<OmpRoleApi | null> {
-  if (_loaded) return _loaded;
-  const attempt = (async (): Promise<OmpRoleApi | null> => {
-    try {
-      const [s, r, resolver] = await Promise.all([
-        import("@oh-my-pi/pi-coding-agent/config/settings"),
-        import("@oh-my-pi/pi-coding-agent/config/model-roles"),
-        import("@oh-my-pi/pi-coding-agent/config/model-resolver").catch(() => null),
-      ]);
-      const settings = s.settings as Partial<OmpRoleSettings> | undefined;
-      // A separate copy of omp's package (not the host's bundled module) would
-      // load uninitialized; only the live singleton has run `Settings.init()`.
-      if (typeof s.isSettingsInitialized !== "function" || s.isSettingsInitialized() !== true) {
-        return null;
-      }
-      if (
-        !settings ||
-        typeof settings.getModelRoles !== "function" ||
-        typeof settings.getModelRole !== "function" ||
-        typeof settings.setModelRole !== "function" ||
-        typeof settings.getModelRoleSource !== "function" ||
-        typeof r.getKnownRoleIds !== "function" ||
-        typeof r.getRoleInfo !== "function" ||
-        typeof r.roleCandidatePool !== "function"
-      ) {
-        return null;
-      }
-      const api: OmpRoleApi = {
-        settings: settings as OmpRoleSettings,
-        getKnownRoleIds: r.getKnownRoleIds as OmpRoleApi["getKnownRoleIds"],
-        getRoleInfo: r.getRoleInfo as OmpRoleApi["getRoleInfo"],
-        roleCandidatePool: r.roleCandidatePool as OmpRoleApi["roleCandidatePool"],
-      };
-      if (typeof resolver?.resolveModelRoleValue === "function") {
-        api.resolveModelRoleValue =
-          resolver.resolveModelRoleValue as NonNullable<OmpRoleApi["resolveModelRoleValue"]>;
-      }
-      return api;
-    } catch {
+type RoleHelpersSource = OmpRoleHelpers | (() => Promise<OmpRoleHelpers | null>);
+
+async function importRoleHelpers(): Promise<OmpRoleHelpers | null> {
+  try {
+    const [r, resolver] = await Promise.all([
+      import("@oh-my-pi/pi-coding-agent/config/model-roles"),
+      import("@oh-my-pi/pi-coding-agent/config/model-resolver").catch(() => null),
+    ]);
+    if (
+      typeof r.getKnownRoleIds !== "function" ||
+      typeof r.getRoleInfo !== "function" ||
+      typeof r.roleCandidatePool !== "function"
+    ) {
       return null;
     }
-  })();
-  const api = await attempt;
-  if (api) _loaded = attempt;
-  return api;
+    const helpers: OmpRoleHelpers = {
+      getKnownRoleIds: r.getKnownRoleIds as OmpRoleApi["getKnownRoleIds"],
+      getRoleInfo: r.getRoleInfo as OmpRoleApi["getRoleInfo"],
+      roleCandidatePool: r.roleCandidatePool as OmpRoleApi["roleCandidatePool"],
+    };
+    if (typeof resolver?.resolveModelRoleValue === "function") {
+      helpers.resolveModelRoleValue =
+        resolver.resolveModelRoleValue as NonNullable<OmpRoleApi["resolveModelRoleValue"]>;
+    }
+    return helpers;
+  } catch {
+    return null;
+  }
+}
+
+let _helpersOverride: RoleHelpersSource | null = null;
+let _helpers: Promise<OmpRoleHelpers | null> | null = null;
+
+/** Test seam: replaces the import of omp's helper modules. `null` restores it. */
+export function _setOmpRoleHelpersForTest(source: RoleHelpersSource | null): void {
+  _helpersOverride = source;
+}
+
+async function loadRoleHelpers(): Promise<OmpRoleHelpers | null> {
+  if (_helpersOverride) return typeof _helpersOverride === "function" ? _helpersOverride() : _helpersOverride;
+  if (!_helpers) _helpers = importRoleHelpers();
+  const helpers = await _helpers;
+  if (!helpers) _helpers = null; // retry on the next call
+  return helpers;
+}
+
+/**
+ * omp's helpers read settings through `Setting` handles, which memoize into
+ * `settings.valueCache[slot]`. Slots are numbered per module copy, so a copy
+ * imported by this extension must not share the host's cache. This view reads
+ * and writes the host's real settings (methods are bound to it, `revision`
+ * follows it) but keeps its own cache.
+ */
+const _isolatedViews = new WeakMap<object, OmpRoleSettings>();
+function isolatedSettings(host: object): OmpRoleSettings {
+  let view = _isolatedViews.get(host);
+  if (!view) {
+    const cache: unknown[] = [];
+    view = new Proxy(host, {
+      get(target, prop) {
+        if (prop === "valueCache") return cache;
+        const value = Reflect.get(target, prop, target) as unknown;
+        return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    }) as unknown as OmpRoleSettings;
+    _isolatedViews.set(host, view);
+  }
+  return view;
+}
+
+/**
+ * omp's live settings + role helpers. `api` is the `ExtensionAPI` the extension
+ * was given: omp hands every extension its SDK (`api.pi`), whose registry holds
+ * the live main session, and that session's `settings` is the initialized
+ * singleton the TUI's `/model` view uses. Importing `config/settings` instead is
+ * not an option — omp ships as one bundle, so the import is a second,
+ * never-initialized copy (proven live on omp 19.0.1). Resolves null under
+ * upstream pi or when omp moved something.
+ */
+export async function loadOmpRoleApi(api: unknown): Promise<OmpRoleApi | null> {
+  const host = ompDefaultsSession(api)?.settings as Partial<OmpRoleSettings> | undefined;
+  if (
+    !host ||
+    typeof host.getModelRoles !== "function" ||
+    typeof host.getModelRole !== "function" ||
+    typeof host.setModelRole !== "function" ||
+    typeof host.getModelRoleSource !== "function"
+  ) {
+    return null;
+  }
+  const helpers = await loadRoleHelpers();
+  if (!helpers) return null;
+  return { ...helpers, settings: isolatedSettings(host) };
 }
 
 /** Visible role ids, in omp's selector order. */
@@ -247,7 +292,7 @@ export function buildModelRoles(
     const value = api.settings.getModelRole(role);
     if (value) {
       const { model, thinking } = resolveRoleValue(api, value, models);
-      if (model) entry.model = wireFromModel(model, true);
+      if (model) entry.model = wireFromModel(model);
       if (thinking) entry.thinking = thinking;
     }
     // Key order on the wire: role, name, description, model, thinking, source.
@@ -346,7 +391,7 @@ export async function handleModelRoleSet(
         return fail(`model "${msg.provider}/${msg.model_id}" is not available for role "${role}"`);
       }
       if (msg.thinking !== undefined) {
-        const levels = wireFromModel(model, true).thinking_levels ?? [];
+        const levels = wireFromModel(model).thinking_levels ?? [];
         if (!levels.includes(msg.thinking)) {
           return fail(`thinking "${msg.thinking}" is not supported by ${model.provider}/${model.id}`);
         }

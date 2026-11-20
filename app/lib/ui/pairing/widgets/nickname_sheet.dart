@@ -6,12 +6,12 @@ import 'package:flutter/material.dart';
 /// Asks the user for a friendly label for the just-paired PC. The
 /// caller seeds [defaultName] with `pair_ok.hostname` when present
 /// (e.g. "Mac do Jacob"), or the session name as a softer fallback,
-/// or `null` so the field hints with the generic placeholder "Pi".
+/// or `null` so the field hints with the generic placeholder "PC".
 ///
 /// Returns the trimmed nickname string the user wants persisted:
 /// - "Save" with non-empty input → returns the input.
 /// - "Save" with empty input    → behaves as Skip (returns the default).
-/// - "Skip"                     → returns [defaultName] ?? "Pi".
+/// - "Skip"                     → returns [defaultName] ?? "PC".
 /// - Drag-down dismiss          → returns null (caller treats as Skip too).
 ///
 /// Caller is responsible for calling `PeerRecord.copyWith(nickname:)`
@@ -53,7 +53,7 @@ class _NicknameSheet extends StatefulWidget {
 
 class _NicknameSheetState extends State<_NicknameSheet> {
   late final TextEditingController _controller;
-  static const _fallback = 'Pi';
+  static const _fallback = 'PC';
 
   String get _placeholder {
     final d = widget.defaultName?.trim();

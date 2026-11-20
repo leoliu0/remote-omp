@@ -54,6 +54,9 @@ class _FakeChatViewModel extends ChangeNotifier implements ChatViewModel {
   bool get isWorking => false;
 
   @override
+  String? get retryMessageId => null;
+
+  @override
   PeerRecord? get activePeer => _testPeer;
 
   @override
@@ -61,6 +64,8 @@ class _FakeChatViewModel extends ChangeNotifier implements ChatViewModel {
 
   @override
   List<WireSkill> get dynamicSkills => const [];
+  @override
+  List<WireCommand>? get hostCommands => null;
   @override
   List<String>? get promptHistory => null;
 

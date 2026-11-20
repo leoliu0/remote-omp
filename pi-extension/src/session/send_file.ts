@@ -33,7 +33,7 @@
  * `peer_online` within `offlineGraceMs` (60 s) resumes with the same probe,
  * otherwise the transfer fails `phone_offline` with the share received.
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "../omp-api.js";
 import { Type } from "typebox";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -81,9 +81,9 @@ export class SendFileError extends Error {
   }
 }
 
-/** Per-file cap in bytes: `REMOTE_PI_MAX_SEND_MIB` (positive number), else 256 MiB. */
+/** Per-file cap in bytes: `REMOTE_OMP_MAX_SEND_MIB` (positive number), else 256 MiB. */
 export function maxSendBytes(env: Record<string, string | undefined> = process.env): number {
-  const raw = env["REMOTE_PI_MAX_SEND_MIB"];
+  const raw = env["REMOTE_OMP_MAX_SEND_MIB"];
   const mib = raw === undefined ? NaN : Number(raw);
   const effective = Number.isFinite(mib) && mib > 0 ? mib : DEFAULT_MAX_SEND_MIB;
   return Math.floor(effective * 1024 * 1024);
@@ -138,7 +138,7 @@ export interface PhoneRegistry {
   presence?(deviceId: string): PhonePresence;
 }
 
-const OFFLINE_MESSAGE = "Remote Pi is not connected on the phone. Ask the user to open the app, then try again.";
+const OFFLINE_MESSAGE = "Remote OMP is not connected on the phone. Ask the user to open the app, then try again.";
 
 /**
  * The phone that sent the latest user input when it is online; otherwise the
@@ -302,7 +302,7 @@ class Transfer {
         this.cancelAndFail(new SendFileError(
           "phone_unreachable",
           `the phone did not answer the file offer within ${Math.round(this.owner.offerAckMs / 1000)} s; ` +
-            "nothing was received. Ask the user to open Remote Pi on the phone, then try again.",
+            "nothing was received. Ask the user to open Remote OMP on the phone, then try again.",
         ));
       }, this.owner.offerAckMs);
     } else {
@@ -372,7 +372,7 @@ class Transfer {
       this.offlineTimer = null;
       this.cancelAndFail(new SendFileError(
         "phone_offline",
-        `Remote Pi went offline on the phone at ${this.percent()}% received and did not come back within ` +
+        `Remote OMP went offline on the phone at ${this.percent()}% received and did not come back within ` +
           `${Math.round(this.owner.offlineGraceMs / 1000)} s. Ask the user to open the app, then send the file again.`,
       ));
     }, this.owner.offlineGraceMs);
@@ -623,7 +623,7 @@ export class FileSender {
     if (st.size > cap) {
       throw new SendFileError(
         "too_large",
-        `${fullPath} is ${st.size} bytes; the limit is ${cap} bytes (REMOTE_PI_MAX_SEND_MIB)`,
+        `${fullPath} is ${st.size} bytes; the limit is ${cap} bytes (REMOTE_OMP_MAX_SEND_MIB)`,
       );
     }
 
@@ -761,13 +761,13 @@ export function registerSendToPhoneTool(
     name: "send_to_phone",
     label: "Send to phone",
     description:
-      "Send a finished file from this PC to the user's paired phone (Remote Pi app), e.g. a built APK, " +
+      "Send a finished file from this PC to the user's paired phone (Remote OMP app), e.g. a built APK, " +
       "a PDF, a zip or a log the user should open there. The file appears as a card in the phone chat; " +
       "nothing opens or installs without the user's tap. Use it only when the user asks for a file on " +
       "their phone. To show an image, `read` it instead: it displays in the chat on the phone and web. " +
       "Returns when the phone confirms receipt. " +
       `Limit ${DEFAULT_MAX_SEND_MIB} MiB per file by default. Fails within about 20 s with phone_offline when ` +
-      "Remote Pi is not connected on the phone, and with phone_unreachable or stalled when the phone stops " +
+      "Remote OMP is not connected on the phone, and with phone_unreachable or stalled when the phone stops " +
       "answering; then tell the user instead of retrying in a loop.",
     parameters: SendToPhoneParams,
     execute: async (_toolCallId, params, signal, onUpdate, ctx) => {

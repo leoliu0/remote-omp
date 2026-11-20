@@ -1,9 +1,9 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { remoteOmpHome } from "../paths.js";
 
 /**
- * Append-only audit trail for cron fires at `~/.pi/remote/cron.jsonl`.
+ * Append-only audit trail for cron fires at `~/.omp/remote/cron.jsonl`.
  *
  * One JSON line per scheduler decision — **every fire AND every skip** — so an
  * operator can see exactly what ran and what didn't (the agent's output goes
@@ -36,8 +36,7 @@ export interface CronLogEntry {
 const PREVIEW_LEN = 80;
 
 function logPath(): string {
-  const root = process.env["REMOTE_PI_HOME"] || homedir();
-  return join(root, ".pi", "remote", "cron.jsonl");
+  return join(remoteOmpHome(), "cron.jsonl");
 }
 
 /** Test/diag-only: the on-disk path. */

@@ -8,9 +8,10 @@ Numeração `00-` é proposital: este arquivo carrega antes dos planos numerados
 
 ## Origin / posicionamento
 
-- **Alvo do produto**: ataque o [Pi coding agent](https://github.com/earendil-works/pi). Não Claude Code (já tem Remote Control oficial), não OpenCode (já tem 5+ apps mobile community), não Goose/Aider (mercado pequeno).
-  - **Razão**: Pi é o concorrente open-source mais relevante do Claude Code, tem RPC + SDK públicos, e **nenhum app mobile dedicado existe** (só `TelePi` via Telegram).
-- **Não copiar MuxAgent**: ele já cobre multi-harness comercial. Brigamos pelo nicho **Pi-only, open source, qualidade**.
+- ~~**Alvo do produto**: ataque o [Pi coding agent](https://github.com/earendil-works/pi). Não Claude Code (já tem Remote Control oficial), não OpenCode (já tem 5+ apps mobile community), não Goose/Aider (mercado pequeno).~~
+  - ~~**Razão**: Pi é o concorrente open-source mais relevante do Claude Code, tem RPC + SDK públicos, e **nenhum app mobile dedicado existe** (só `TelePi` via Telegram).~~
+- ~~**Não copiar MuxAgent**: ele já cobre multi-harness comercial. Brigamos pelo nicho **Pi-only, open source, qualidade**.~~
+- **Revised 2026-11-20 (plan 69, user decision): the product is Remote OMP, omp only.** Target harness is [oh-my-pi (omp)](https://github.com/can1357/oh-my-pi); every feature must work on omp (TUI and `--mode rpc`). Upstream Pi support is dropped (user chose "omp only, drop Pi"): Pi-specific code paths, docs and the `pi` harness option go.
 
 ## Arquitetura
 
@@ -164,8 +165,15 @@ Estas decisões foram **propositalmente adiadas**. Quando alguém quiser fechar,
 ## Always-on door (decided 2026-11-19 — plan 67)
 
 - **A daemon stays optional, but a registered one is permanent.** The user asked for control "all the time", including after closing every session. The plan-26 supervisor is the door; no second daemon was added (plan 63 stands). Only local commands end a supervised daemon (`remote-pi daemon stop|remove`, `uninstall`); the app's Quit session restarts it as a fresh session.
-- **Daemons run the user's harness.** Each registry entry records `pi` or `omp`.
+- ~~**Daemons run the user's harness.** Each registry entry records `pi` or `omp`.~~ Superseded 2026-11-20 (plan 69): omp only; daemons run omp.
 - **This revises** the "Sem daemon no MVP" row only for users who opt in with `remote-pi install`; with no daemon registered, behaviour is unchanged.
+
+## Remote OMP rename (decided 2026-11-20 — plan 69)
+
+- **Full rename, user-chosen ("Everything, incl. Android app id + GitHub repo").** Names in plan/69's table: GitHub repo, subproject dir, npm package, CLI, supervisor, service units, slash command, env vars, data dir, keyring service, per-folder config, Android application id and label.
+- **Unchanged on purpose:** the relay wire protocol and message names (other PCs and older apps keep interoperating), Cockpit's application id, the local checkout path, and historical records (plans 01–68, past CHANGELOG entries, `review/TESTING.md` rows, screenshots).
+- **Migration, not shims:** data moves once from `~/.pi/remote` to `~/.omp/remote`, the keyring identity is copied to the new service, per-folder config is read from the old path once and rewritten. Old `REMOTE_PI_*` env names are not read; the user's shell rc is updated instead.
+- **Cost accepted:** the phone installs the new app id next to the old one and pairs again.
 
 ## Como atualizar este arquivo
 

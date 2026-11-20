@@ -30,7 +30,7 @@ describe("updateFooter — footer slots (horizontal single-line rendering)", () 
       relayOn: false,
     };
     updateFooter(ctx, state);
-    const statusSlot = ctx.statusCalls.find((c) => c.key === "remote-pi");
+    const statusSlot = ctx.statusCalls.find((c) => c.key === "remote-omp");
     expect(statusSlot?.value).toBe("📡 local (3)");
   });
 
@@ -43,14 +43,14 @@ describe("updateFooter — footer slots (horizontal single-line rendering)", () 
       hasPairings: true,
     };
     updateFooter(ctx, state);
-    const statusSlot = ctx.statusCalls.find((c) => c.key === "remote-pi");
+    const statusSlot = ctx.statusCalls.find((c) => c.key === "remote-omp");
     expect(statusSlot?.value).toBe("🟢 relay  📡 local (1)");
   });
 
   test("status slot cleared when nothing active", () => {
     const ctx = makeMockCtx();
     updateFooter(ctx, { relayOn: false });
-    const statusSlot = ctx.statusCalls.find((c) => c.key === "remote-pi");
+    const statusSlot = ctx.statusCalls.find((c) => c.key === "remote-omp");
     expect(statusSlot?.value).toBeUndefined();
   });
 });
@@ -79,7 +79,7 @@ describe("updateFooter — terminal title (post-2026-05-24 two-part format)", ()
   });
 
   test("broker-assigned name with #N suffix flows through verbatim", () => {
-    // Two Pis in the same cwd: the second gets "backend#2" from the broker.
+    // Two omp processes in the same cwd: the second gets "backend#2" from the broker.
     const ctx = makeMockCtx();
     updateFooter(ctx, {
       session: "local",
@@ -90,14 +90,14 @@ describe("updateFooter — terminal title (post-2026-05-24 two-part format)", ()
     expect(ctx.titleCalls.at(-1)).toBe("backend#2 · On");
   });
 
-  test("title falls back to 'Pi' when no agentName configured", () => {
+  test("title falls back to 'omp' when no agentName configured", () => {
     const ctx = makeMockCtx();
     updateFooter(ctx, {
       session: "local",
       peerCount: 1,
       relayOn: false,
     });
-    expect(ctx.titleCalls.at(-1)).toBe("Pi · Off");
+    expect(ctx.titleCalls.at(-1)).toBe("omp · Off");
   });
 
   test("title never includes the session name (pre-2026-05-24 had `· local ·`)", () => {

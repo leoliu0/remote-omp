@@ -22,11 +22,20 @@ const SERVER_TYPES = new Set<ServerMessage["type"]>([
   "file_chunk",
   "file_end",
   "file_cancel",
+  // Plan/68 — replies to a phone → PC upload.
+  "upload_ack",
+  "upload_done",
+  "upload_error",
   // Plan/66 — omp model roles (reply + broadcast).
   "model_roles",
   // Mobile Git Diff viewer.
   "git_status_result",
   "git_diff_result",
+  // Mobile composer `@` file autocomplete.
+  "files_list",
+  // Plan/68 — new session from the phone.
+  "dirs_list",
+  "spawn_result",
 ]);
 
 /** Frames the app (or web client) sends to the extension. */
@@ -52,12 +61,24 @@ const CLIENT_TYPES = new Set<ClientMessage["type"]>([
   "file_done",
   "file_error",
   "file_cancel",
+  // Plan/68 — upload a file from the phone to the PC.
+  "upload_start",
+  "upload_chunk",
+  "upload_end",
+  "upload_cancel",
   // Plan/66 — omp model roles.
   "list_model_roles",
   "model_role_set",
   // Mobile Git Diff viewer.
   "git_status",
   "git_diff",
+  // Mobile composer `@` file autocomplete.
+  "list_files",
+  // Plan/68 — new session from the phone.
+  "list_dirs",
+  "spawn_session",
+  // Plan/68 — re-run the failed turn (omp `/retry`).
+  "retry_turn",
 ]);
 
 export class DecodeError extends Error {

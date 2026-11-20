@@ -48,7 +48,7 @@ class PairingError implements Exception {
 /// Wraps the persisted [PeerRecord] plus side hints the post-pair UI
 /// (nickname modal) needs but that don't belong on the PeerRecord
 /// itself. Plan/27 Wave A added [hostnameHint] so the modal can
-/// pre-fill "Mac do Jacob" instead of the generic "Pi"; legacy Pis
+/// pre-fill "Mac do Jacob" instead of the generic "PC"; legacy extensions
 /// that don't emit `hostname` leave it null and the modal falls back
 /// to `peer.sessionName`.
 class PairingResult {
@@ -84,7 +84,7 @@ Future<PairingResult> performPairing({
       code: 'relay_mismatch',
       message: 'QR points to "${qr.relayUrl}", '
           'but the app is configured for "$currentRelayUrl". '
-          'Update the relay in settings or ask the Pi to generate '
+          'Update the relay in settings or ask the PC to generate '
           'a new QR.',
     );
   }
@@ -143,7 +143,7 @@ Future<PairingResult> performPairing({
       relayUrl: qr.relayUrl ?? currentRelayUrl,
       pairedAt: DateTime.now().toUtc().toIso8601String(),
       roomId: piRoomId,
-      // Plan/27 Wave A — null when pi-extension hasn't been upgraded
+      // Plan/27 Wave A — null when omp-extension hasn't been upgraded
       // yet to publish `harness` in pair_ok.
       harness: pairOk.harness,
     );

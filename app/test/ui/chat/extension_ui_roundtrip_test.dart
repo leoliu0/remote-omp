@@ -1,5 +1,5 @@
 // Plan/57 — ask prompts end to end on the sheet: real `extension_ui_request`
-// frames (the exact JSON pi-extension sends — session/ask_tool.ts
+// frames (the exact JSON omp-extension sends — session/ask_tool.ts
 // createAskRequestWire, extension_ui_bridge.ts requestForFlow / plan review,
 // and the SDK select/confirm/input/editor methods) are decoded with the app's
 // wire parser, driven through ExtensionUiSheet, and the resulting

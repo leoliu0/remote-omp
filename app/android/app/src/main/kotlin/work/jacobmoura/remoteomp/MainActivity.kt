@@ -1,4 +1,4 @@
-package work.jacobmoura.remotepi
+package work.jacobmoura.remoteomp
 
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
@@ -89,12 +89,12 @@ class MainActivity : FlutterActivity() {
             animating.isAccessible = true
             if (animating.getBoolean(callback)) {
                 animating.setBoolean(callback, false)
-                Log.i("RemotePi", "cleared a stuck IME animation")
+                Log.i("RemoteOmp", "cleared a stuck IME animation")
             }
         } catch (e: ReflectiveOperationException) {
-            Log.w("RemotePi", "could not clear the IME animation flag", e)
+            Log.w("RemoteOmp", "could not clear the IME animation flag", e)
         } catch (e: SecurityException) {
-            Log.w("RemotePi", "could not clear the IME animation flag", e)
+            Log.w("RemoteOmp", "could not clear the IME animation flag", e)
         }
     }
 

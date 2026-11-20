@@ -1,30 +1,34 @@
 import { writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile, chmod, unlink } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { generateEd25519Keypair, type Ed25519Keypair } from "./crypto.js";
 import { canonicalizeEd25519PublicKey } from "../mesh/encoding.js";
+import { remoteOmpHome } from "../paths.js";
 
 /**
- * Pi-secret storage (plan/27 Wave E1).
+ * PC identity storage (plan/27 Wave E1; keyring service renamed by plan/69).
  *
- * The Ed25519 long-term identity of this Pi lives in the platform keyring
+ * The Ed25519 long-term identity of this PC lives in the platform keyring
  * via `@napi-rs/keyring` (Keychain on macOS, Credential Manager on Windows —
  * DPAPI-backed). Off macOS/Windows the durable store is a file at
- * `~/.pi/remote/identity.json` (`0o600`, parent dir `0o700`): either the
+ * `~/.omp/remote/identity.json` (`0o600`, parent dir `0o700`): either the
  * keyring is unavailable (headless Linux, Docker, VPS) or it is kernel
  * keyutils, which is wiped on reboot, so any keyring identity is pinned there.
  *
- * **Migration**: previous builds used `keytar` against service
- * `dev.remotepi.mac`. This module reads from the old service if the new
- * service is empty, copies the entry to the new service `dev.remotepi.pi`,
- * and deletes the old one. Both keytar and `@napi-rs/keyring` address the
- * same OS-level credential store on every supported platform, so the read
- * succeeds without keeping the deprecated `keytar` dependency.
+ * **Migration** (plan/69): the identity used to live under the keyring service
+ * `dev.remotepi.pi` (Remote Pi) and, before that, `dev.remotepi.mac` (the
+ * `keytar` era, pre-2026-05-25). When the current service `dev.remoteomp.omp`
+ * has no entry this module reads those legacy services in that order and
+ * copies the first hit to the current service. The legacy entries are KEPT: a
+ * rename must never delete the user's secrets, and an older Remote Pi install
+ * on the same machine keeps working. Both keytar and `@napi-rs/keyring`
+ * address the same OS-level credential store on every supported platform, so
+ * the read succeeds without keeping the deprecated `keytar` dependency.
  */
 
-const NEW_SERVICE = "dev.remotepi.pi";  // platform-neutral
-const OLD_SERVICE = "dev.remotepi.mac"; // legacy keytar service (pre-2026-05-25)
+const NEW_SERVICE = "dev.remoteomp.omp";
+/** Pre-rename keyring services, in priority order. Read-only: never deleted. */
+const LEGACY_SERVICES = ["dev.remotepi.pi", "dev.remotepi.mac"] as const;
 const ACCOUNT = "longterm-ed25519";
 
 /**
@@ -49,7 +53,7 @@ export class KeyringUnavailableError extends Error {
       "Platform keyring is unreadable and no file-backed identity exists. " +
       "Refusing to generate a NEW identity (that would break existing " +
       "pairing). Unlock your keychain / start your secret service and retry. " +
-      "Set REMOTE_PI_ALLOW_FILE_IDENTITY=1 to force a file-backed identity. " +
+      "Set REMOTE_OMP_ALLOW_FILE_IDENTITY=1 to force a file-backed identity. " +
       `Cause: ${String(cause)}`,
     );
     this.name = "KeyringUnavailableError";
@@ -67,7 +71,7 @@ export class PairedIdentityMissingError extends Error {
       "paired device. This usually means this process cannot reach the same " +
       "keyring as the session that paired (e.g. a systemd --user daemon vs. " +
       "your desktop session). Fix the service's keyring access, or pin the " +
-      "identity by copying the paired keypair to ~/.pi/remote/identity.json " +
+      "identity by copying the paired keypair to ~/.omp/remote/identity.json " +
       "(0600), which both contexts read first. " +
       `Cause: ${String(cause)}`,
     );
@@ -75,9 +79,15 @@ export class PairedIdentityMissingError extends Error {
   }
 }
 
-const PI_DIR = join(homedir(), ".pi", "remote");
-const IDENTITY_FILE = join(PI_DIR, "identity.json");
-const PEERS_PATH = join(PI_DIR, "peers.json");
+// The data dir is resolved at call time (`remoteOmpHome()`), never at import
+// time, so `REMOTE_OMP_HOME` can redirect it (tests, sandboxes) and the one-time
+// legacy data-dir migration (`legacy_migration.ts`) can run before anything is read.
+function _identityFilePath(): string {
+  return join(remoteOmpHome(), "identity.json");
+}
+function _peersPath(): string {
+  return join(remoteOmpHome(), "peers.json");
+}
 
 // ── KeyStore abstraction ─────────────────────────────────────────────────────
 
@@ -106,7 +116,7 @@ export interface KeyStoreBackend {
  * a headless / tmux / non-interactive context. A hang never settles, so
  * without this guard the promise never rejects and the retry + file-fallback
  * logic in getOrCreateEd25519Keypair() is unreachable — freezing the entire
- * /remote-pi pair bootstrap. Raising a real error here lets that fallback
+ * /remote-omp pair bootstrap. Raising a real error here lets that fallback
  * chain run as designed.
  */
 const KEYRING_OP_TIMEOUT_MS = 3_000;
@@ -130,12 +140,12 @@ function _withTimeout<T>(
  * A STATIC `import { AsyncEntry } from "@napi-rs/keyring"` is evaluated when
  * the extension module is loaded, so a native binding that cannot be resolved
  * takes the WHOLE extension down at load time ("Failed to load extension …:
- * Cannot find native binding"). That happens on a Bun-compiled `pi`: the
+ * Cannot find native binding"). That happens on a Bun-compiled `omp`: the
  * loader's first branch (`require("./keyring.<triple>.node")`) is fine, but its
  * fallback (`require("@napi-rs/keyring-<triple>")`, a bare package whose `main`
  * IS the .node file) resolves under Node and not under Bun — and the message it
  * prints then blames npm's optional-dependency bug, sending users off to delete
- * node_modules and losing their other pi packages.
+ * node_modules and losing their other omp packages.
  *
  * Loading on first use turns that fatal load error into an ordinary backend
  * failure, which the existing retry + file-identity fallback already handles.
@@ -229,7 +239,7 @@ export function _setKeyStoreBackendForTest(backend: KeyStoreBackend | null): voi
 let _keyringExpectedOverride: boolean | null = null;
 function _keyringExpectedAvailable(): boolean {
   if (_keyringExpectedOverride !== null) return _keyringExpectedOverride;
-  // Binding never loaded (Bun-built pi, issue #113) → there is no keyring on
+  // Binding never loaded (Bun-built omp, issue #113) → there is no keyring on
   // this platform *for this process*, whatever the OS normally offers.
   if (_nativeBindingUnavailable()) return false;
   return process.platform === "darwin" || process.platform === "win32";
@@ -280,7 +290,7 @@ function _deserialize(stored: string): Ed25519Keypair {
 
 async function _readKeypairFromFile(): Promise<Ed25519Keypair | null> {
   try {
-    const raw = await readFile(IDENTITY_FILE, "utf8");
+    const raw = await readFile(_identityFilePath(), "utf8");
     return _deserialize(raw);
   } catch {
     return null;
@@ -288,23 +298,25 @@ async function _readKeypairFromFile(): Promise<Ed25519Keypair | null> {
 }
 
 async function _writeKeypairToFile(kp: Ed25519Keypair): Promise<void> {
-  await mkdir(PI_DIR, { recursive: true, mode: 0o700 });
+  const dir = remoteOmpHome();
+  const file = _identityFilePath();
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   // Best-effort tighten of the dir in case it pre-existed with looser
   // permissions (mkdir's mode is only applied to NEW dirs).
-  try { await chmod(PI_DIR, 0o700); } catch { /* not fatal */ }
-  await writeFile(IDENTITY_FILE, _serialize(kp), { mode: 0o600 });
-  try { await chmod(IDENTITY_FILE, 0o600); } catch { /* not fatal */ }
+  try { await chmod(dir, 0o700); } catch { /* not fatal */ }
+  await writeFile(file, _serialize(kp), { mode: 0o600 });
+  try { await chmod(file, 0o600); } catch { /* not fatal */ }
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Returns the Pi-secret Ed25519 keypair, generating + persisting one on
- * first call. Resolution order:
- *   1. Existing file `~/.pi/remote/identity.json`, if present — it WINS over
+ * Returns this PC's long-term Ed25519 keypair (its relay `Pi-key`), generating
+ * + persisting one on first call. Resolution order:
+ *   1. Existing file `~/.omp/remote/identity.json`, if present — it WINS over
  *      the keyring. A file identity is written by the headless/degraded
  *      fallback (step 4), by pinning a keyring identity on a non-durable
- *      keyring (Linux, steps 2-4), or by an explicit `REMOTE_PI_ALLOW_FILE_IDENTITY`
+ *      keyring (Linux, steps 2-4), or by an explicit `REMOTE_OMP_ALLOW_FILE_IDENTITY`
  *      opt-in, so its mere presence means this machine established its identity
  *      as a file and the mobile device paired against THAT pubkey. If the
  *      platform keyring later becomes readable (D-Bus/libsecret installed, a
@@ -312,31 +324,32 @@ async function _writeKeypairToFile(kp: Ed25519Keypair): Promise<void> {
  *      it first would mask the file identity — returning a DIFFERENT key, or
  *      (when the keyring is empty) minting a fresh one and persisting it —
  *      silently breaking the existing pairing. So when both exist, file wins.
- *   2. New keyring service `dev.remotepi.pi` (read retried — a transiently
+ *   2. New keyring service `dev.remoteomp.omp` (read retried — a transiently
  *      locked Keychain throws; we don't treat that as "no key")
- *   3. Old keyring service `dev.remotepi.mac` (migrate → step 2, delete old)
- *   4. Generate a fresh keypair, BUT only when it's safe to: either both
- *      keyring reads succeeded and returned nothing (genuine first run), or
+ *   3. Legacy keyring services `dev.remotepi.pi`, then `dev.remotepi.mac`
+ *      (first hit is copied to the new service → step 2; the legacy entry is kept)
+ *   4. Generate a fresh keypair, BUT only when it's safe to: either every
+ *      keyring read succeeded and returned nothing (genuine first run), or
  *      the keyring is genuinely unavailable on a platform without a core one
  *      (headless Linux → a file identity is minted here). On macOS/Windows a
  *      persistent read failure with no file identity throws
  *      `KeyringUnavailableError` instead of minting a new key — generating
  *      there silently breaks existing pairing (the "lost pairing after idle"
- *      bug). `REMOTE_PI_ALLOW_FILE_IDENTITY=1` opts back into a file identity
+ *      bug). `REMOTE_OMP_ALLOW_FILE_IDENTITY=1` opts back into a file identity
  *      for headless macOS/Windows hosts.
  *   Off macOS/Windows every keyring-resolved identity (steps 2-4) is also
  *   written to `identity.json`: without a Secret Service the keyring is kernel
  *   keyutils, emptied by every reboot.
  *
- * Idempotent: subsequent calls return the same identity. The migration
- * runs at most once per machine (the old entry is deleted after copy).
+ * Idempotent: subsequent calls return the same identity. The migration copies
+ * at most once per machine (afterwards the new service holds the entry).
  */
 export async function getOrCreateEd25519Keypair(): Promise<Ed25519Keypair> {
   const backend = _getBackend();
 
   // ── Path 0: an existing file-backed identity wins ──────────────────────
-  // `~/.pi/remote/identity.json` is only ever written by the headless/degraded
-  // fallback below (or an operator who set REMOTE_PI_ALLOW_FILE_IDENTITY=1) —
+  // `~/.omp/remote/identity.json` is only ever written by the headless/degraded
+  // fallback below (or an operator who set REMOTE_OMP_ALLOW_FILE_IDENTITY=1) —
   // never on a keyring-backed install. So its presence means THIS machine
   // paired against the file key, and the keyring (readable or not, matching or
   // not) must not be allowed to mask it. Short-circuit before touching the
@@ -358,20 +371,21 @@ export async function getOrCreateEd25519Keypair(): Promise<Ed25519Keypair> {
       const existing = await backend.read(NEW_SERVICE, ACCOUNT);
       if (existing) return _pinIfKeyringVolatile(_deserialize(existing));
 
-      const legacy = await backend.read(OLD_SERVICE, ACCOUNT);
-      if (legacy) {
+      for (const service of LEGACY_SERVICES) {
+        const legacy = await backend.read(service, ACCOUNT);
+        if (!legacy) continue;
         const kp = _deserialize(legacy);
         await backend.write(NEW_SERVICE, ACCOUNT, legacy);
-        await backend.delete(OLD_SERVICE, ACCOUNT);
         // Silent migration: writing the chat surface would be premature
-        // (Pi SDK isn't bound yet at this point in boot) and console
-        // output bleeds outside the TUI. The presence of an entry under
-        // NEW_SERVICE is itself the audit signal — re-running migration
-        // is idempotent and harmless.
+        // (the omp ExtensionAPI isn't bound yet at this point in boot) and
+        // console output bleeds outside the TUI. The legacy entry is KEPT
+        // (a rename never deletes a user's secret): an entry under
+        // NEW_SERVICE is itself the audit signal, and once it exists this
+        // branch is never reached again.
         return _pinIfKeyringVolatile(kp);
       }
 
-      // Both reads SUCCEEDED and returned nothing → genuine first run on a
+      // Every read SUCCEEDED and returned nothing → genuine first run on a
       // working keyring. Generate and save to the new service.
       const fresh = generateEd25519Keypair();
       await backend.write(NEW_SERVICE, ACCOUNT, _serialize(fresh));
@@ -387,7 +401,7 @@ export async function getOrCreateEd25519Keypair(): Promise<Ed25519Keypair> {
 
   // ── Path B: keyring threw on every attempt ─────────────────────────────
   // Path 0 already returned any pre-existing file identity; this defensive
-  // re-check catches a file written concurrently by another Pi process during
+  // re-check catches a file written concurrently by another omp process during
   // the keyring-retry window (still: use it, never regenerate).
   const fromFile = await _readKeypairFromFile();
   if (fromFile) return fromFile;
@@ -403,7 +417,7 @@ export async function getOrCreateEd25519Keypair(): Promise<Ed25519Keypair> {
   //    a week idle, and the new key then masks the real Keychain identity via
   //    the file. So we FAIL LOUD instead, unless the operator explicitly
   //    opts into a file identity.
-  const forceFile = process.env.REMOTE_PI_ALLOW_FILE_IDENTITY === "1";
+  const forceFile = process.env.REMOTE_OMP_ALLOW_FILE_IDENTITY === "1";
   if (_keyringExpectedAvailable() && !forceFile) {
     throw new KeyringUnavailableError(keyringError);
   }
@@ -431,15 +445,15 @@ export async function getOrCreateEd25519Keypair(): Promise<Ed25519Keypair> {
   console.warn(
     _nativeBindingUnavailable()
       // Issue #113: the @napi-rs/keyring native binding could not be loaded at
-      // all (typically a Bun-compiled pi). Name it explicitly — the error the
+      // all (typically a Bun-compiled omp). Name it explicitly — the error the
       // loader prints blames npm's optional-dependency bug and sends people off
-      // to delete node_modules, which takes their other pi packages with it.
-      ? "[remote-pi] @napi-rs/keyring native binding could not be loaded in this " +
-        `runtime; using file-backed identity at ${IDENTITY_FILE} (0600) instead. ` +
-        "This is expected on a Bun-built pi. Paired devices keyed to a previous " +
+      // to delete node_modules, which takes their other omp packages with it.
+      ? "[remote-omp] @napi-rs/keyring native binding could not be loaded in this " +
+        `runtime; using file-backed identity at ${_identityFilePath()} (0600) instead. ` +
+        "This is expected on a Bun-built omp. Paired devices keyed to a previous " +
         `keyring identity must be re-paired. ${String(keyringError)}`
-      : "[remote-pi] keyring unavailable; using file-backed identity at " +
-        `${IDENTITY_FILE}. ${String(keyringError)}`,
+      : "[remote-omp] keyring unavailable; using file-backed identity at " +
+        `${_identityFilePath()}. ${String(keyringError)}`,
   );
   const fresh = generateEd25519Keypair();
   await _writeKeypairToFile(fresh);
@@ -467,7 +481,7 @@ export interface PeerRecord {
 
 export async function listPeers(): Promise<PeerRecord[]> {
   try {
-    const raw = await readFile(PEERS_PATH, "utf8");
+    const raw = await readFile(_peersPath(), "utf8");
     const parsed = JSON.parse(raw) as { peers?: unknown };
     return Array.isArray(parsed.peers) ? parsed.peers as PeerRecord[] : [];
   } catch {
@@ -483,7 +497,7 @@ export async function listPeers(): Promise<PeerRecord[]> {
 async function _readPeerContainerStrict(): Promise<unknown[]> {
   let raw: string;
   try {
-    raw = await readFile(PEERS_PATH, "utf8");
+    raw = await readFile(_peersPath(), "utf8");
   } catch (error) {
     if (
       typeof error === "object" &&
@@ -570,8 +584,8 @@ export function addPeer(record: PeerRecord): Promise<void> {
     } else {
       peers.push(record);
     }
-    await mkdir(dirname(PEERS_PATH), { recursive: true });
-    await writeFile(PEERS_PATH, JSON.stringify({ peers }, null, 2));
+    await mkdir(dirname(_peersPath()), { recursive: true });
+    await writeFile(_peersPath(), JSON.stringify({ peers }, null, 2));
     // A successful re-pair is a new storage provenance event even when the
     // record bytes happen to be identical.
     _invalidateOwnerSlot(record.remote_epk);
@@ -582,7 +596,7 @@ export function addPeer(record: PeerRecord): Promise<void> {
  * Returns the set of distinct `remote_epk` values in peers.json.
  *
  * In the current pairing model (plan/23 + plan/24), each `remote_epk` is the
- * Owner's Ed25519 pubkey — and we treat each as a distinct Owner the Pi has
+ * Owner's Ed25519 pubkey — and we treat each as a distinct Owner the PC has
  * been paired with. Used by the mesh self-revoke poller (plan/24 Wave 3) to
  * know which Owners' mesh blobs to fetch.
  */
@@ -651,7 +665,7 @@ export function conditionalRemovePeer(
       (peer as { remote_epk?: unknown }).remote_epk !== remoteEpk,
     );
     if (filtered.length === peers.length) return { outcome: "not_found" };
-    await mkdir(dirname(PEERS_PATH), { recursive: true });
+    await mkdir(dirname(_peersPath()), { recursive: true });
     // No await may intervene between the final token/authority checks and
     // synchronous write, preserving the lane's fail-closed commit boundary.
     if (_tokenForSlot(slot) !== expectedToken) return { outcome: "stale" };
@@ -660,7 +674,7 @@ export function conditionalRemovePeer(
       try { authorized = canCommit(); } catch { return { outcome: "no_authority" }; }
       if (!authorized) return { outcome: "no_authority" };
     }
-    writeFileSync(PEERS_PATH, JSON.stringify({ peers: filtered }, null, 2));
+    writeFileSync(_peersPath(), JSON.stringify({ peers: filtered }, null, 2));
     return { outcome: "removed", nextToken: _invalidateOwnerSlot(remoteEpk) };
   });
 }
@@ -677,7 +691,7 @@ export function removePeer(
       (peer as { remote_epk?: unknown }).remote_epk !== remoteEpk,
     );
     if (filtered.length === peers.length) return false;
-    await mkdir(dirname(PEERS_PATH), { recursive: true });
+    await mkdir(dirname(_peersPath()), { recursive: true });
 
     const serialized = JSON.stringify({ peers: filtered }, null, 2);
     if (canCommit) {
@@ -687,10 +701,10 @@ export function removePeer(
       let authorized = false;
       try { authorized = canCommit(); } catch { return false; }
       if (!authorized) return false;
-      writeFileSync(PEERS_PATH, serialized);
+      writeFileSync(_peersPath(), serialized);
     } else {
       // Manual removals keep the established asynchronous storage behavior.
-      await writeFile(PEERS_PATH, serialized);
+      await writeFile(_peersPath(), serialized);
     }
     const removed = true;
     if (removed) _invalidateOwnerSlot(remoteEpk);
@@ -700,9 +714,11 @@ export function removePeer(
 
 // ── Test-only helpers ────────────────────────────────────────────────────────
 
-/** Test-only: expose the identity-file path so tests can clean it. */
-export const _IDENTITY_FILE_FOR_TEST = IDENTITY_FILE;
+/** Test-only: the identity-file path currently in effect (follows `REMOTE_OMP_HOME`). */
+export function _identityFileForTest(): string {
+  return _identityFilePath();
+}
 /** Test-only: expose unlink for cleanup. */
 export const _unlinkIdentityFileForTest = async (): Promise<void> => {
-  try { await unlink(IDENTITY_FILE); } catch { /* fine if missing */ }
+  try { await unlink(_identityFilePath()); } catch { /* fine if missing */ }
 };

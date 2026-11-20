@@ -1,9 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
+import { remoteOmpHome } from "./paths.js";
 
-const CONFIG_DIR = path.join(os.homedir(), ".pi", "remote");
-const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
+// The data dir is resolved at call time (`remoteOmpHome()`), never at import
+// time, so `REMOTE_OMP_HOME` can redirect the whole tree (tests, sandboxes) and
+// the one-time legacy data-dir migration (`legacy_migration.ts`) can run before
+// anything is created here.
+const CONFIG_FILENAME = "config.json";
 
 /**
  * Default community relay. Stored in canonical http(s):// form — conversion
@@ -16,7 +19,7 @@ export const kDefaultRelayUrl = "https://relay-rp1.jacobmoura.work";
 
 export type NotifyMode = "offline" | "always" | "off";
 
-export type RemotePiConfig = {
+export type RemoteOmpConfig = {
   relay?: string;
   notify_url?: string;
   notify_token?: string;
@@ -30,22 +33,23 @@ export type NotifyConfigResolution = {
   source: "env" | "config" | "none";
 };
 
-export function loadConfig(): RemotePiConfig {
+export function loadConfig(): RemoteOmpConfig {
   try {
-    const raw = fs.readFileSync(CONFIG_FILE, "utf8");
+    const raw = fs.readFileSync(path.join(remoteOmpHome(), CONFIG_FILENAME), "utf8");
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object") return {};
-    return parsed as RemotePiConfig;
+    return parsed as RemoteOmpConfig;
   } catch {
     return {};
   }
 }
 
-export function saveConfig(patch: Partial<RemotePiConfig>): void {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+export function saveConfig(patch: Partial<RemoteOmpConfig>): void {
+  const dir = remoteOmpHome();
+  fs.mkdirSync(dir, { recursive: true });
   const current = loadConfig();
-  const next: RemotePiConfig = { ...current };
-  for (const key of Object.keys(patch) as Array<keyof RemotePiConfig>) {
+  const next: RemoteOmpConfig = { ...current };
+  for (const key of Object.keys(patch) as Array<keyof RemoteOmpConfig>) {
     const value = patch[key];
     if (value === undefined) {
       delete next[key];
@@ -53,7 +57,7 @@ export function saveConfig(patch: Partial<RemotePiConfig>): void {
       (next as Record<string, unknown>)[key] = value;
     }
   }
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2));
+  fs.writeFileSync(path.join(dir, CONFIG_FILENAME), JSON.stringify(next, null, 2));
 }
 
 export type RelayResolution = { url: string; source: "env" | "config" | "default" };
@@ -62,8 +66,8 @@ export type RelayResolution = { url: string; source: "env" | "config" | "default
  * Resolves the effective relay URL in **canonical http(s):// form**.
  *
  * Precedence:
- *   1. `REMOTE_PI_RELAY` env var (ops/CI escape hatch)
- *   2. `~/.pi/remote/config.json` `relay` field (set via /remote-pi set-relay)
+ *   1. `REMOTE_OMP_RELAY` env var (ops/CI escape hatch)
+ *   2. `~/.omp/remote/config.json` `relay` field (set via /remote-omp set-relay)
  *   3. `kDefaultRelayUrl` (community default)
  *
  * Any ws(s):// values found (legacy configs or env overrides) are coerced
@@ -71,7 +75,7 @@ export type RelayResolution = { url: string; source: "env" | "config" | "default
  * http(s)://, and the transport layer converts to ws(s):// at WS-open time.
  */
 export function resolveRelayUrl(): RelayResolution {
-  const env = process.env["REMOTE_PI_RELAY"];
+  const env = process.env["REMOTE_OMP_RELAY"];
   if (env && env.length > 0) return { url: toHttpUrl(env), source: "env" };
   const cfg = loadConfig();
   if (cfg.relay && cfg.relay.length > 0) return { url: toHttpUrl(cfg.relay), source: "config" };
@@ -79,8 +83,8 @@ export function resolveRelayUrl(): RelayResolution {
 }
 
 /**
- * Strict validator for **user-provided** relay URLs (via `/remote-pi
- * set-relay` or `/remote-pi relay url`).
+ * Strict validator for **user-provided** relay URLs (via `/remote-omp
+ * set-relay` or `/remote-omp relay url`).
  *
  * Only accepts `http://` and `https://`. `ws://`/`wss://` are deliberately
  * **rejected** — the canonical form stored in config is http(s):// and the
@@ -155,14 +159,14 @@ export function isValidNotifyMode(v: string): v is NotifyMode {
  * Resolves webhook/ntfy notification configuration.
  *
  * Precedence:
- *   - URL: `REMOTE_PI_NOTIFY_URL` (env) > `~/.pi/remote/config.json` `notify_url`
- *   - Token: `REMOTE_PI_NOTIFY_TOKEN` (env) > `config.json` `notify_token`
- *   - Mode: `REMOTE_PI_NOTIFY_MODE` (env) > `config.json` `notify_mode` > `"offline"`
+ *   - URL: `REMOTE_OMP_NOTIFY_URL` (env) > `~/.omp/remote/config.json` `notify_url`
+ *   - Token: `REMOTE_OMP_NOTIFY_TOKEN` (env) > `config.json` `notify_token`
+ *   - Mode: `REMOTE_OMP_NOTIFY_MODE` (env) > `config.json` `notify_mode` > `"offline"`
  */
-export function resolveNotifyConfig(cfgOverride?: RemotePiConfig): NotifyConfigResolution {
+export function resolveNotifyConfig(cfgOverride?: RemoteOmpConfig): NotifyConfigResolution {
   const cfg = cfgOverride ?? loadConfig();
 
-  const envUrlRaw = process.env["REMOTE_PI_NOTIFY_URL"]?.trim() ?? "";
+  const envUrlRaw = process.env["REMOTE_OMP_NOTIFY_URL"]?.trim() ?? "";
   const cfgUrlRaw = typeof cfg.notify_url === "string" ? cfg.notify_url.trim() : "";
 
   let url: string | null = null;
@@ -175,11 +179,11 @@ export function resolveNotifyConfig(cfgOverride?: RemotePiConfig): NotifyConfigR
     source = "config";
   }
 
-  const envToken = process.env["REMOTE_PI_NOTIFY_TOKEN"]?.trim() ?? "";
+  const envToken = process.env["REMOTE_OMP_NOTIFY_TOKEN"]?.trim() ?? "";
   const cfgToken = typeof cfg.notify_token === "string" ? cfg.notify_token.trim() : "";
   const token = envToken || cfgToken || null;
 
-  const envModeRaw = process.env["REMOTE_PI_NOTIFY_MODE"]?.trim().toLowerCase() ?? "";
+  const envModeRaw = process.env["REMOTE_OMP_NOTIFY_MODE"]?.trim().toLowerCase() ?? "";
   const cfgModeRaw = typeof cfg.notify_mode === "string" ? cfg.notify_mode.trim().toLowerCase() : "";
   const mode: NotifyMode = isValidNotifyMode(envModeRaw)
     ? envModeRaw

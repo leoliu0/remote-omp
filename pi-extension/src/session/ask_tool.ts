@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "../omp-api.js";
 import { Type } from "typebox";
 import type {
   AskAnswerWire,
@@ -44,7 +44,7 @@ export interface AskParams {
 }
 
 type AskResult = { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> };
-type InvokeNativeTool = (params: AskParams, options: { signal?: AbortSignal }) => Promise<AskResult>;
+type InvokeNativeTool = (params: { html: string }, options: { signal?: AbortSignal }) => Promise<AskResult>;
 
 interface PendingAsk {
   flowId: string;
@@ -104,10 +104,15 @@ export function handleAskResponse(msg: ExtensionUiResponseWire): boolean {
     for (const q of ask.questions) {
       const ans = askData.answers[q.id];
       if (!ans) continue;
-      if (ans.values && ans.values.length > 0) {
-        lines.push(`User selected: ${ans.values.join(", ")}`);
-      } else if (ans.customText) {
-        lines.push(`User provided custom input: ${ans.customText}`);
+      // omp's native `ask` keeps both for a multi-choice answer (`[...values, typed]`);
+      // for single choice the typed "Other" text replaces the pick (`typed || values[0]`).
+      const values = ans.values ?? [];
+      const custom = ans.customText;
+      if (values.length > 0 && !(custom && !q.multi)) {
+        lines.push(`User selected: ${values.join(", ")}`);
+      }
+      if (custom) {
+        lines.push(`User provided custom input: ${custom}`);
       }
       if (ans.note) {
         lines.push(`User added note: ${ans.note}`);
@@ -177,21 +182,44 @@ function createAskRequestWire(flowId: string, questions: AskParams["questions"])
   };
 }
 
-/** Broadcasts the question to mobile peers; settles on their response or `signal` abort. */
+/**
+ * Broadcasts the question to mobile peers (even zero: the broadcast also raises
+ * the push notification and the entry is replayed to a phone that attaches
+ * later); settles on their response, `signal` abort, or — when `timeoutMs` is
+ * given — as an unanswered ask after that long.
+ */
 function askRemotely(
   flowId: string,
   questions: AskParams["questions"],
   broadcast: (msg: ServerMessage) => void,
   signal: AbortSignal | undefined,
+  timeoutMs?: number,
 ): Promise<AskResult> {
   // Executor form: `Promise.withResolvers` needs Node 22 / lib es2024; this package targets Node 20.
   return new Promise<AskResult>((resolve, reject) => {
-    activeAsks.set(flowId, { flowId, resolve, reject, questions });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stopTimer = () => clearTimeout(timer);
+    activeAsks.set(flowId, {
+      flowId,
+      questions,
+      resolve: (res) => { stopTimer(); resolve(res); },
+      reject: (err) => { stopTimer(); reject(err); },
+    });
     broadcast(createAskRequestWire(flowId, questions));
+    if (timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        if (activeAsks.delete(flowId)) {
+          broadcastDismiss(flowId);
+          resolve(noClientResult(questions, { timedOut: true }));
+        }
+      }, timeoutMs);
+      timer.unref?.();
+    }
     signal?.addEventListener(
       "abort",
       () => {
         if (activeAsks.delete(flowId)) {
+          stopTimer();
           broadcastDismiss(flowId);
           reject(new Error("Ask tool aborted"));
         }
@@ -201,10 +229,51 @@ function askRemotely(
   });
 }
 
+const escapeHtml = (s: string): string =>
+  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/** omp ≥18.20 native `ask` takes one HTML form (`{ html }`); translate the `questions[]` wire shape into it. */
+export function toNativeParams(params: AskParams): { html: string } {
+  const blocks = params.questions.map((q) => {
+    const type = q.multi ? "checkbox" : "radio";
+    const legend = q.header ? `${q.header}: ${q.question}` : q.question;
+    const previews = q.options
+      .filter((o) => o.preview)
+      .map((o) => `  <p>${escapeHtml(o.label)}:</p>\n  <pre>${escapeHtml(o.preview!)}</pre>`);
+    const labels = q.options.map((o, i) => {
+      const text = o.description ? `${o.label}: ${o.description}` : o.label;
+      const checked = q.recommended === i ? " checked" : "";
+      return `    <label><input type="${type}" name="${escapeHtml(q.id)}" value="${escapeHtml(o.label)}"${checked}> ${escapeHtml(text)}</label>`;
+    });
+    return [...previews, `  <fieldset>\n    <legend>${escapeHtml(legend)}</legend>\n${labels.join("\n")}\n  </fieldset>`].join("\n");
+  });
+  return { html: `<form>\n${blocks.join("\n")}\n</form>` };
+}
+
+/** Host facts the wrapper cannot derive: whether this process is a supervised daemon, and its time box. */
+export interface AskHost {
+  /** True in a supervised daemon: no terminal answers the native dialog, so the phone path is always used. */
+  isDaemon?: () => boolean;
+  /** How long a daemon ask waits for an answer before it resolves as unanswered. */
+  timeoutMs?: () => number;
+}
+
+function noClientResult(questions: AskParams["questions"], details: Record<string, unknown>): AskResult {
+  const questionsSummary = questions.map((q) => q.question).join("; ");
+  return {
+    content: [{
+      type: "text",
+      text: `[No interactive client attached to answer: "${questionsSummary}". Using default / proceeding without user selection.]`,
+    }],
+    details: { unprompted: true, ...details },
+  };
+}
+
 export function registerAskWrapperTool(
   pi: ExtensionAPI,
   broadcast: (msg: ServerMessage) => void,
   hasActivePeers: () => boolean,
+  host: AskHost = {},
 ): void {
   _broadcastFn = broadcast;
 
@@ -215,8 +284,18 @@ export function registerAskWrapperTool(
     parameters: AskParamsSchema,
     execute: async (toolCallId, params, signal, _onUpdate, context) => {
       const invokeTool: unknown = context && "invokeTool" in context ? context.invokeTool : undefined;
-      // omp-only `ctx.invokeTool` runs the native built-in `ask` this tool shadows; the upstream SDK types lack it.
+      // `ctx.invokeTool` runs the native built-in `ask` this tool shadows; read defensively, headless/test contexts don't provide it.
       const invokeNative = typeof invokeTool === "function" ? (invokeTool as InvokeNativeTool) : undefined;
+
+      // Daemon: nobody can answer the native dialog (its `extension_ui_request`
+      // frames go to the supervisor), so the phone is the only channel even
+      // when none is attached right now. Broadcast (push notification), register
+      // for replay to a phone that attaches later, and give up after the time
+      // box instead of blocking the agent forever.
+      if (host.isDaemon?.()) {
+        const flowId = `ask_${toolCallId || Date.now().toString(36)}`;
+        return askRemotely(flowId, params.questions, broadcast, signal, host.timeoutMs?.());
+      }
 
       // Mobile peer active: offer the question on the phone, and keep the native
       // terminal dialog up too — a paired phone is not proof the user is looking
@@ -228,7 +307,7 @@ export function registerAskWrapperTool(
 
         const localAbort = new AbortController();
         const localSignal = signal ? AbortSignal.any([signal, localAbort.signal]) : localAbort.signal;
-        const local = invokeNative(params, { signal: localSignal });
+        const local = invokeNative(toNativeParams(params), { signal: localSignal });
         // The losing side settles after the race (aborted local dialog throws,
         // dismissed mobile ask never resolves); nothing awaits it.
         local.catch(() => {});
@@ -241,16 +320,9 @@ export function registerAskWrapperTool(
       }
 
       // No mobile peer: native ask tool when available.
-      if (invokeNative) return invokeNative(params, { signal });
+      if (invokeNative) return invokeNative(toNativeParams(params), { signal });
       // Fallback if headless / no peer
-      const questionsSummary = params.questions.map((q) => q.question).join("; ");
-      return {
-        content: [{
-          type: "text",
-          text: `[No interactive client attached to answer: "${questionsSummary}". Using default / proceeding without user selection.]`,
-        }],
-        details: { unprompted: true },
-      };
+      return noClientResult(params.questions, {});
     },
   });
 }

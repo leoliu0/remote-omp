@@ -99,10 +99,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
   @override
   Widget build(BuildContext context) {
     if (_ready) {
-      return (widget.appBuilder ?? (_) => const RemotePiApp())(context);
+      return (widget.appBuilder ?? (_) => const RemoteOmpApp())(context);
     }
     return MaterialApp(
-      title: 'Remote Pi',
+      title: 'Remote OMP',
       debugShowCheckedModeBanner: false,
       home: Scaffold(
         body: SafeArea(
@@ -155,14 +155,14 @@ class _AppBootstrapState extends State<AppBootstrap> {
   }
 }
 
-class RemotePiApp extends StatefulWidget {
-  const RemotePiApp({super.key});
+class RemoteOmpApp extends StatefulWidget {
+  const RemoteOmpApp({super.key});
 
   @override
-  State<RemotePiApp> createState() => _RemotePiAppState();
+  State<RemoteOmpApp> createState() => _RemoteOmpAppState();
 }
 
-class _RemotePiAppState extends State<RemotePiApp> with WidgetsBindingObserver {
+class _RemoteOmpAppState extends State<RemoteOmpApp> with WidgetsBindingObserver {
   late final _router = buildRouter(
     injector.get<PairingStorage>(),
     injector.get<ConnectionManager>(),
@@ -237,7 +237,7 @@ class _RemotePiAppState extends State<RemotePiApp> with WidgetsBindingObserver {
       // [Preferences] → this Consumer rebuilds → MaterialApp swaps theme.
       child: Consumer<Preferences>(
         builder: (context, prefs, _) => MaterialApp.router(
-          title: 'Remote Pi',
+          title: 'Remote OMP',
           theme: buildLightTheme(fontFamily: prefs.fontFamily),
           darkTheme: buildDarkTheme(fontFamily: prefs.fontFamily),
           themeMode: prefs.themeMode,

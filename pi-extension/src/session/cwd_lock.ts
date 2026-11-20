@@ -1,26 +1,26 @@
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Server } from "node:net";
 import { roomIdFor } from "../rooms.js";
+import { remoteOmpHome } from "../paths.js";
 import { removeStaleSock, tryBind, tryConnect } from "./leader_election.js";
 import { ipcAddress, usesNamedPipe } from "./ipc.js";
 
 /**
- * Per-cwd singleton lock for `/remote-pi`. At most one Pi process per
+ * Per-cwd singleton lock for `/remote-omp`. At most one omp process per
  * working directory may hold the lock; the second attempt is refused.
  *
  * Why a UDS bind instead of a PID lock file:
  *   - The OS releases the socket handle the instant the process dies, even
  *     on `kill -9` or hard crash. No stale-lock cleanup needed.
- *   - The next Pi to try in the same cwd detects the dead socket via
+ *   - The next omp process to try in the same cwd detects the dead socket via
  *     `ECONNREFUSED` on `tryConnect`, unlinks the leftover file, and
  *     binds successfully. Fully self-healing.
  *   - Kernel-enforced — there is no race window between "check if held"
  *     and "claim", which an explicit PID file would have.
  *
- * Lock files live in `<root>/.pi/remote/locks/<roomId>.sock` (where `roomId`
- * is `sha256(realpath(cwd))[:12]` and `<root>` is `$REMOTE_PI_HOME` or the
+ * Lock files live in `<root>/.omp/remote/locks/<roomId>.sock` (where `roomId`
+ * is `sha256(realpath(cwd))[:12]` and `<root>` is `$REMOTE_OMP_HOME` or the
  * home dir), NOT inside the cwd itself, to dodge:
  *   - The 104/108-char path-length limit on UDS sockets on macOS/Linux.
  *   - Symlinked cwds (realpath canonicalization happens in `roomIdFor`).
@@ -29,15 +29,14 @@ import { ipcAddress, usesNamedPipe } from "./ipc.js";
  * Caller workflow:
  *   const lock = await acquireCwdLock(cwd);
  *   if (!lock.ok) { ui.notify("Já tem um agente rodando nessa pasta."); return; }
- *   // …run /remote-pi normally; lock auto-releases on process exit
+ *   // …run /remote-omp normally; lock auto-releases on process exit
  */
 
 /** Resolved at call time (not module load) so tests can redirect the lock
- *  dir away from the developer's real `~/.pi/remote/locks` via
- *  `REMOTE_PI_HOME` — same override the daemon registry honors. */
+ *  dir away from the developer's real `~/.omp/remote/locks` via
+ *  `REMOTE_OMP_HOME` — same override the daemon registry honors. */
 function locksDir(): string {
-  const root = process.env["REMOTE_PI_HOME"] || homedir();
-  return join(root, ".pi", "remote", "locks");
+  return join(remoteOmpHome(), "locks");
 }
 
 export interface AcquiredLock {
@@ -59,7 +58,7 @@ export type CwdLockResult = AcquiredLock | RefusedLock;
  * the SAME folder as long as their names differ — the per-folder singleton is
  * now a per-(folder,name) singleton.
  *
- * plan/41: this is the SAME derivation as the App↔Pi `room_id` — `lockIdFor`
+ * plan/41: this is the SAME derivation as the App↔PC `room_id` — `lockIdFor`
  * delegates to the shared `roomIdFor(cwd, name)`. So the per-(folder,name) lock
  * and the announced room stay in lockstep: a default/unnamed agent locks the
  * legacy cwd id (and owns the legacy room); a custom or `#N`-suffixed name gets
@@ -87,7 +86,7 @@ export function lockPathForCwd(cwd: string): string {
 /**
  * Attempts to acquire the cwd lock. Resolves with either:
  *   - `{ ok: true, release }` when we own it (server bound + retained).
- *   - `{ ok: false, lockPath }` when a live Pi already holds the lock.
+ *   - `{ ok: false, lockPath }` when a live omp process already holds the lock.
  *
  * Self-healing path: if the prior holder crashed, the leftover socket file
  * fails `tryConnect` (ECONNREFUSED). We unlink it and retry the bind — the
@@ -95,7 +94,7 @@ export function lockPathForCwd(cwd: string): string {
  *
  * The server holds no actual listener logic; its only job is to keep the
  * UDS endpoint pinned by the OS. No incoming connection ever does anything
- * useful — the next-Pi-attempt's `tryConnect` succeeding is the entire
+ * useful — the next attempt's `tryConnect` succeeding is the entire
  * signal we care about.
  */
 export async function acquireCwdLock(cwd: string, name?: string): Promise<CwdLockResult> {
@@ -128,7 +127,7 @@ export async function acquireCwdLock(cwd: string, name?: string): Promise<CwdLoc
 
 function _acquired(server: Server, _lockPath: string): AcquiredLock {
   let released = false;
-  // Don't keep the event loop alive just to hold the socket — the Pi
+  // Don't keep the event loop alive just to hold the socket — the omp
   // process has its own reasons to stay up (relay WS, broker, etc.).
   // When those are gone, the OS will tear the socket down with us.
   server.unref();

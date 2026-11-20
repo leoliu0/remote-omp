@@ -95,7 +95,7 @@ class PairingViewModel extends ViewModel<PairingState> {
             onTimeout: () => throw const pair_flow.PairingError(
               code: 'pair_timeout',
               message:
-                  'Timed out — make sure /remote-pi is running on your Mac',
+                  'Timed out — make sure /remote-omp is running on your Mac',
             ),
           );
 
@@ -185,8 +185,8 @@ class PairingViewModel extends ViewModel<PairingState> {
   static String _friendlyError(pair_flow.PairingError e) => switch (e.code) {
     'token_expired' => 'QR expired — generate a new one on your Mac',
     'token_consumed' => 'QR already used — generate a new one',
-    'token_unknown' => 'QR not recognized by Mac — re-run /remote-pi pair',
-    'pair_timeout' => 'Timed out — make sure /remote-pi is running on your Mac',
+    'token_unknown' => 'QR not recognized by Mac — re-run /remote-omp pair',
+    'pair_timeout' => 'Timed out — make sure /remote-omp is running on your Mac',
     'pairing_context_changed' => 'Owner or relay changed — retry pairing',
     _ => e.message.isEmpty ? e.code : e.message,
   };

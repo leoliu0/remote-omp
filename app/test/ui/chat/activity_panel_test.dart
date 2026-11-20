@@ -1,6 +1,6 @@
 // agent_activity — wire parsing, the panel's strings (shared with the web
 // client), and the widget rendering a snapshot captured from a real omp run
-// (pi-extension/src/activity.test.ts: one async `sleep 20` bash job, then a
+// (omp-extension/src/activity.test.ts: one async `sleep 20` bash job, then a
 // `task` call spawning AgentA/AgentB).
 
 import 'package:app/protocol/protocol.dart';

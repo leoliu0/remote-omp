@@ -8,6 +8,7 @@ import 'package:app/pairing/owner_identity_bridge.dart';
 import 'package:app/pairing/storage.dart';
 import 'package:app/routing/adaptive.dart';
 import 'package:app/ui/chat/attachment/viewmodels/attachment_viewmodel.dart';
+import 'package:app/ui/chat/upload/viewmodels/upload_viewmodel.dart';
 import 'package:app/ui/chat/chat_page.dart';
 import 'package:app/ui/chat/viewmodels/chat_viewmodel.dart';
 import 'package:app/ui/chat/voice/viewmodels/voice_input_viewmodel.dart';
@@ -442,6 +443,7 @@ GoRouter buildRouter(
               ViewmodelProvider<ChatViewModel>(),
               ViewmodelProvider<VoiceInputViewModel>(),
               ViewmodelProvider<AttachmentViewModel>(),
+              ViewmodelProvider<UploadViewModel>(),
             ],
             child: ChatPage(
               initialTitle: initialTitle,
@@ -482,6 +484,7 @@ class _DetailPane extends StatelessWidget {
         ViewmodelProvider<ChatViewModel>(),
         ViewmodelProvider<VoiceInputViewModel>(),
         ViewmodelProvider<AttachmentViewModel>(),
+        ViewmodelProvider<UploadViewModel>(),
       ],
       child: ChatPage(
         initialTitle: sel.current!.title,
@@ -538,7 +541,7 @@ class _BootSplashState extends State<_BootSplash> {
             Icon(LucideIcons.radio, size: 40, color: colors.accent),
             const SizedBox(height: 16),
             Text(
-              'Remote Pi',
+              'Remote OMP',
               style: TextStyle(
                 fontFamily: kMonoFamily,
                 fontSize: 18,

@@ -189,7 +189,7 @@ class _QuickActionsSheetBodyState extends State<QuickActionsSheetBody> {
               key: const Key('qa-new-session'),
               icon: LucideIcons.sparkles,
               label: 'New session',
-              subtitle: 'Clears the conversation on the Pi.',
+              subtitle: 'Clears the conversation on the PC.',
               busy: busyAction == ActionName.sessionNew,
               onTap: () => _onNewSession(vm),
             ),
@@ -210,7 +210,7 @@ class _QuickActionsSheetBodyState extends State<QuickActionsSheetBody> {
               key: const Key('qa-reload-plugins'),
               icon: LucideIcons.plug2,
               label: 'Reload plugins',
-              subtitle: 'Reload extensions, skills, and tools on the Pi.',
+              subtitle: 'Reload extensions, skills, and tools on the PC.',
               busy: busyAction == ActionName.reloadPlugins,
               onTap: () => _onReloadPlugins(vm),
             ),
@@ -287,7 +287,7 @@ class _QuickActionsSheetBodyState extends State<QuickActionsSheetBody> {
             ),
           ),
           content: Text(
-            'This clears the Pi-side conversation history. The current '
+            'This clears the PC-side conversation history. The current '
             'thread cannot be resumed.',
             style: TextStyle(
               fontFamily: kMonoFamily,

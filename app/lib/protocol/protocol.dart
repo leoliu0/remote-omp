@@ -161,7 +161,7 @@ Map<String, dynamic> roomsCheckFrame(List<String> peers) => {
 // ---------------------------------------------------------------------------
 // Rooms (plan 17 — multi-cwd per Mac)
 //
-// Each Pi-extension instance opens one room per active session (cwd).
+// Each omp-extension instance opens one room per active session (cwd).
 // The relay tracks room metadata per peer and pushes:
 //   - room_announced: a new room came online for a peer
 //   - room_ended: a room closed (Pi exited or stopped that cwd)
@@ -182,12 +182,12 @@ class RoomInfo {
   final String? cwd;
   final int startedAt;
 
-  /// Plan 18 — display model the Pi-extension is running with (e.g.
+  /// Plan 18 — display model the omp-extension is running with (e.g.
   /// `claude-sonnet-4.5`, `gpt-4o`). Optional; Pi-ext may omit and
   /// the app falls back to `last paired` in the subtitle.
   final String? model;
 
-  /// Plan/28 Wave D — current thinking level the Pi-extension session
+  /// Plan/28 Wave D — current thinking level the omp-extension session
   /// is running with. Optional; Pi-ext may omit when it cannot resolve
   /// it from the SDK, and legacy Pis don't publish this field at all.
   /// Drives the initial highlight of the Quick Actions thinking
@@ -300,7 +300,7 @@ class RoomAnnounced extends ControlInbound {
   final String? cwd;
   final int startedAt;
 
-  /// Plan 18 — display model the Pi-extension is running with.
+  /// Plan 18 — display model the omp-extension is running with.
   final String? model;
 
   /// Plan/28 Wave D — current thinking level the Pi seeds at
@@ -347,7 +347,7 @@ class RoomsSnapshot extends ControlInbound {
 
 /// Plan 18 — incremental update to a room's metadata (model is the
 /// only field for now, but the `meta` envelope is open-ended). The
-/// relay pushes this when the Pi-extension swaps its model
+/// relay pushes this when the omp-extension swaps its model
 /// mid-session.
 class RoomMetaUpdated extends ControlInbound {
   final String peer;
@@ -453,7 +453,7 @@ sealed class ClientMessage {
 }
 
 /// Plan/30 — one image carried inline on a `user_message` (base64 + mime).
-/// Mirrors `WireImage` in `pi-extension/src/protocol/types.ts` and the SDK's
+/// Mirrors `WireImage` in `omp-extension/src/protocol/types.ts` and the SDK's
 /// `ImageContent`. The relay forwards it opaquely inside the existing `ct`.
 class WireImage {
   final String data; // base64, no data-URI prefix
@@ -636,8 +636,8 @@ const kActionRequestIdPrefix = 'act_';
 
 /// Plan/28 — Curated catalogue of actions the app can dispatch on the
 /// Pi-side session. Each value matches an `action_ok`/`action_error`
-/// reply emitted by the pi-extension handlers in
-/// `pi-extension/src/actions/handlers.ts`.
+/// reply emitted by the omp-extension handlers in
+/// `omp-extension/src/actions/handlers.ts`.
 enum ActionName {
   sessionNew('session_new'),
   sessionCompact('session_compact'),
@@ -646,7 +646,9 @@ enum ActionName {
   reloadPlugins('reload_plugins'),
   planMode('plan_mode'),
   // Plan 66 — omp model role change; replies with action_ok / action_error.
-  modelRoleSet('model_role_set');
+  modelRoleSet('model_role_set'),
+  // Plan 68 — re-runs the failed turn; replies with action_ok or an `error`.
+  retryTurn('retry_turn');
   final String wire;
   const ActionName(this.wire);
 
@@ -684,7 +686,7 @@ enum ThinkingLevel {
 
 /// Plan/28 — Wire shape for one entry in the model picker. Subset of
 /// the SDK's `Model` interface; matches the `WireModel` declared in
-/// `pi-extension/src/protocol/types.ts`.
+/// `omp-extension/src/protocol/types.ts`.
 class WireModel {
   /// Stable id inside the provider's catalog (e.g. `claude-opus-4-7`).
   final String id;
@@ -992,6 +994,17 @@ class GitStatusRequest extends ClientMessage {
   Map<String, dynamic> toJson() => {'type': 'git_status', 'id': id};
 }
 
+/// Plan 68 — re-runs the turn that just failed (omp's `/retry`) without a
+/// second user message. Answered with `action_ok`, or an `error` whose code
+/// is `nothing_to_retry` / `busy` / `unsupported`.
+class RetryTurnRequest extends ClientMessage {
+  final String id;
+  RetryTurnRequest({required this.id});
+
+  @override
+  Map<String, dynamic> toJson() => {'type': 'retry_turn', 'id': id};
+}
+
 /// Asks the extension for the unified diff of one repo-relative [path].
 class GitDiffRequest extends ClientMessage {
   final String id;
@@ -1005,6 +1018,63 @@ class GitDiffRequest extends ClientMessage {
     'id': id,
     'path': path,
     if (staged) 'staged': true,
+  };
+}
+
+/// Asks the extension for files under the session cwd matching [query]
+/// (composer `@` autocomplete).
+class ListFilesRequest extends ClientMessage {
+  final String id;
+  final String query;
+  final int? limit;
+  ListFilesRequest({required this.id, required this.query, this.limit});
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'list_files',
+    'id': id,
+    'query': query,
+    if (limit != null) 'limit': limit,
+  };
+}
+
+/// Plan 68 — asks the extension for the subfolders of [path] on the PC (null =
+/// the PC's home) and for the folders recently used for sessions.
+class ListDirsRequest extends ClientMessage {
+  final String id;
+  final String? path;
+  ListDirsRequest({required this.id, this.path});
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'list_dirs',
+    'id': id,
+    if (path != null) 'path': path,
+  };
+}
+
+/// Plan 68 — starts an omp session in [cwd] on the PC. [persistent] registers
+/// an always-on daemon there instead of a session that ends when its process
+/// does. An empty or null [name] leaves the choice to the PC (the folder name).
+class SpawnSessionRequest extends ClientMessage {
+  final String id;
+  final String cwd;
+  final String? name;
+  final bool persistent;
+  SpawnSessionRequest({
+    required this.id,
+    required this.cwd,
+    this.name,
+    this.persistent = false,
+  });
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'spawn_session',
+    'id': id,
+    'cwd': cwd,
+    if (name != null && name!.isNotEmpty) 'name': name,
+    if (persistent) 'persistent': true,
   };
 }
 
@@ -1053,7 +1123,7 @@ sealed class ServerMessage {
       'pair_ok' => PairOk.fromJson(json),
       'pair_error' => PairError.fromJson(json),
       // Plan/24-fix-app-source-of-truth + follow-up: Pi rebroadcasts
-      // every accepted user_message via this stream. Some Pi-extension
+      // every accepted user_message via this stream. Some omp-extension
       // versions emit `type: "user_input"` (mirror of a terminal-side
       // input), others reuse the original `user_message` type when
       // echoing back. Treat both as the same payload — `UserInput`
@@ -1062,7 +1132,7 @@ sealed class ServerMessage {
       'queued_message_state' => QueuedMessageState.fromJson(json),
       'steer_consumed' => SteerConsumed.fromJson(json),
       'agent_message' => AgentMessage.fromJson(json),
-      // Plan/32 — Pi-extension emits this when a context compaction finishes.
+      // Plan/32 — omp-extension emits this when a context compaction finishes.
       'compaction' => Compaction.fromJson(json),
       'session_history' => SessionHistory.fromJson(json),
       'bye' => Bye.fromJson(json),
@@ -1093,9 +1163,18 @@ sealed class ServerMessage {
       'file_chunk' => FileChunk.fromJson(json),
       'file_end' => FileEnd.fromJson(json),
       'file_cancel' => FileCancel.fromJson(json),
+      // Plan 68 — replies to a file uploaded from the phone.
+      'upload_ack' => UploadAck.fromJson(json),
+      'upload_done' => UploadDone.fromJson(json),
+      'upload_error' => UploadError.fromJson(json),
       // Mobile Git Diff viewer.
       'git_status_result' => GitStatusResult.fromJson(json),
       'git_diff_result' => GitDiffResult.fromJson(json),
+      // Composer `@` file autocomplete.
+      'files_list' => FilesListResult.fromJson(json),
+      // Plan 68 — new session from the phone.
+      'dirs_list' => DirsListResult.fromJson(json),
+      'spawn_result' => SpawnResult.fromJson(json),
       // forward-compat: unknown types are not fatal — callers catch and log
       _ => throw UnsupportedTypeException(type ?? ''),
     };
@@ -1189,10 +1268,10 @@ class Pong extends ServerMessage {
 }
 
 /// Plan/27 Wave A — identifies the agent harness the paired PC is
-/// running. Surfaced as a subtitle on the PiCard ("via Pi coding
-/// agent"). Pi-extension is expected to publish this in `pair_ok`
-/// (contract for the next pi-extension dispatch); the app falls back
-/// to a sensible default when the field is absent so legacy Pis keep
+/// running. Surfaced as a subtitle on the PC card ("via omp coding
+/// agent"). The omp-extension is expected to publish this in `pair_ok`
+/// (contract for the next omp-extension dispatch); the app falls back
+/// to a sensible default when the field is absent so legacy PCs keep
 /// working.
 class PiHarness {
   final String name;
@@ -1200,9 +1279,9 @@ class PiHarness {
   const PiHarness({required this.name, required this.version});
 
   /// Default used when `pair_ok` omits `harness` (current
-  /// pi-extension behaviour) and when migrating legacy PeerRecords.
+  /// omp-extension behaviour) and when migrating legacy PeerRecords.
   static const PiHarness piCodingAgentUnknown = PiHarness(
-    name: 'Pi coding agent',
+    name: 'omp coding agent',
     version: '—',
   );
 
@@ -1238,15 +1317,15 @@ class PairOk extends ServerMessage {
   final String roomId;
 
   /// Plan/27 Wave A — agent harness identification. `null` when the
-  /// pi-extension hasn't been upgraded to publish it; consumers fall
+  /// omp-extension hasn't been upgraded to publish it; consumers fall
   /// back to [PiHarness.piCodingAgentUnknown] so the UI never renders
   /// an empty subtitle.
   final PiHarness? harness;
 
   /// Plan/27 Wave A — hostname hint for the post-pair nickname modal.
-  /// The pi-extension reports its OS hostname so the modal can
+  /// The omp-extension reports its OS hostname so the modal can
   /// pre-fill a sensible placeholder ("Mac do Jacob") instead of a
-  /// generic "Pi". `null` on legacy Pis.
+  /// generic "PC". `null` on legacy extensions.
   final String? hostname;
   PairOk({
     required this.inReplyTo,
@@ -1408,7 +1487,7 @@ class AgentMessage extends ServerMessage {
   );
 }
 
-/// Plan/32 — emitted by the Pi-extension when a context compaction finishes.
+/// Plan/32 — emitted by the omp-extension when a context compaction finishes.
 /// Rendered as a system bubble in the chat (✓ Contexto compactado + summary +
 /// the token count that was reclaimed). `ts` is optional (epoch millis).
 class Compaction extends ServerMessage {
@@ -1493,6 +1572,7 @@ sealed class SessionHistoryEvent {
         ts: ts,
         inReplyTo: j['in_reply_to'] as String,
         text: j['text'] as String,
+        errorCode: j['error_code'] as String?,
       ),
       // Plan/32 — compaction replayed from history so the system bubble
       // survives a re-sync.
@@ -1549,10 +1629,14 @@ class ToolResultEvt extends SessionHistoryEvent {
 class AgentMessageEvt extends SessionHistoryEvent {
   final String inReplyTo;
   final String text;
+  /// Plan 68 — set on a replayed failed turn (`provider_error`), so the chat
+  /// can offer Retry under it. Null on an ordinary answer and from older Pis.
+  final String? errorCode;
   const AgentMessageEvt({
     required super.ts,
     required this.inReplyTo,
     required this.text,
+    this.errorCode,
   });
 }
 
@@ -1585,8 +1669,8 @@ class PairError extends ServerMessage {
 }
 
 /// Graceful disconnect notice sent by the Pi right before it closes the
-/// channel (e.g. `/remote-pi stop`, session replaced, shutdown). The app
-/// treats this as a terminal "Pi went offline" signal, stops the retry
+/// channel (e.g. `/remote-omp stop`, session replaced, shutdown). The app
+/// treats this as a terminal "PC went offline" signal, stops the retry
 /// loop, and surfaces a banner. Reconnect is manual.
 enum ByeReason { peerStop, sessionReplaced, shutdown, unknown }
 
@@ -1858,7 +1942,12 @@ class SkillsList extends ServerMessage {
   final String? inReplyTo;
   final List<WireSkill> skills;
 
-  SkillsList({this.inReplyTo, required this.skills});
+  /// omp's own slash-command list for this host: the builtins that run there
+  /// plus extension and prompt commands (skills stay in [skills]). Null when the
+  /// peer's extension predates the field; the app then shows its built-in list.
+  final List<WireCommand>? commands;
+
+  SkillsList({this.inReplyTo, required this.skills, this.commands});
 
   factory SkillsList.fromJson(Map<String, dynamic> j) => SkillsList(
     inReplyTo: j['in_reply_to'] as String?,
@@ -1866,6 +1955,11 @@ class SkillsList extends ServerMessage {
             ?.map((e) => WireSkill.fromJson(e as Map<String, dynamic>))
             .toList() ??
         const [],
+    commands: (j['commands'] as List<dynamic>?)
+        ?.whereType<Map>()
+        .map((e) => WireCommand.fromJson(e.cast<String, dynamic>()))
+        .where((c) => c.name.isNotEmpty)
+        .toList(growable: false),
   );
 }
 
@@ -1884,6 +1978,31 @@ class WireSkill {
     'name': name,
     'description': description,
   };
+}
+
+/// One slash command the host can run, as `skills_list.commands` lists it.
+/// [source] stays raw (`builtin` | `extension` | `prompt`) for forward-compat.
+class WireCommand {
+  final String name;
+  final String description;
+  final String source;
+
+  /// Argument hint (`<model>`), when omp has one for the command.
+  final String? hint;
+
+  const WireCommand({
+    required this.name,
+    required this.description,
+    this.source = '',
+    this.hint,
+  });
+
+  factory WireCommand.fromJson(Map<String, dynamic> j) => WireCommand(
+    name: (j['name'] as String?) ?? '',
+    description: (j['description'] as String?) ?? '',
+    source: (j['source'] as String?) ?? '',
+    hint: j['hint'] as String?,
+  );
 }
 
 /// ServerMessage: interactive extension prompt. Mirrors RpcExtensionUIRequest.
@@ -1941,7 +2060,7 @@ class ExtensionUiRequest extends ServerMessage {
 
 // ---------------------------------------------------------------------------
 // omp plan mode — plan review + plan state.
-// Contract: pi-extension/src/protocol/types.ts (PlanReviewWire,
+// Contract: omp-extension/src/protocol/types.ts (PlanReviewWire,
 // PlanReviewAnswerWire, PlanStatus, `plan_state`, `plan_mode`). Older Pi
 // builds never send any of it, so every field stays optional on the app side.
 // ---------------------------------------------------------------------------
@@ -2163,8 +2282,8 @@ class ExtensionUiResponse extends ClientMessage {
 
 // ---------------------------------------------------------------------------
 // agent_activity — running subagents + background jobs (omp's bottom panel).
-// Contract: pi-extension/src/protocol/types.ts (AgentActivityJob) and
-// pi-extension/src/activity.ts. Every frame is a FULL snapshot; `jobs: []`
+// Contract: omp-extension/src/protocol/types.ts (AgentActivityJob) and
+// omp-extension/src/activity.ts. Every frame is a FULL snapshot; `jobs: []`
 // means nothing is running. Elapsed time is not on the wire: clients render
 // `now - started_at` while running, `ended_at - started_at` after.
 // ---------------------------------------------------------------------------
@@ -2317,8 +2436,8 @@ class AgentActivity extends ServerMessage {
 
 // ---------------------------------------------------------------------------
 // todo_state — omp's todo list (the `todo` tool's phases and tasks).
-// Contract: pi-extension/src/protocol/types.ts (TodoStateMessage) and
-// pi-extension/src/todo_state.ts. Every frame is a FULL snapshot; phases are
+// Contract: omp-extension/src/protocol/types.ts (TodoStateMessage) and
+// omp-extension/src/todo_state.ts. Every frame is a FULL snapshot; phases are
 // never empty; `phases: []` means no list (or the TUI dismissed a done one).
 // ---------------------------------------------------------------------------
 
@@ -2426,7 +2545,7 @@ class TodoState extends ServerMessage {
 // ---------------------------------------------------------------------------
 // Plan 65 — send files to the phone.
 // Contract: plan/65-send-file-to-phone.md (table) and
-// pi-extension/src/protocol/types.ts. ext → app: file_offer, file_chunk,
+// omp-extension/src/protocol/types.ts. ext → app: file_offer, file_chunk,
 // file_end; app → ext: file_ack (cumulative next_seq), file_done, file_error;
 // file_cancel travels both ways. Unknown extra fields are ignored.
 // ---------------------------------------------------------------------------
@@ -2660,6 +2779,295 @@ class FileError extends ClientMessage {
 }
 
 // ---------------------------------------------------------------------------
+// Plan 68 — upload a file from the phone to the PC.
+// Contract: plan/68-mobile-parity-pack.md and
+// omp-extension/src/protocol/types.ts. app → ext: upload_start, upload_chunk
+// (≤ 1 MiB raw, base64 in `data`), upload_end, upload_cancel; each carries the
+// usual request `id`. ext → app: upload_ack (cumulative: `seq` is the first
+// chunk the PC still needs), upload_done {path}, upload_error {code, message}.
+// Replies are correlated by `upload_id`. Unknown extra fields are ignored.
+// ---------------------------------------------------------------------------
+
+/// ClientMessage: announces an upload. [sha256] is the lowercase hex digest
+/// of the whole file; the PC verifies it when present.
+class UploadStart extends ClientMessage {
+  final String id;
+  final String uploadId;
+  final String name;
+  final int size;
+  final String? mime;
+  final String? sha256;
+
+  UploadStart({
+    required this.id,
+    required this.uploadId,
+    required this.name,
+    required this.size,
+    this.mime,
+    this.sha256,
+  });
+
+  factory UploadStart.fromJson(Map<String, dynamic> j) => UploadStart(
+    id: j['id'] as String,
+    uploadId: j['upload_id'] as String,
+    name: j['name'] as String,
+    size: (j['size'] as num).toInt(),
+    mime: j['mime'] as String?,
+    sha256: j['sha256'] as String?,
+  );
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'upload_start',
+    'id': id,
+    'upload_id': uploadId,
+    'name': name,
+    'size': size,
+    if (mime != null) 'mime': mime,
+    if (sha256 != null) 'sha256': sha256,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is UploadStart &&
+      other.id == id &&
+      other.uploadId == uploadId &&
+      other.name == name &&
+      other.size == size &&
+      other.mime == mime &&
+      other.sha256 == sha256;
+
+  @override
+  int get hashCode => Object.hash(id, uploadId, name, size, mime, sha256);
+}
+
+/// ClientMessage: one chunk of the file (`data` is base64, `seq` from 0).
+class UploadChunk extends ClientMessage {
+  final String id;
+  final String uploadId;
+  final int seq;
+  final String data;
+
+  UploadChunk({
+    required this.id,
+    required this.uploadId,
+    required this.seq,
+    required this.data,
+  });
+
+  factory UploadChunk.fromJson(Map<String, dynamic> j) => UploadChunk(
+    id: j['id'] as String,
+    uploadId: j['upload_id'] as String,
+    seq: (j['seq'] as num).toInt(),
+    data: j['data'] as String,
+  );
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'upload_chunk',
+    'id': id,
+    'upload_id': uploadId,
+    'seq': seq,
+    'data': data,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is UploadChunk &&
+      other.id == id &&
+      other.uploadId == uploadId &&
+      other.seq == seq &&
+      other.data == data;
+
+  @override
+  int get hashCode => Object.hash(id, uploadId, seq, data);
+}
+
+/// ClientMessage: every chunk is acked; the PC verifies and stores the file.
+/// [sha256] is the lowercase hex digest of the whole file, which the phone only
+/// knows now (it hashes while it sends); the PC verifies it when present.
+class UploadEnd extends ClientMessage {
+  final String id;
+  final String uploadId;
+  final String? sha256;
+
+  UploadEnd({required this.id, required this.uploadId, this.sha256});
+
+  factory UploadEnd.fromJson(Map<String, dynamic> j) => UploadEnd(
+    id: j['id'] as String,
+    uploadId: j['upload_id'] as String,
+    sha256: j['sha256'] as String?,
+  );
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'upload_end',
+    'id': id,
+    'upload_id': uploadId,
+    if (sha256 != null) 'sha256': sha256,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is UploadEnd &&
+      other.id == id &&
+      other.uploadId == uploadId &&
+      other.sha256 == sha256;
+
+  @override
+  int get hashCode => Object.hash(id, uploadId, sha256);
+}
+
+/// ClientMessage: abandon the upload; the PC deletes the partial file.
+class UploadCancel extends ClientMessage {
+  final String id;
+  final String uploadId;
+
+  UploadCancel({required this.id, required this.uploadId});
+
+  factory UploadCancel.fromJson(Map<String, dynamic> j) =>
+      UploadCancel(id: j['id'] as String, uploadId: j['upload_id'] as String);
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'upload_cancel',
+    'id': id,
+    'upload_id': uploadId,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is UploadCancel && other.id == id && other.uploadId == uploadId;
+
+  @override
+  int get hashCode => Object.hash(id, uploadId);
+}
+
+/// ServerMessage: every chunk below [seq] is on the PC's disk, in order
+/// (cumulative); [received] is the number of bytes those chunks hold. Also the
+/// answer to a repeated `upload_start`, a duplicate or out-of-order chunk and
+/// an early `upload_end`, so the phone resumes or resends from [seq].
+///
+/// [inReplyTo] is the request `id` of the frame this ack answers. The answer to
+/// a repeated `upload_start` (a probe) is the PC's position after every frame
+/// the phone sent before it, which is how a lost chunk is told from a slow
+/// link. Null from a PC that predates the echo.
+class UploadAck extends ServerMessage {
+  final String uploadId;
+  final int seq;
+  final int received;
+  final String? inReplyTo;
+
+  const UploadAck({
+    required this.uploadId,
+    required this.seq,
+    required this.received,
+    this.inReplyTo,
+  });
+
+  factory UploadAck.fromJson(Map<String, dynamic> j) => UploadAck(
+    uploadId: j['upload_id'] as String,
+    seq: (j['seq'] as num).toInt(),
+    received: (j['received'] as num?)?.toInt() ?? 0,
+    inReplyTo: j['in_reply_to'] as String?,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'type': 'upload_ack',
+    'upload_id': uploadId,
+    'seq': seq,
+    'received': received,
+    if (inReplyTo != null) 'in_reply_to': inReplyTo,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is UploadAck &&
+      other.uploadId == uploadId &&
+      other.seq == seq &&
+      other.received == received &&
+      other.inReplyTo == inReplyTo;
+
+  @override
+  int get hashCode => Object.hash(uploadId, seq, received, inReplyTo);
+}
+
+/// ServerMessage: the file is stored; [path] is its absolute path on the PC.
+class UploadDone extends ServerMessage {
+  final String uploadId;
+  final String path;
+  final int size;
+
+  const UploadDone({
+    required this.uploadId,
+    required this.path,
+    required this.size,
+  });
+
+  factory UploadDone.fromJson(Map<String, dynamic> j) => UploadDone(
+    uploadId: j['upload_id'] as String,
+    path: j['path'] as String,
+    size: (j['size'] as num?)?.toInt() ?? 0,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'type': 'upload_done',
+    'upload_id': uploadId,
+    'path': path,
+    'size': size,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is UploadDone &&
+      other.uploadId == uploadId &&
+      other.path == path &&
+      other.size == size;
+
+  @override
+  int get hashCode => Object.hash(uploadId, path, size);
+}
+
+/// ServerMessage: the upload failed and the PC removed its partial file.
+/// [code] is open-ended (`too_large`, `no_space`, `invalid_upload`,
+/// `size_mismatch`, `sha_mismatch`, `timeout`, `unknown_upload`,
+/// `too_many_uploads`, `write_failed`, …); [message] is for the user.
+class UploadError extends ServerMessage {
+  final String uploadId;
+  final String code;
+  final String message;
+
+  const UploadError({
+    required this.uploadId,
+    required this.code,
+    required this.message,
+  });
+
+  factory UploadError.fromJson(Map<String, dynamic> j) => UploadError(
+    uploadId: j['upload_id'] as String,
+    code: (j['code'] as String?) ?? 'unknown',
+    message: (j['message'] as String?) ?? '',
+  );
+
+  Map<String, dynamic> toJson() => {
+    'type': 'upload_error',
+    'upload_id': uploadId,
+    'code': code,
+    'message': message,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is UploadError &&
+      other.uploadId == uploadId &&
+      other.code == code &&
+      other.message == message;
+
+  @override
+  int get hashCode => Object.hash(uploadId, code, message);
+}
+
+// ---------------------------------------------------------------------------
 // Mobile Git Diff / Changed Files viewer
 // ---------------------------------------------------------------------------
 
@@ -2852,4 +3260,201 @@ class GitDiffResult extends ServerMessage {
     additions,
     deletions,
   );
+}
+
+/// Reply to [ListFilesRequest]: ranked [files] relative to [root].
+class FilesListResult extends ServerMessage {
+  final String inReplyTo;
+  final String root;
+  final List<String> files;
+  final bool truncated;
+
+  const FilesListResult({
+    required this.inReplyTo,
+    required this.root,
+    required this.files,
+    this.truncated = false,
+  });
+
+  factory FilesListResult.fromJson(Map<String, dynamic> j) => FilesListResult(
+    inReplyTo: (j['in_reply_to'] as String?) ?? '',
+    root: (j['root'] as String?) ?? '',
+    files: [
+      for (final f in (j['files'] as List<dynamic>? ?? const []))
+        if (f is String) f,
+    ],
+    truncated: (j['truncated'] as bool?) ?? false,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is FilesListResult &&
+      other.inReplyTo == inReplyTo &&
+      other.root == root &&
+      other.truncated == truncated &&
+      _filesEqual(other.files, files);
+
+  static bool _filesEqual(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(inReplyTo, root, truncated, Object.hashAll(files));
+}
+
+/// A subfolder in a [DirsListResult] (hidden folders are never listed).
+class WireDirEntry {
+  final String name;
+  final String path;
+  final bool isGit;
+
+  const WireDirEntry({
+    required this.name,
+    required this.path,
+    this.isGit = false,
+  });
+
+  factory WireDirEntry.fromJson(Map<String, dynamic> j) => WireDirEntry(
+    name: (j['name'] as String?) ?? '',
+    path: (j['path'] as String?) ?? '',
+    isGit: (j['is_git'] as bool?) ?? false,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireDirEntry &&
+      other.name == name &&
+      other.path == path &&
+      other.isGit == isGit;
+
+  @override
+  int get hashCode => Object.hash(name, path, isGit);
+}
+
+/// A folder recently used for agent sessions on the PC. [lastUsed] is epoch
+/// milliseconds; null for an always-on folder with no session history.
+class WireRecentDir {
+  final String path;
+  final String name;
+  final int? lastUsed;
+
+  const WireRecentDir({required this.path, required this.name, this.lastUsed});
+
+  factory WireRecentDir.fromJson(Map<String, dynamic> j) => WireRecentDir(
+    path: (j['path'] as String?) ?? '',
+    name: (j['name'] as String?) ?? '',
+    lastUsed: (j['last_used'] as num?)?.toInt(),
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireRecentDir &&
+      other.path == path &&
+      other.name == name &&
+      other.lastUsed == lastUsed;
+
+  @override
+  int get hashCode => Object.hash(path, name, lastUsed);
+}
+
+/// Reply to [ListDirsRequest]. [parent] is null at the filesystem root;
+/// [dirs] is sorted by name and may be [truncated]; [recent] is newest first.
+class DirsListResult extends ServerMessage {
+  final String inReplyTo;
+  final String path;
+  final String? parent;
+  final String home;
+  final List<WireDirEntry> dirs;
+  final List<WireRecentDir> recent;
+  final bool truncated;
+
+  const DirsListResult({
+    required this.inReplyTo,
+    required this.path,
+    this.parent,
+    required this.home,
+    required this.dirs,
+    this.recent = const [],
+    this.truncated = false,
+  });
+
+  factory DirsListResult.fromJson(Map<String, dynamic> j) => DirsListResult(
+    inReplyTo: (j['in_reply_to'] as String?) ?? '',
+    path: (j['path'] as String?) ?? '',
+    parent: j['parent'] as String?,
+    home: (j['home'] as String?) ?? '',
+    dirs: [
+      for (final d in (j['dirs'] as List<dynamic>? ?? const []))
+        if (d is Map<String, dynamic>) WireDirEntry.fromJson(d),
+    ],
+    recent: [
+      for (final r in (j['recent'] as List<dynamic>? ?? const []))
+        if (r is Map<String, dynamic>) WireRecentDir.fromJson(r),
+    ],
+    truncated: (j['truncated'] as bool?) ?? false,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is DirsListResult &&
+      other.inReplyTo == inReplyTo &&
+      other.path == path &&
+      other.parent == parent &&
+      other.home == home &&
+      other.truncated == truncated &&
+      _listEquals(other.dirs, dirs) &&
+      _listEquals(other.recent, recent);
+
+  @override
+  int get hashCode => Object.hash(
+    inReplyTo,
+    path,
+    parent,
+    home,
+    truncated,
+    Object.hashAll(dirs),
+    Object.hashAll(recent),
+  );
+}
+
+/// Reply to [SpawnSessionRequest]: the session is starting in [cwd] and will
+/// appear as a live room named [name]. [daemonId] is the supervisor's id for it.
+class SpawnResult extends ServerMessage {
+  final String inReplyTo;
+  final String cwd;
+  final String name;
+  final bool persistent;
+  final String daemonId;
+
+  const SpawnResult({
+    required this.inReplyTo,
+    required this.cwd,
+    required this.name,
+    this.persistent = false,
+    this.daemonId = '',
+  });
+
+  factory SpawnResult.fromJson(Map<String, dynamic> j) => SpawnResult(
+    inReplyTo: (j['in_reply_to'] as String?) ?? '',
+    cwd: (j['cwd'] as String?) ?? '',
+    name: (j['name'] as String?) ?? '',
+    persistent: (j['persistent'] as bool?) ?? false,
+    daemonId: (j['daemon_id'] as String?) ?? '',
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is SpawnResult &&
+      other.inReplyTo == inReplyTo &&
+      other.cwd == cwd &&
+      other.name == name &&
+      other.persistent == persistent &&
+      other.daemonId == daemonId;
+
+  @override
+  int get hashCode => Object.hash(inReplyTo, cwd, name, persistent, daemonId);
 }

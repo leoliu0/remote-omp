@@ -114,7 +114,7 @@ class HomeFilterEmptyState extends StatelessWidget {
     final (String title, String subtitle) = switch (filter) {
       HomeFilter.online => (
         'No sessions online',
-        'Live sessions appear here when a paired Pi is active.',
+        'Live sessions appear here when a paired PC is active.',
       ),
       HomeFilter.offline => (
         'No offline sessions',
@@ -122,7 +122,7 @@ class HomeFilterEmptyState extends StatelessWidget {
       ),
       HomeFilter.all => (
         'Nothing here…',
-        'When a paired Pi opens a session, it shows up here.',
+        'When a paired PC opens a session, it shows up here.',
       ),
     };
     return Center(

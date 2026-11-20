@@ -271,7 +271,7 @@ void main() {
     expect(state.pendingUiRequest?.id, 'tool:f1', reason: 'modal stays open');
     expect(
       state.pendingUiError,
-      'Not connected — check the link to Pi and retry.',
+      'Not connected — check the link to the PC and retry.',
     );
     expect(h.ch.sent, isEmpty);
 
@@ -552,6 +552,48 @@ void main() {
       ),
     );
     await done;
+
+    h.vm.dispose();
+    h.sync.dispose();
+    h.conn.dispose();
+  });
+
+  // `skills_list` is the last frame of a sync reply, so the slash menu only
+  // sees it if the viewmodel repaints when it lands.
+  test('skills_list: the host command list reaches the viewmodel, an older '
+      'peer clears it', () async {
+    final h = await harness();
+    expect(h.vm.hostCommands, isNull, reason: 'nothing known before a reply');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    var repaints = 0;
+    h.vm.addListener(() => repaints++);
+
+    h.ch.push(
+      SkillsList(
+        inReplyTo: 'sync-1',
+        skills: const [
+          WireSkill(name: 'skill:audit-paper', description: 'Audit a paper'),
+        ],
+        commands: const [
+          WireCommand(
+            name: 'compact',
+            description: 'Compact the conversation',
+            source: 'builtin',
+          ),
+        ],
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(h.vm.hostCommands!.map((c) => c.name), ['compact']);
+    expect(h.vm.dynamicSkills.single.name, 'skill:audit-paper');
+    expect(repaints, greaterThan(0), reason: 'the menu must repaint');
+
+    // The same app now talks to an older extension: no `commands` in its reply.
+    h.ch.push(SkillsList(inReplyTo: 'sync-2', skills: const []));
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(h.vm.hostCommands, isNull);
 
     h.vm.dispose();
     h.sync.dispose();

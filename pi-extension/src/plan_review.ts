@@ -1,28 +1,52 @@
-// omp plan mode on the paired clients (app + web).
+// omp plan mode on the paired clients (app + web), through omp 19's native
+// extension API. Nothing here presses keys or types lines.
 //
 // omp finishes planning when the agent writes the plan's slug to
-// `xd://propose`; the `write` result carries `details.xdev.inner =
-// { planFilePath, title, planExists }`, omp aborts the turn and opens its
-// "Plan Review" overlay. The overlay is a TUI component (not `ctx.ui.select`),
-// so no extension API can answer it. This module forwards the review to the
-// clients (plan markdown + omp's exact choices) and answers it the way a
-// terminal user does: with the overlay's own keys. Plan state (omp's
-// `mode_change` entries) is mirrored to the clients as `plan_state`.
+// `xd://propose`, aborts that turn and opens its "Plan Review" overlay. It
+// tells extensions about the overlay — `plan_review_requested{reviewId,
+// planContent, options}` when it opens, `plan_review_resolved{reviewId,
+// choice, by}` when it closes — and takes answers through
+// `ctx.resolvePlanReview(reviewId, choice, {feedback?})`.
+// `ctx.getPendingPlanReview()` replays an open review to a client that
+// connects later, `ctx.openPlanReview()` re-opens the newest plan, and plan
+// mode itself is `ctx.sessionModes` (`set` to enter/exit, `mode_changed` to
+// follow; see omp_modes.ts).
 //
-// The overlay always opens with its action list focused and the first option
-// selected, so the key sequences below are exact for an untouched overlay.
-// When the terminal user has pressed keys since it opened, the overlay is
-// closed (Esc) and re-opened with `/plan-review` before the keys are sent.
+// Interactive (TUI) only: a headless `--mode rpc` session has no plan mode,
+// no review and no `ctx.sessionModes`.
+//
+// The wire keeps the action names the apps already speak. Each maps to one
+// omp choice id (`PlanReviewChoice`, omp extensions/types.ts):
+//
+//   approve_execute → execute   fresh session, runs the plan
+//   approve_compact → compact   compacts this conversation, then runs it
+//   approve_keep    → keep      runs it in the current context (omp disables
+//                               it above 95 % context fill)
+//   refine          → refine    + the feedback text, which omp submits as the
+//                               next planning prompt (blank feedback refused)
+//   save_quit       → save      writes the plan to the project folder; omp
+//                               leaves the review open ("Save and quit" no
+//                               longer exists in omp)
+//
+// omp has no dismissal for an extension: a client's "Keep planning" only
+// closes that client's sheet. The overlay stays up on the PC until someone
+// answers it there or a client answers/refines it.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { z } from "zod";
 
+import {
+  modeChangedState,
+  modeSetError,
+  parseModeState,
+  type OmpModeState,
+  type OmpSessionModes,
+} from "./omp_modes.js";
 import type {
   ExtensionUiResponseWire,
   PlanReviewAction,
-  PlanReviewAnswerWire,
   PlanReviewOptionWire,
   PlanStatus,
   ServerMessage,
@@ -30,176 +54,152 @@ import type {
 
 export const PLAN_REVIEW_ID_PREFIX = "plan-review:";
 
-/** omp's plan mode (`/plan`, the plan review overlay, its confirms) exists
- *  only in its interactive TUI: RPC mode, which remote-pi daemons run, has no
+/** omp's plan mode (`/plan`, the plan review, `ctx.sessionModes`) exists only
+ *  in its interactive TUI: RPC mode, which remote-omp daemons run, has no
  *  `/plan` command and never opens a plan review. */
 export const PLAN_MODE_NEEDS_TERMINAL =
   "omp's plan mode needs its interactive terminal (TUI). This agent runs headless (daemon / RPC mode), so /plan and the plan review are not available here.";
 
-const DOWN = "\x1b[B";
-const UP = "\x1b[A";
-const ENTER = "\r";
-const ESC = "\x1b";
+/** omp's stable plan review choice ids. */
+export type OmpPlanReviewChoice = "execute" | "compact" | "keep" | "refine" | "save";
 
-/** Keys from the overlay's initial state to each choice, then Enter. Down
- *  stops on the last option ("Save and quit"), so `refine`/`save_quit` never
- *  depend on whether omp disabled "keep context". */
-const OVERLAY_KEYS: Record<PlanReviewAction, readonly string[]> = {
-  approve_execute: [ENTER],
-  approve_compact: [DOWN, ENTER],
-  approve_keep: [DOWN, DOWN, ENTER],
-  refine: [DOWN, DOWN, DOWN, DOWN, DOWN, UP, ENTER],
-  save_quit: [DOWN, DOWN, DOWN, DOWN, DOWN, ENTER],
+const ACTION_OF: Record<OmpPlanReviewChoice, PlanReviewAction> = {
+  execute: "approve_execute",
+  compact: "approve_compact",
+  keep: "approve_keep",
+  refine: "refine",
+  save: "save_quit",
 };
 
-/** omp's option labels, in overlay order (interactive-mode handlePlanApproval). */
-const LABELS: Record<Exclude<PlanReviewAction, "approve_keep">, string> = {
-  approve_execute: "Approve and execute",
-  approve_compact: "Approve and compact context",
-  refine: "Refine plan",
-  save_quit: "Save and quit",
+const CHOICE_OF: Record<PlanReviewAction, OmpPlanReviewChoice> = {
+  approve_execute: "execute",
+  approve_compact: "compact",
+  approve_keep: "keep",
+  refine: "refine",
+  save_quit: "save",
 };
-const KEEP_LABEL = "Approve and keep context";
-/** omp disables "keep context" above this context fill (percent). */
-const KEEP_CONTEXT_MAX_PERCENT = 95;
 
-/** Gap between injected key chunks; omp's input parser waits ~50 ms after a
- *  lone Esc before treating it as Esc, so Esc gets a longer gap. */
-const KEY_GAP_MS = 60;
-const ESC_GAP_MS = 200;
-/** Two Escs closer than 500 ms on omp's idle editor open the tree selector. */
-const ESC_REPEAT_MS = 650;
-/** omp shows the overlay right after the propose turn's agent_end / the
- *  `/plan-review` input; give it time to take focus before keys go in. */
-const OVERLAY_SETTLE_MS = 400;
-/** "Save and quit" asks for a path in a second overlay; Enter keeps omp's
- *  suggestion. */
-const SAVE_PATH_SETTLE_MS = 800;
-/** omp's "Exit plan mode?" confirm (Yes is preselected). */
-const EXIT_CONFIRM_SETTLE_MS = 400;
-/** Our own keys echo through the terminal input listener for a moment. */
-const SELF_INPUT_WINDOW_MS = 250;
-/** Max `/plan` steps one plan_mode request may take (plan → paused → none). */
-const MAX_MODE_STEPS = 3;
-const MODE_STEP_MS = 700;
+/** Texts the clients show on a plan review's sheet (same-id `notify`). */
+const TEXT = {
+  approved: "Plan approved.",
+  refining: "Refining the plan.",
+  closedPlanning: "Plan review closed — still planning.",
+  closed: "Plan review closed.",
+  replaced: "A newer plan replaced this one.",
+  gone: "This plan review is no longer open.",
+  outOfDate: "This plan review is out of date.",
+  dismissed:
+    "Review closed here. It is still open on the PC: tap Review plan to reopen it here, or send a message to keep planning.",
+  saved: "Plan saved to the project folder. The review is still open: pick an option to continue.",
+  refineNeedsText: "Refine needs your feedback: write what should change in the field above.",
+  notAccepted: "omp did not accept that choice. Try again, or answer on the PC.",
+  unknownChoice: "Unknown plan review choice.",
+} as const;
 
-export type OmpPlanMode = "plan" | "plan_paused" | "none";
+/** What this module reads of omp's `PlanReviewRequestedEvent`. */
+const ReviewEvent = z.object({
+  reviewId: z.string().min(1),
+  title: z.string(),
+  planFilePath: z.string(),
+  planContent: z.string(),
+  options: z.array(z.object({ id: z.string(), label: z.string(), disabled: z.boolean().optional() })),
+});
 
-export interface ContextUsage {
-  tokens: number | null;
-  contextWindow: number | null;
-  percent: number | null;
+/** What this module reads of omp's `PlanReviewResolvedEvent`. */
+const ResolvedEvent = z.object({
+  reviewId: z.string().min(1),
+  choice: z.string().optional(),
+});
+
+interface ReviewData {
+  reviewId: string;
+  title: string;
+  planFilePath: string;
+  planContent: string;
+  /** In omp's order, on the wire's action names. */
+  options: PlanReviewOptionWire[];
+}
+
+function parseReview(raw: unknown): ReviewData | null {
+  const parsed = ReviewEvent.safeParse(raw);
+  if (!parsed.success) return null;
+  const { reviewId, title, planFilePath, planContent } = parsed.data;
+  const options: PlanReviewOptionWire[] = [];
+  for (const o of parsed.data.options) {
+    if (!Object.hasOwn(ACTION_OF, o.id)) continue; // a choice newer than this module
+    const action = ACTION_OF[o.id as OmpPlanReviewChoice];
+    options.push(o.disabled === true ? { action, label: o.label, disabled: true } : { action, label: o.label });
+  }
+  return { reviewId, title, planFilePath, planContent, options };
 }
 
 export interface PlanReviewHost {
   broadcast(msg: ServerMessage): void;
-  /** omp runs an interactive terminal whose input we can drive. */
-  hasTerminal(): boolean;
-  /** The agent is not running (omp's overlay only exists while idle). */
+  /** `ctx.resolvePlanReview(reviewId, choice, input)`; false = omp refused. */
+  resolve(reviewId: string, choice: OmpPlanReviewChoice, input?: { feedback: string }): boolean;
+  /** `ctx.getPendingPlanReview()`: the open review as omp reported it. */
+  pending(): unknown;
+  /** `ctx.openPlanReview()`: true once a review is awaiting an answer. */
+  open(): Promise<boolean>;
+  /** `ctx.sessionModes`; undefined when the host has none (headless). */
+  modes(): OmpSessionModes | undefined;
+  /** `ctx.isIdle()`. */
   isIdle(): boolean;
-  /** Feed raw keys to omp's terminal input, as a keypress would. */
-  pressKeys(keys: string): void;
-  /** Submit one line through omp's editor (slash commands); false on failure. */
-  typeLine(text: string): boolean;
-  /** Send `text` as the user's next prompt, visible on every client. */
-  submitPrompt(text: string): void;
-  /** omp's current plan mode (latest `mode_change` entry). */
-  mode(): OmpPlanMode;
-  readPlan(planFilePath: string): string | null;
-  /** omp's "Exit plan mode?" condition: a non-empty plan file exists. */
-  hasPlanFile(planFilePath: string | null): boolean;
-  /** The newest local `*plan.md` (what `/plan-review` opens). */
+  /** The newest local plan file with content (what omp's `/plan-review` opens). */
   latestPlanFile(): string | null;
-  contextUsage(): ContextUsage | null;
-  setTimer(fn: () => void, ms: number): void;
-  now(): number;
+  /** Show a prompt that omp submits itself (Refine's feedback) on every
+   *  client, and make it the open turn. `id` is the phone's own message id. */
+  echoPrompt(text: string, id?: string): void;
 }
 
-interface Review {
+interface Review extends ReviewData {
+  /** Wire id: `plan-review:<omp reviewId>`. */
   id: string;
+  /** The request frame has gone to the clients. */
+  announced: boolean;
+  /** A client closed its sheet (Keep planning): omp's overlay is still up. */
+  dismissed: boolean;
+}
+
+interface PlanRef {
   planFilePath: string;
   title: string;
-  content: string | null;
-  options: PlanReviewOptionWire[];
-  /** The overlay has taken focus (keys can go in). */
-  open: boolean;
-  /** Terminal keys arrived since it opened: its cursor is unknown. */
-  touched: boolean;
 }
 
-type Choice = { action: PlanReviewAction | "cancel"; feedback?: string };
+type Pick = { kind: "pick"; action: PlanReviewAction; feedback: string };
+type Choice = Pick | { kind: "cancel" };
 
 export interface PlanReviewController {
-  /** tool_execution_end — opens a review on omp's propose result. */
-  onToolEnd(event: { toolName?: unknown; toolCallId?: unknown; isError?: unknown; result?: unknown }): void;
-  onAgentStart(): void;
-  onAgentEnd(): void;
-  /** session_switch / session_start / session_compact. */
-  onSessionChange(): void;
-  /** `input` event (terminal typing and injected lines alike). */
-  onInput(text: string): void;
-  /** Raw terminal input (ctx.ui.onTerminalInput). */
-  onTerminalInput(data: string): void;
-  /** Re-read omp's mode; publishes `plan_state` on change. */
-  refresh(): void;
+  /** omp's `plan_review_requested`: the overlay opened. */
+  onReviewRequested(event: unknown): void;
+  /** omp's `plan_review_resolved`: the overlay closed (any way). */
+  onReviewResolved(event: unknown): void;
+  /** omp's `mode_changed`: plan mode entered, paused or left. */
+  onModeChanged(event: unknown): void;
+  /** Reconcile with omp (agent start/end, session start/switch/compact): the
+   *  open review as omp holds it, and the plan mode state. */
+  sync(): void;
   /** Routes a client answer; false when `msg` is not a plan review answer. */
   respond(msg: ExtensionUiResponseWire): boolean;
   /** Client `plan_mode` action; resolves to an error message or null. */
-  planMode(action: "enter" | "exit" | "review"): string | null;
+  planMode(action: "enter" | "exit" | "review"): Promise<string | null>;
+  /** A message typed on a client while the review is open is the planning
+   *  follow-up: answers the review with Refine. False when no review is open
+   *  (or omp refused); the caller then handles the message itself. */
+  refine(feedback: string, promptId?: string): boolean;
   /** Frames a (re)syncing client needs: state, then the open review. */
   syncFrames(): ServerMessage[];
-  /** omp's plan review overlay has the terminal's focus: a line typed into
-   *  omp's editor now would land on the overlay (Enter picks an option). */
+  /** omp's plan review overlay is up (it has the terminal's focus, so a line
+   *  typed into omp's editor now would land on it). */
   reviewOpen(): boolean;
+  /** Forget everything (tests). */
+  reset(): void;
 }
 
-/** omp's `xd://propose` result (`write` tool, `details.xdev`) — the fields
- *  omp's own interactive handler checks before opening the review. */
-const ProposeResult = z.object({
-  details: z.object({
-    xdev: z.object({
-      tool: z.literal("propose"),
-      mode: z.literal("execute"),
-      inner: z.object({ planFilePath: z.string(), title: z.string(), planExists: z.boolean() }),
-    }),
-  }),
-});
+const IDLE_STATE_KEY = JSON.stringify({ type: "plan_state", status: "idle" });
 
-export function proposedPlan(result: unknown): { planFilePath: string; title: string } | null {
-  const parsed = ProposeResult.safeParse(result);
-  if (!parsed.success) return null;
-  const { planFilePath, title } = parsed.data.details.xdev.inner;
-  return { planFilePath, title };
-}
-
-/** "19k", "1.5k", "1m" — omp's compact token counts in the keep-context label. */
-export function compactTokens(n: number): string {
-  const v = Math.max(0, Math.round(n));
-  if (v < 1000) return String(v);
-  if (v < 1_000_000) return v < 10_000 ? `${trimFixed(v / 1000)}k` : `${Math.round(v / 1000)}k`;
-  return `${trimFixed(v / 1_000_000)}m`;
-}
-
-function trimFixed(x: number): string {
-  return x.toFixed(1).replace(/\.0$/, "");
-}
-
-/** omp's option list for the current context fill. */
-export function planReviewOptions(usage: ContextUsage | null): PlanReviewOptionWire[] {
-  const keepLabel =
-    usage && usage.tokens !== null && usage.contextWindow
-      ? `${KEEP_LABEL} (~${compactTokens(usage.tokens)} / ${compactTokens(usage.contextWindow)})`
-      : KEEP_LABEL;
-  const keepDisabled = usage?.percent != null && usage.percent > KEEP_CONTEXT_MAX_PERCENT;
-  return [
-    { action: "approve_execute", label: LABELS.approve_execute },
-    { action: "approve_compact", label: LABELS.approve_compact },
-    keepDisabled
-      ? { action: "approve_keep", label: keepLabel, disabled: true }
-      : { action: "approve_keep", label: keepLabel },
-    { action: "refine", label: LABELS.refine },
-    { action: "save_quit", label: LABELS.save_quit },
-  ];
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 const PlanAnswer = z.object({
@@ -207,38 +207,36 @@ const PlanAnswer = z.object({
   feedback: z.string().optional(),
 });
 
-/** A client's answer → the overlay choice (rich `plan`, cancel, or a bare
- *  select label from a client that only knows the plain select). */
+/** A client's answer → the choice (rich `plan`, cancel, or a bare select
+ *  label from a client that only knows the plain select). */
 function choiceOf(msg: ExtensionUiResponseWire, options: readonly PlanReviewOptionWire[]): Choice | null {
-  if ("cancelled" in msg && msg.cancelled === true) return { action: "cancel" };
+  if ("cancelled" in msg && msg.cancelled === true) return { kind: "cancel" };
   if ("plan" in msg) {
     const parsed = PlanAnswer.safeParse(msg.plan);
     if (!parsed.success) return null;
-    const { action } = parsed.data;
-    const feedback = parsed.data.feedback?.trim() ?? "";
-    return action === "refine" && feedback ? { action, feedback } : { action };
+    return { kind: "pick", action: parsed.data.action, feedback: parsed.data.feedback?.trim() ?? "" };
   }
   if ("value" in msg && typeof msg.value === "string") {
-    const match = options.find((o) => o.label === msg.value) ??
-      options.find((o) => o.action === "approve_keep" && msg.value.startsWith(KEEP_LABEL));
-    return match ? { action: match.action } : null;
+    // The keep label carries a context size that moves between renders.
+    const keepPrefix = options.find((o) => o.action === "approve_keep")?.label.replace(/\s*\(.*\)$/, "");
+    const match =
+      options.find((o) => o.label === msg.value) ??
+      (keepPrefix ? options.find((o) => o.action === "approve_keep" && msg.value.startsWith(keepPrefix)) : undefined);
+    return match ? { kind: "pick", action: match.action, feedback: "" } : null;
   }
   return null;
 }
 
 export function createPlanReview(host: PlanReviewHost): PlanReviewController {
   let review: Review | null = null;
-  /** The last review's id + plan, kept after it closes so a late client
-   *  answer to it can re-open the overlay. */
-  let lastReview: { id: string; planFilePath: string; title: string } | null = null;
-  /** Answer received before the overlay took focus. */
-  let pending: { id: string; choice: Choice } | null = null;
-  let selfInputUntil = 0;
+  /** The last reviewed plan, kept after its review closes (while still
+   *  planning) so a client can offer "Review plan". */
+  let lastPlan: PlanRef | null = null;
+  /** The last mode state omp reported, for a `getState()` that throws. */
+  let lastModes: OmpModeState | null = null;
   /** Last broadcast `plan_state`. Clients get the state with every
    *  session_sync, so an unchanged idle state is never broadcast. */
-  let published: string | null = JSON.stringify({ type: "plan_state", status: "idle" });
-  let modeTarget: { mode: "plan" | "none"; steps: number; nextAt: number } | null = null;
-  let reopenSeq = 0;
+  let published: string | null = IDLE_STATE_KEY;
 
   function notify(id: string, message: string, warning = false): void {
     host.broadcast({
@@ -260,27 +258,44 @@ export function createPlanReview(host: PlanReviewHost): PlanReviewController {
       plan: {
         plan_file_path: r.planFilePath,
         title: r.title,
-        content: r.content,
+        content: r.planContent,
         options: r.options,
       },
     };
   }
 
+  function modes(): OmpModeState | null {
+    const session = host.modes();
+    if (!session) return null;
+    try {
+      const parsed = parseModeState(session.getState());
+      if (parsed) lastModes = parsed;
+    } catch {
+      /* keep the last state omp reported */
+    }
+    return lastModes;
+  }
+
+  function planStatus(): "inactive" | "active" | "paused" {
+    return modes()?.plan?.status ?? "inactive";
+  }
+
   function stateFrame(): ServerMessage {
-    const mode = host.mode();
+    const mode = planStatus();
     const status: PlanStatus = review
       ? "review"
-      : mode === "plan"
+      : mode === "active"
         ? "active"
-        : mode === "plan_paused"
+        : mode === "paused"
           ? "paused"
           : "idle";
-    // While planning, name the plan omp would review (and whose presence
-    // makes omp ask "Exit plan mode?"): the last proposal, else the newest
-    // local plan file.
-    const latest = status === "active" && !lastReview ? host.latestPlanFile() : null;
-    const plan = review ?? (status === "active" ? lastReview : null) ??
-      (latest ? { planFilePath: latest, title: planTitle(latest) } : null);
+    // While planning, name the plan omp would review: the last proposal, else
+    // the newest local plan file.
+    let plan: PlanRef | null = review;
+    if (!plan && status === "active") {
+      const latest = lastPlan ? null : host.latestPlanFile();
+      plan = lastPlan ?? (latest ? { planFilePath: latest, title: planTitle(latest) } : null);
+    }
     return plan
       ? { type: "plan_state", status, plan_file_path: plan.planFilePath, title: plan.title }
       : { type: "plan_state", status };
@@ -294,260 +309,230 @@ export function createPlanReview(host: PlanReviewHost): PlanReviewController {
     host.broadcast(frame);
   }
 
-  function openReview(id: string, planFilePath: string, title: string, openAfterMs: number | null): void {
-    if (review && review.id !== id) notify(review.id, "A newer plan replaced this one.");
-    review = {
-      id,
-      planFilePath,
-      title,
-      content: host.readPlan(planFilePath),
-      options: planReviewOptions(host.contextUsage()),
-      open: false,
-      touched: false,
-    };
-    lastReview = { id, planFilePath, title };
-    host.broadcast(requestFrame(review));
-    publish();
-    if (openAfterMs !== null) settleOpen(review, openAfterMs);
+  function announce(r: Review): void {
+    r.announced = true;
+    host.broadcast(requestFrame(r));
   }
 
-  function settleOpen(r: Review, ms: number): void {
-    host.setTimer(() => {
-      if (review !== r) return;
-      r.open = true;
-      const queued = pending;
-      pending = null;
-      if (queued) apply(r, queued.choice);
-    }, ms);
+  function setReview(data: ReviewData, announceIt: boolean): void {
+    if (review && review.reviewId !== data.reviewId) notify(review.id, TEXT.replaced);
+    const same = review?.reviewId === data.reviewId ? review : null;
+    review = {
+      ...data,
+      id: `${PLAN_REVIEW_ID_PREFIX}${data.reviewId}`,
+      announced: same?.announced ?? false,
+      dismissed: same?.dismissed ?? false,
+    };
+    lastPlan = { planFilePath: data.planFilePath, title: data.title };
+    if (announceIt) announce(review);
+    publish();
   }
 
   function closeReview(message: string): void {
     if (!review) return;
     const id = review.id;
     review = null;
-    pending = null;
     notify(id, message);
+    if (planStatus() !== "active") lastPlan = null;
     publish();
   }
 
-  /** Sends `keys` one chunk at a time, then `after`. */
-  function press(keys: readonly string[], after?: () => void): void {
-    let delay = 0;
-    for (const key of keys) {
-      host.setTimer(() => {
-        selfInputUntil = host.now() + SELF_INPUT_WINDOW_MS;
-        host.pressKeys(key);
-      }, delay);
-      delay += key === ESC ? ESC_GAP_MS : KEY_GAP_MS;
-    }
-    if (after) host.setTimer(after, delay);
-  }
-
-  /** Esc, pause, Esc: closes the overlay even when one of its note editors is
-   *  open (that takes the first Esc). On omp's idle editor two Escs this far
-   *  apart do nothing (closer than 500 ms they open the tree selector). */
-  function escapeOverlay(after: () => void): void {
-    press([ESC]);
-    host.setTimer(() => press([ESC], () => host.setTimer(after, ESC_REPEAT_MS)), ESC_REPEAT_MS);
-  }
-
-  function apply(r: Review, choice: Choice): void {
-    if (choice.action === "cancel") {
-      if (r.touched) escapeOverlay(() => {});
-      else press([ESC]);
-      closeReview("Plan review closed — still planning.");
+  /** The state omp holds is the truth: adopt a review it reports that we never
+   *  heard of (extension loaded late, event missed), drop one it no longer
+   *  has, keep the options current (the PC's tier slider re-measures them).
+   *  A host that cannot be asked (`pending` throws) leaves the state alone. */
+  function sync(): void {
+    let native: ReviewData | null;
+    try {
+      native = parseReview(host.pending());
+    } catch {
+      publish();
       return;
     }
-    const action = choice.action;
-    const option = r.options.find((o) => o.action === action);
-    if (option?.disabled) {
-      notify(r.id, `"${option.label}" is disabled: the context is too full.`, true);
+    if (native && review?.reviewId === native.reviewId) {
+      review = { ...review, options: native.options, planContent: native.planContent };
+    } else if (native) {
+      setReview(native, false);
+      return;
+    } else if (review) {
+      closeReview(planStatus() === "active" ? TEXT.closed : TEXT.approved);
       return;
     }
-    press(OVERLAY_KEYS[action], () => {
-      if (action === "save_quit") host.setTimer(() => host.pressKeys(ENTER), SAVE_PATH_SETTLE_MS);
-      if (action === "refine" && choice.feedback) host.submitPrompt(choice.feedback);
-    });
-    closeReview(
-      action === "refine"
-        ? "Refining the plan."
-        : action === "save_quit"
-          ? "Plan saved; plan mode closed."
-          : "Plan approved.",
-    );
+    if (!review && planStatus() !== "active") lastPlan = null;
+    publish();
   }
 
-  /** The overlay's state is unknown (the terminal used it, or it may have been
-   *  closed there): close it, re-open it fresh with `/plan-review`, then apply
-   *  the choice once it has focus (onInput → settleOpen → pending). */
-  function reopenAndApply(id: string, choice: Choice): void {
-    pending = { id, choice };
-    escapeOverlay(() => {
-      if (pending?.id === id && !host.typeLine("/plan-review")) {
-        pending = null;
-        notify(id, "Could not reach the terminal to open the plan review.", true);
-      }
-    });
+  /** Plan mode left while a review is up: omp closed it with the mode. */
+  function reconcileMode(): void {
+    if (review && planStatus() !== "active") closeReview(TEXT.closed);
+    else if (!review && planStatus() !== "active") lastPlan = null;
+    publish();
   }
 
-  /** One `/plan` toward `modeTarget` (plan → plan_paused → none, or back);
-   *  false when the terminal could not take it. */
-  function stepMode(): boolean {
-    if (!modeTarget) return true;
-    const mode = host.mode();
-    const reached = modeTarget.mode === "plan" ? mode === "plan" : mode === "none";
-    if (reached || modeTarget.steps >= MAX_MODE_STEPS) {
-      modeTarget = null;
-      return true;
+  function resolvedText(choice: string | undefined): string {
+    if (choice === "refine") return TEXT.refining;
+    if (choice === "execute" || choice === "compact" || choice === "keep") return TEXT.approved;
+    return planStatus() === "active" ? TEXT.closedPlanning : TEXT.closed;
+  }
+
+  function answer(current: Review, pick: Pick): void {
+    const choice = CHOICE_OF[pick.action];
+    const option = current.options.find((o) => o.action === pick.action);
+    if (!option) {
+      notify(current.id, "omp's plan review does not offer that choice.", true);
+      return;
     }
-    if (host.now() < modeTarget.nextAt) return true;
-    modeTarget.steps += 1;
-    modeTarget.nextAt = host.now() + MODE_STEP_MS;
-    // omp asks "Exit plan mode?" (Yes preselected) when a plan file exists.
-    const confirmExit = mode === "plan" && host.hasPlanFile(lastReview?.planFilePath ?? null);
-    if (!host.typeLine("/plan")) {
-      modeTarget = null;
-      return false;
+    if (option.disabled) {
+      notify(
+        current.id,
+        choice === "keep"
+          ? `"${option.label}" is disabled: the context is too full.`
+          : `"${option.label}" is disabled by omp.`,
+        true,
+      );
+      return;
     }
-    if (confirmExit) host.setTimer(() => host.pressKeys(ENTER), EXIT_CONFIRM_SETTLE_MS);
-    host.setTimer(() => controller.refresh(), MODE_STEP_MS);
-    return true;
+    if (choice === "refine" && !pick.feedback) {
+      notify(current.id, TEXT.refineNeedsText, true);
+      return;
+    }
+    let accepted: boolean;
+    try {
+      accepted = host.resolve(current.reviewId, choice, choice === "refine" ? { feedback: pick.feedback } : undefined);
+    } catch (err) {
+      notify(current.id, `Could not reach omp's plan review: ${errorMessage(err)}`, true);
+      return;
+    }
+    if (!accepted) {
+      // Refused: omp closed or replaced the review meanwhile, or rejected the choice.
+      sync();
+      if (review?.reviewId === current.reviewId) notify(current.id, TEXT.notAccepted, true);
+      else notify(current.id, review ? TEXT.outOfDate : TEXT.gone);
+      return;
+    }
+    // `save` writes the plan and leaves omp's review open; the sheet stays too.
+    if (choice === "save") {
+      notify(current.id, TEXT.saved, true);
+      return;
+    }
+    if (choice === "refine") host.echoPrompt(pick.feedback);
+    if (review?.reviewId === current.reviewId) closeReview(choice === "refine" ? TEXT.refining : TEXT.approved);
   }
 
   const controller: PlanReviewController = {
-    onToolEnd(event) {
-      if (event.toolName !== "write" || event.isError === true) return;
-      const plan = proposedPlan(event.result);
-      if (!plan) return;
-      const callId = typeof event.toolCallId === "string" ? event.toolCallId : String(host.now());
-      // omp opens the overlay once the aborted turn ends (onAgentEnd).
-      openReview(`${PLAN_REVIEW_ID_PREFIX}${callId}`, plan.planFilePath, plan.title, null);
+    onReviewRequested(event) {
+      const data = parseReview(event);
+      if (data) setReview(data, true);
     },
 
-    onAgentStart() {
-      if (review) closeReview(host.mode() === "plan" ? "Plan review closed." : "Plan approved.");
-      publish();
+    onReviewResolved(event) {
+      const parsed = ResolvedEvent.safeParse(event);
+      if (!parsed.success) return;
+      if (review?.reviewId === parsed.data.reviewId) closeReview(resolvedText(parsed.data.choice));
+      else publish();
     },
 
-    onAgentEnd() {
-      if (review && !review.open) settleOpen(review, OVERLAY_SETTLE_MS);
-      publish();
+    onModeChanged(event) {
+      const state = modeChangedState(event);
+      if (state) lastModes = state;
+      reconcileMode();
     },
 
-    onSessionChange() {
-      if (review) closeReview(host.mode() === "plan" ? "Plan review closed." : "Plan approved.");
-      if (host.mode() !== "plan") lastReview = null;
-      publish();
-    },
-
-    onInput(text) {
-      const line = text.trim();
-      if (line === "/plan-review") {
-        if (host.mode() !== "plan") return;
-        const path = host.latestPlanFile() ?? lastReview?.planFilePath;
-        if (!path) return;
-        const title = lastReview?.planFilePath === path ? lastReview.title : planTitle(path);
-        const id = pending?.id ?? `${PLAN_REVIEW_ID_PREFIX}reopen-${host.now()}-${++reopenSeq}`;
-        if (review?.id === id) review = null; // same client prompt: replace in place
-        openReview(id, path, title, OVERLAY_SETTLE_MS);
-        return;
-      }
-      // Anything else typed into omp's editor means the overlay is closed.
-      if (review) closeReview("Plan review closed in the terminal.");
-      if (line === "/plan" || line.startsWith("/plan ")) host.setTimer(() => controller.refresh(), MODE_STEP_MS);
-    },
-
-    onTerminalInput(data) {
-      if (!review?.open || host.now() < selfInputUntil) return;
-      review.touched = true;
-      // A lone Esc on the overlay is omp's cancel (back to planning). If it
-      // only closed a note editor inside the overlay, a later client answer
-      // still works: it closes and re-opens the overlay first.
-      if (data === ESC) closeReview("Plan review closed in the terminal.");
-    },
-
-    refresh() {
-      if (review && host.mode() !== "plan") {
-        closeReview("Plan approved.");
-      }
-      if (host.mode() !== "plan" && !review) lastReview = null;
-      stepMode();
-      publish();
-    },
+    sync,
 
     respond(msg) {
       if (!msg.id.startsWith(PLAN_REVIEW_ID_PREFIX)) return false;
-      const current = review?.id === msg.id ? review : null;
-      const choice = choiceOf(msg, current?.options ?? planReviewOptions(host.contextUsage()));
+      const reviewId = msg.id.slice(PLAN_REVIEW_ID_PREFIX.length);
+      sync(); // omp's truth first: the answer may race a pick on the PC
+      const current = review?.reviewId === reviewId ? review : null;
+      if (!current) {
+        notify(msg.id, review ? TEXT.outOfDate : TEXT.gone);
+        return true;
+      }
+      const choice = choiceOf(msg, current.options);
       if (!choice) {
-        notify(msg.id, "Unknown plan review choice.", true);
-        return true;
+        notify(msg.id, TEXT.unknownChoice, true);
+      } else if (choice.kind === "cancel") {
+        current.dismissed = true;
+        notify(current.id, TEXT.dismissed);
+      } else {
+        answer(current, choice);
       }
-      if (host.mode() !== "plan") {
-        notify(msg.id, "Plan mode is no longer active.");
-        return true;
-      }
-      if (!host.hasTerminal()) {
-        notify(msg.id, PLAN_MODE_NEEDS_TERMINAL, true);
-        return true;
-      }
-      if (current) {
-        if (!current.open) pending = { id: msg.id, choice };
-        else if (!current.touched || choice.action === "cancel") apply(current, choice);
-        else reopenAndApply(msg.id, choice);
-        return true;
-      }
-      if (review || lastReview?.id !== msg.id || !host.isIdle()) {
-        notify(msg.id, "This plan review is out of date.");
-        return true;
-      }
-      // The review was closed in the terminal (Esc) but the client still
-      // wants it: re-open omp's overlay and apply the choice there.
-      if (choice.action === "cancel") {
-        notify(msg.id, "Plan review closed — still planning.");
-        return true;
-      }
-      reopenAndApply(msg.id, choice);
       return true;
     },
 
-    planMode(action) {
-      const mode = host.mode();
+    async planMode(action) {
+      const session = host.modes();
+      if (!session) return PLAN_MODE_NEEDS_TERMINAL;
+      sync();
       if (action === "review") {
-        if (mode !== "plan") return "Plan mode is not active.";
         if (review) {
-          host.broadcast(requestFrame(review));
+          review.dismissed = false;
+          announce(review);
           return null;
         }
-        if (!host.latestPlanFile() && !lastReview) return "No plan to review yet.";
-        return host.typeLine("/plan-review") ? null : "Could not reach the terminal.";
+        let opened: boolean;
+        try {
+          opened = await host.open();
+        } catch (err) {
+          return `Could not open the plan review: ${errorMessage(err)}`;
+        }
+        sync(); // adopts the review omp just opened when its event has not arrived
+        const adopted = review as Review | null; // `sync` reassigns it; TS keeps the earlier narrowing
+        if (adopted && !adopted.announced) announce(adopted);
+        if (adopted) return null;
+        if (opened) return TEXT.gone;
+        if (planStatus() !== "active") return "Plan mode is not active.";
+        if (!host.isIdle()) return "The agent is working: open the review once it is idle.";
+        return "No plan to review yet.";
       }
-      const target = action === "enter" ? "plan" : "none";
-      if ((target === "plan" && mode === "plan") || (target === "none" && mode === "none")) return null;
-      if (!host.hasTerminal()) return PLAN_MODE_NEEDS_TERMINAL;
-      modeTarget = { mode: target, steps: 0, nextAt: 0 };
-      if (review) {
-        // `/plan` must not reach an open overlay (its Enter would pick an
-        // option): close the overlay first.
-        closeReview("Plan mode closed.");
-        modeTarget.nextAt = Number.POSITIVE_INFINITY;
-        escapeOverlay(() => {
-          if (modeTarget) modeTarget.nextAt = 0;
-          controller.refresh();
-        });
-        return null;
+      let result: unknown;
+      try {
+        result = await session.set({ mode: "plan", action });
+      } catch (err) {
+        return `Could not ${action} plan mode: ${errorMessage(err)}`;
       }
-      return stepMode() ? null : "Could not reach the terminal.";
+      reconcileMode();
+      return modeSetError(result);
+    },
+
+    refine(feedback, promptId) {
+      sync();
+      const current = review;
+      const text = feedback.trim();
+      if (!current || !text) return false;
+      let accepted: boolean;
+      try {
+        accepted = host.resolve(current.reviewId, "refine", { feedback: text });
+      } catch {
+        return false;
+      }
+      if (!accepted) {
+        sync();
+        return false;
+      }
+      host.echoPrompt(feedback, promptId);
+      if (review?.reviewId === current.reviewId) closeReview(TEXT.refining);
+      return true;
     },
 
     syncFrames() {
+      sync();
       const frames: ServerMessage[] = [stateFrame()];
-      if (review) frames.push(requestFrame(review));
+      if (review && !review.dismissed) frames.push(requestFrame(review));
       return frames;
     },
 
     reviewOpen() {
-      return review?.open === true;
+      sync();
+      return review !== null;
+    },
+
+    reset() {
+      review = null;
+      lastPlan = null;
+      lastModes = null;
+      published = IDLE_STATE_KEY;
     },
   };
   return controller;
@@ -562,30 +547,8 @@ function planTitle(planFilePath: string): string {
 
 /** The slice of omp's SessionManager this module reads. */
 interface SessionManagerLike {
-  /** omp session entries; `mode_change` entries carry the mode (`plan`, `plan_paused`, `none`, `goal`, …). */
-  getEntries?: () => ReadonlyArray<{ type?: string; mode?: string }>;
   getArtifactsDir?: () => string | null | undefined;
   getSessionId?: () => string | null | undefined;
-}
-
-/** omp's plan mode: the latest `mode_change` entry (`plan`, `plan_paused`,
- *  or anything else = off). A new session has none. */
-export function ompPlanMode(sessionManager: unknown): OmpPlanMode {
-  const sm = sessionManager as SessionManagerLike | null | undefined;
-  let entries: ReadonlyArray<{ type?: string; mode?: string }> | undefined;
-  try {
-    entries = sm?.getEntries?.();
-  } catch {
-    return "none";
-  }
-  if (!Array.isArray(entries)) return "none";
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i];
-    if (entry?.type === "mode_change") {
-      return entry.mode === "plan" || entry.mode === "plan_paused" ? entry.mode : "none";
-    }
-  }
-  return "none";
 }
 
 /** omp's `local://` root for the session (omp: `<artifacts dir>/local`, else
@@ -636,4 +599,13 @@ export function localPlanFiles(sessionManager: unknown): string[] {
   } catch {
     return [];
   }
+}
+
+/** The newest local plan with content: what omp's `/plan-review` would open. */
+export function latestPlanFile(sessionManager: unknown, cwd: string): string | null {
+  return (
+    localPlanFiles(sessionManager).find(
+      (path) => (readPlanFile(path, sessionManager, cwd)?.trim().length ?? 0) > 0,
+    ) ?? null
+  );
 }

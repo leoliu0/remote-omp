@@ -5,7 +5,7 @@ import { platform as osPlatform, userInfo } from "node:os";
  *
  * Node's `net` implements local IPC differently per OS:
  *   - **POSIX**: a filesystem Unix-domain socket — a `.sock` path under
- *     `~/.pi/remote/`. The file lingers if the owner crashes (stale-socket
+ *     `~/.omp/remote/`. The file lingers if the owner crashes (stale-socket
  *     cleanup via `unlink` matters).
  *   - **Windows**: a **named pipe** (`\\.\pipe\<name>`). There is NO file —
  *     `existsSync`/`unlink` don't apply, and the pipe vanishes automatically
@@ -33,7 +33,7 @@ function safe(s: string): string {
 
 /**
  * Resolve a local-IPC address. On Windows returns a per-user named pipe
- * (`\\.\pipe\remote-pi-<suffix>-<user>`); on POSIX returns `filePath` (the
+ * (`\\.\pipe\remote-omp-<suffix>-<user>`); on POSIX returns `filePath` (the
  * filesystem UDS path) unchanged.
  */
 export function ipcAddress(
@@ -44,7 +44,7 @@ export function ipcAddress(
 ): string {
   if (plat === "win32") {
     const u = safe((user ?? userInfo().username) || "user");
-    return `\\\\.\\pipe\\remote-pi-${safe(suffix)}-${u}`;
+    return `\\\\.\\pipe\\remote-omp-${safe(suffix)}-${u}`;
   }
   return filePath;
 }

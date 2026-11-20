@@ -717,7 +717,7 @@ describe("BrokerRemote.handleIncoming (anti-spoof + injection)", () => {
     expect((acks[0]!.env.body as { status: string }).status).toBe("received");
   });
 
-  test("target prefix is display-only after Relay selected this Pi", () => {
+  test("target prefix is display-only after Relay selected this PC", () => {
     const fakePi = new FakePi();
     const { broker, injectFromRemote } = makeFakeBroker();
     const logs: string[] = [];

@@ -137,7 +137,7 @@ const _peer = PeerRecord(
   pairedAt: '2026-09-20T12:00:00Z',
   nickname: 'Desk',
   roomId: 'main',
-  harness: PiHarness(name: 'Pi coding agent', version: '0.5.0'),
+  harness: PiHarness(name: 'omp coding agent', version: '0.5.0'),
 );
 
 Future<PairingStorage> _storage(

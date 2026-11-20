@@ -104,6 +104,12 @@ abstract class IActionsRepository extends Repository {
   /// omp plan mode command (`plan_mode`); the resulting state arrives as a
   /// `plan_state` frame, not in the reply.
   Future<void> setPlanMode(PlanModeAction action);
+
+  /// Plan 68 — re-runs the failed turn (omp's `/retry`) without a second user
+  /// message. Throws [ActionFailure] with the extension's refusal text
+  /// (nothing to retry, busy, unsupported) or `timeout` from an extension too
+  /// old to know the action.
+  Future<void> retryTurn();
   /// Fetches the model catalogue. When [forceRefresh] is `false`
   /// (default) returns the cached catalogue for the current
   /// (peer, room) session if one exists; otherwise hits the Pi.
@@ -144,6 +150,11 @@ abstract class IActionsRepository extends Repository {
 
   /// Fetches the unified diff for one repo-relative [path].
   Future<GitDiffResult> gitDiff(String path, {bool staged = false});
+
+  /// Composer `@` autocomplete: ranked files under the session cwd matching
+  /// [query]. Older extensions never answer, so this fails with a timeout
+  /// [ActionFailure]; callers treat that as "no suggestions".
+  Future<FilesListResult> listFiles(String query, {int? limit});
 }
 
 class ActionsRepository extends Repository implements IActionsRepository {
@@ -265,6 +276,11 @@ class ActionsRepository extends Repository implements IActionsRepository {
         p.timeout.cancel();
         if (!p.completer.isCompleted) p.completer.complete(msg);
       case GitDiffResult(:final inReplyTo):
+        final p = _pending.remove(inReplyTo);
+        if (p == null) return;
+        p.timeout.cancel();
+        if (!p.completer.isCompleted) p.completer.complete(msg);
+      case FilesListResult(:final inReplyTo):
         final p = _pending.remove(inReplyTo);
         if (p == null) return;
         p.timeout.cancel();
@@ -405,6 +421,11 @@ class ActionsRepository extends Repository implements IActionsRepository {
   }
 
   @override
+  Future<void> retryTurn() async {
+    await _dispatch<void>((id) => RetryTurnRequest(id: id));
+  }
+
+  @override
   Future<ModelsCatalogue> listModels({bool forceRefresh = false}) async {
     final key = _sessionKey();
     if (!forceRefresh) {
@@ -487,6 +508,12 @@ class ActionsRepository extends Repository implements IActionsRepository {
   Future<GitDiffResult> gitDiff(String path, {bool staged = false}) =>
       _dispatch<GitDiffResult>(
         (id) => GitDiffRequest(id: id, path: path, staged: staged),
+      );
+
+  @override
+  Future<FilesListResult> listFiles(String query, {int? limit}) =>
+      _dispatch<FilesListResult>(
+        (id) => ListFilesRequest(id: id, query: query, limit: limit),
       );
 
   Future<T> _dispatch<T>(ClientMessage Function(String id) builder) async {

@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "./omp-api.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createExtensionUiBridge } from "./extension_ui_bridge.js";
 import type { ExtensionUiResponseWire, ServerMessage } from "./protocol/types.js";
@@ -489,13 +489,13 @@ describe("extension_ui_bridge", () => {
     });
   });
 
-  describe("remote-pi:confirm (TUI-only prompts such as TeX Guard)", () => {
+  describe("remote-omp:confirm (TUI-only prompts such as TeX Guard)", () => {
     const setup = () => {
       const bus = fakeBus();
       const sent: ServerMessage[] = [];
       const bridge = createExtensionUiBridge(fakePi(bus), (m) => sent.push(m))!;
-      bus.emit("remote-pi:confirm:request", { id: "r1", title: "Apply 2 edits?", message: "```diff\n-a\n+b\n```" });
-      const answers = () => bus.emitted.filter((e) => e.name === "remote-pi:confirm:answer").map((e) => e.data);
+      bus.emit("remote-omp:confirm:request", { id: "r1", title: "Apply 2 edits?", message: "```diff\n-a\n+b\n```" });
+      const answers = () => bus.emitted.filter((e) => e.name === "remote-omp:confirm:answer").map((e) => e.data);
       return { bus, sent, bridge, answers };
     };
 
@@ -521,14 +521,14 @@ describe("extension_ui_bridge", () => {
     it("No and the sheet's cancel both answer not confirmed", () => {
       const { bus, bridge, answers } = setup();
       bridge.respond({ type: "extension_ui_response", id: "confirm:r1", confirmed: false });
-      bus.emit("remote-pi:confirm:request", { id: "r2", title: "t", message: "m" });
+      bus.emit("remote-omp:confirm:request", { id: "r2", title: "t", message: "m" });
       bridge.respond({ type: "extension_ui_response", id: "confirm:r2", cancelled: true });
       expect(answers()).toEqual([{ id: "r1", confirmed: false }, { id: "r2", confirmed: false }]);
     });
 
     it("a terminal answer closes the app prompt; a late app answer is dropped", () => {
       const { bus, sent, bridge, answers } = setup();
-      bus.emit("remote-pi:confirm:closed", { id: "r1" });
+      bus.emit("remote-omp:confirm:closed", { id: "r1" });
       expect(sent.at(-1)).toMatchObject({ id: "confirm:r1", method: "notify" });
       bridge.respond({ type: "extension_ui_response", id: "confirm:r1", confirmed: true });
       expect(answers()).toEqual([]);

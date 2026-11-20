@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * MCP server that bridges Claude Code to the remote-pi agent mesh.
+ * MCP server that bridges Claude Code to the remote-omp agent mesh.
  *
  * Spawned by Claude Code as an MCP server subprocess (stdio).
  * Joins the mesh through the shared `MeshNode` abstraction — the SAME
- * composition the Pi extension uses — so Claude is a first-class mesh
- * participant: it can lead the local UDS broker when no Pi/daemon is up,
+ * composition the omp extension uses — so Claude is a first-class mesh
+ * participant: it can lead the local UDS broker when no omp session/daemon is up,
  * and (as leader) bring up its own cross-PC relay bridge with its own
  * Pi-key. As a follower it rides the existing leader's bridge.
  *
- * Launched by `remote-pi claude` (registers this in Claude's local MCP
+ * Launched by `remote-omp claude` (registers this in Claude's local MCP
  * scope). Args: [--cwd <path>] [--name <agentName>] [--no-bridge]
- * Env: REMOTE_PI_MCP_CWD, REMOTE_PI_MCP_NAME
+ * Env: REMOTE_OMP_MCP_CWD, REMOTE_OMP_MCP_NAME
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -32,11 +32,11 @@ const _argv = process.argv.slice(2);
 // Claude sets as this subprocess's `process.cwd()`. We deliberately do NOT use
 // CLAUDE_PROJECT_DIR: that's the git repo root, which would collapse every
 // monorepo subproject (app/, relay/, …) into one identity + one lock. The
-// `remote-pi claude` launcher therefore registers us WITHOUT a baked `--cwd`,
+// `remote-omp claude` launcher therefore registers us WITHOUT a baked `--cwd`,
 // so one shared local-scope entry self-identifies per session. `--cwd` and
-// REMOTE_PI_MCP_CWD remain as explicit overrides (tests / manual launches).
-let _cwd = process.env["REMOTE_PI_MCP_CWD"] ?? process.cwd();
-let _nameOverride = process.env["REMOTE_PI_MCP_NAME"];
+// REMOTE_OMP_MCP_CWD remain as explicit overrides (tests / manual launches).
+let _cwd = process.env["REMOTE_OMP_MCP_CWD"] ?? process.cwd();
+let _nameOverride = process.env["REMOTE_OMP_MCP_NAME"];
 let _bridgeEnabled = true;
 
 for (let i = 0; i < _argv.length; i++) {
@@ -71,7 +71,7 @@ const { url: relayUrl } = resolveRelayUrl();
 // would corrupt the MCP protocol. Claude Code captures an MCP server's stderr
 // into its mcp-logs, which is where these land for debugging.
 function logErr(msg: string): void {
-  process.stderr.write(`[remote-pi-mesh ${isoNow()}] ${msg}\n`);
+  process.stderr.write(`[remote-omp-mesh ${isoNow()}] ${msg}\n`);
 }
 
 // Survive stray async failures. This process runs background work (relay WS
@@ -89,7 +89,7 @@ process.on("uncaughtException", (err) => {
 });
 
 // Canonicalize so the (cwd, name) the broker keys us by matches roomIdForCwd
-// and the Pi extension's own register (symlinked cwds map to one identity).
+// and the omp extension's own register (symlinked cwds map to one identity).
 let _canonCwd = _cwd;
 try { _canonCwd = realpathSync(_cwd); } catch { /* cwd missing — use raw path */ }
 
@@ -98,8 +98,8 @@ const mesh = new MeshNode({
   name: AGENT_NAME,
   cwd: _canonCwd,  // plan/38: register with (cwd, name) → address `<cwd>@<name>`
   auditPath: AUDIT_PATH,
-  // Own Pi-key cross-PC bridge — active only when this node leads (no Pi /
-  // daemon already hosting the broker for this cwd). As a follower the
+  // Own Pi-key cross-PC bridge — active only when this node leads (no omp
+  // session / daemon already hosting the broker for this cwd). As a follower the
   // bridge stays dormant and cross-PC rides the existing leader.
   ...(_bridgeEnabled ? { bridge: { relayUrl, cwd: _cwd } } : {}),
   // Silent: stdout is the MCP JSON-RPC channel and stderr noise isn't wanted.
@@ -115,11 +115,11 @@ let degradedReason = "connecting to the mesh…";
 // ── MCP server setup ──────────────────────────────────────────────────────────
 
 const mcp = new McpServer(
-  { name: "remote-pi-mesh", version: "0.4.3" },
+  { name: "remote-omp-mesh", version: "0.4.3" },
   {
     capabilities: { experimental: { "claude/channel": {} } },
     instructions: [
-      `You are connected to the remote-pi agent mesh as "${AGENT_NAME}".`,
+      `You are connected to the remote-omp agent mesh as "${AGENT_NAME}".`,
       "At the start of each turn call get_messages to check for incoming messages from other agents.",
       "Use list_peers to discover available agents.",
       "Use agent_send to send messages — pass the exact address returned by list_peers (form `<cwd>@<name>`, `<pc>:` prefix cross-PC) VERBATIM; never build one by hand.",
@@ -192,7 +192,7 @@ function isoNow(): string {
 }
 
 // Background lock+join state. The cwd lock enforces the per-folder singleton
-// (at most one remote-pi agent — Pi OR Claude — per folder; a second peer with
+// (at most one remote-omp agent — omp OR Claude — per folder; a second peer with
 // the same cwd-derived name would be a ghost).
 //
 // We retry only briefly — just enough to ride out a restart RACE (the previous
@@ -231,7 +231,7 @@ async function main(): Promise<void> {
     };
     inbox.push(msg);
     // Push via claude/channel so Claude wakes immediately (when the session
-    // was launched with --dangerously-load-development-channels server:remote-pi-mesh).
+    // was launched with --dangerously-load-development-channels server:remote-omp-mesh).
     void mcp.server.notification({
       method: "notifications/claude/channel",
       params: { content: `📨 Message from ${msg.from}:\n${JSON.stringify(msg.body, null, 2)}` },
@@ -248,8 +248,8 @@ async function main(): Promise<void> {
   process.stdin.on("close", shutdown);
   await mcp.connect(transport);
 
-  // Only join the mesh if this folder is an actual remote-pi agent — i.e. it
-  // has a local config (written by the `remote-pi claude` wizard) or an
+  // Only join the mesh if this folder is an actual remote-omp agent — i.e. it
+  // has a local config (written by the `remote-omp claude` wizard) or an
   // explicit name override. `-s local` MCP registrations are inherited by
   // EVERY claude session in the git repo, so without this gate a plain claude
   // opened in any subfolder would auto-grab that folder's lock and join as a
@@ -261,7 +261,7 @@ async function main(): Promise<void> {
     void tryJoinMesh();
   } else {
     degradedReason =
-      `this folder is not a remote-pi agent (no config). Run "remote-pi claude" ` +
+      `this folder is not a remote-omp agent (no config). Run "remote-omp claude" ` +
       `here to make it one. Mesh tools are idle.`;
   }
 }
@@ -276,7 +276,7 @@ async function tryJoinMesh(): Promise<void> {
   if (!res.ok) {
     _lockAttempt++;
     if (_lockAttempt >= MAX_JOIN_ATTEMPTS) {
-      _failLoud(`folder already served by another remote-pi agent (lock: ${res.lockPath})`);
+      _failLoud(`folder already served by another remote-omp agent (lock: ${res.lockPath})`);
     }
     degradedReason = `folder busy (lock ${res.lockPath}); attempt ${_lockAttempt}/${MAX_JOIN_ATTEMPTS}`;
     _scheduleJoinRetry(JOIN_RETRY_MS);
@@ -320,8 +320,8 @@ function _failLoud(reason: string): never {
   logErr(
     `FATAL: ${reason}. Exiting so the failure is visible. cwd=${_cwd}. ` +
     `Most likely you launched claude in the WRONG FOLDER, or this folder ` +
-    `already has a running remote-pi agent (a duplicate session). ` +
-    `Launch one agent per folder via "remote-pi claude" from the project dir.`,
+    `already has a running remote-omp agent (a duplicate session). ` +
+    `Launch one agent per folder via "remote-omp claude" from the project dir.`,
   );
   process.exit(1);
 }
@@ -342,6 +342,6 @@ function shutdown(): void {
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`[remote-pi-mesh] fatal: ${String(err)}\n`);
+  process.stderr.write(`[remote-omp-mesh] fatal: ${String(err)}\n`);
   process.exit(1);
 });

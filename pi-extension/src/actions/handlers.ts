@@ -1,7 +1,7 @@
 /**
  * Plan/28 Wave B — typed action handlers.
  *
- * Each handler maps one `ClientMessage` action to a public Pi SDK call,
+ * Each handler maps one `ClientMessage` action to a public omp SDK call,
  * and replies with `action_ok` or `action_error`. Handlers take their
  * dependencies as parameters so the index.ts wiring is one-liner and
  * unit tests can pass fakes without touching global state.
@@ -30,8 +30,8 @@ import type {
 } from "../protocol/types.js";
 /**
  * Structural subset of the SDK's `Model<Api>` interface (defined in
- * `@earendil-works/pi-ai`, which is a transitive dep — not re-exported by
- * `@earendil-works/pi-coding-agent`'s main entry). Capturing just the
+ * `@oh-my-pi/pi-ai`, which is a transitive dep — not re-exported by
+ * `@oh-my-pi/pi-coding-agent`'s main entry). Capturing just the
  * fields we touch keeps the handler decoupled from the SDK's full Model
  * surface and avoids a direct dep on `pi-ai`.
  */
@@ -45,18 +45,12 @@ export interface SdkModelLike {
    *  `("text" | "image")[]`; we read `includes("image")` for the `vision`
    *  flag. Optional here so tests can omit it (treated as text-only). */
   input?: ("text" | "image")[];
-  /** Per-model thinking map (upstream pi ≥0.84). Missing keys = provider
-   *  default (supported); an explicit `null` marks the level unsupported. */
-  thinkingLevelMap?: Partial<Record<string, string | null>> | null;
-  /** omp-only thinking metadata; `efforts` are the levels the model accepts,
-   *  in omp's order. Upstream pi models never carry this key. */
+  /** omp thinking metadata; `efforts` are the levels the model accepts, in
+   *  omp's order. Some omp reasoning models (xai/grok-4) lack the key and get
+   *  omp's `["off", "auto"]`. */
   thinking?: { efforts?: readonly string[] } | null;
 }
 
-/** All upstream-pi wire thinking levels in picker order. */
-const ALL_THINKING_LEVELS: ThinkingLevel[] = [
-  "auto", "off", "minimal", "low", "medium", "high", "xhigh", "max",
-];
 /** omp's effort ladder (`Effort` in omp's catalog); `efforts` only hold these. */
 const OMP_EFFORTS: readonly ThinkingLevel[] = [
   "minimal", "low", "medium", "high", "xhigh", "max",
@@ -76,36 +70,21 @@ export const PROVIDER_ALIASES: Record<string, string[]> = {
   "kimi-code": ["kimi-coding", "moonshotai", "kimi", "kimi-code"],
 };
 
-/** Levels the host lets the user pick for `model`; non-reasoning → ["off"].
+/** Levels omp lets the user pick for `model`; non-reasoning → ["off"].
  *
- *  omp (`omp`): exactly omp's `getAvailableEffortSelectors()`, the list its
- *  Shift+Tab cycle and `/effort` walk — `["off", "auto", ...thinking.efforts]`
- *  in that order (a model without `thinking` gets `["off", "auto"]`).
- *
- *  upstream pi: pi-ai's `getSupportedThinkingLevels` plus `"auto"` first —
- *  a level mapped to `null` is unsupported, "xhigh"/"max" need an explicit
- *  non-null mapping, the standard levels are supported by default. */
+ *  Exactly omp's `getAvailableEffortSelectors()`, the list its Shift+Tab
+ *  cycle and `/effort` walk — `["off", "auto", ...thinking.efforts]` in that
+ *  order (a model without `thinking` gets `["off", "auto"]`). */
 export function supportedThinkingLevels(
-  model: Pick<SdkModelLike, "reasoning" | "thinkingLevelMap" | "thinking">,
-  omp: boolean = model.thinking !== undefined,
+  model: Pick<SdkModelLike, "reasoning" | "thinking">,
 ): ThinkingLevel[] {
   if (!model.reasoning) return ["off"];
-  if (omp) {
-    const efforts = model.thinking?.efforts ?? [];
-    return [
-      "off",
-      "auto",
-      ...efforts.filter((e): e is ThinkingLevel => OMP_EFFORTS.includes(e as ThinkingLevel)),
-    ];
-  }
-  const map = model.thinkingLevelMap;
-  return ALL_THINKING_LEVELS.filter((level) => {
-    if (level === "auto") return true;
-    const mapped = map?.[level];
-    if (mapped === null) return false;
-    if (level === "xhigh" || level === "max") return mapped !== undefined;
-    return true;
-  });
+  const efforts = model.thinking?.efforts ?? [];
+  return [
+    "off",
+    "auto",
+    ...efforts.filter((e): e is ThinkingLevel => OMP_EFFORTS.includes(e as ThinkingLevel)),
+  ];
 }
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
@@ -138,7 +117,7 @@ export function _loadOmpModels(): WireModel[] {
               for (const m of list) {
                 if (!m || typeof m !== "object") continue;
                 // Rows are omp's own registry cache: always the omp rule.
-                models.push(wireFromModel({ ...m, provider: m.provider || row.provider_id }, true));
+                models.push(wireFromModel({ ...m, provider: m.provider || row.provider_id }));
               }
             }
           } catch {}
@@ -199,7 +178,7 @@ export interface ActionCtx {
   /**
    * Live session registry from Pi's extension ctx. Includes providers/models
    * registered dynamically via `pi.registerProvider(...)`, unlike the fallback
-   * disk-backed registry remote-pi can build on its own.
+   * disk-backed registry remote-omp can build on its own.
    */
   modelRegistry?: ActionModelRegistry;
 }
@@ -215,18 +194,11 @@ export interface ActionModelRegistry {
 }
 
 /** Project a SDK `Model<Api>` onto the wire schema. Shared by list_models
- *  and the `current` echo, so both stay in lockstep. `omp` selects omp's
- *  thinking-level rule (see `supportedThinkingLevels`); callers holding the
- *  whole catalog pass the host-wide answer. */
-export function wireFromModel(
-  model: Model<any>,
-  omp: boolean = model?.thinking !== undefined,
-): WireModel {
+ *  and the `current` echo, so both stay in lockstep. Thinking levels follow
+ *  omp's rule (see `supportedThinkingLevels`). */
+export function wireFromModel(model: Model<any>): WireModel {
   const reasoning = Boolean(model?.reasoning);
-  const levels = supportedThinkingLevels(
-    { reasoning, thinkingLevelMap: model?.thinkingLevelMap, thinking: model?.thinking },
-    omp,
-  );
+  const levels = supportedThinkingLevels({ reasoning, thinking: model?.thinking });
   return {
     id: model?.id || "unknown",
     name: model?.name || model?.id || "unknown",
@@ -319,7 +291,7 @@ export async function handleSessionNew(
   onReplaced?: (freshCtx: ActionCtx) => void,
 ): Promise<boolean> {
   // Returns true only when a fresh session was actually created. index.ts
-  // keys the Pi-side reset (clear _messageBuffer, restamp _sessionStartedAt,
+  // keys the omp-side reset (clear _messageBuffer, restamp _sessionStartedAt,
   // fan out an empty session_history) off this signal — a `cancelled`/errored
   // new-session must NOT reset, so we return runAsync's success boolean.
   return runAsync(sender, msg, "session_new", async () => {
@@ -388,7 +360,7 @@ export async function handleModelSet(
 ): Promise<void> {
   await runAsync(sender, msg, "model_set", async () => {
     if (!pi || typeof pi.setModel !== "function") {
-      throw new Error("Pi agent runtime is not ready to change models");
+      throw new Error("omp agent runtime is not ready to change models");
     }
     const liveReg = ctx?.modelRegistry ?? reg;
     liveReg.refresh();
@@ -556,13 +528,9 @@ export function handleListModels(
     try {
       current = ctx?.getModel?.();
     } catch {}
-    // omp models carry `thinking`, upstream pi models never do. Decide per
-    // catalog: some omp reasoning models (xai/grok-4) lack the key yet still
-    // get omp's ["off", "auto"].
-    const omp = [...regModels, current].some((m) => m?.thinking !== undefined);
     let models: WireModel[] = [];
     try {
-      models = regModels.map((m) => wireFromModel(m, omp));
+      models = regModels.map((m) => wireFromModel(m));
     } catch {}
 
     if (process.env["VITEST"] !== "true") {
@@ -578,7 +546,7 @@ export function handleListModels(
       }
     }
 
-    let currentWire: WireModel | undefined = current ? wireFromModel(current, omp) : undefined;
+    let currentWire: WireModel | undefined = current ? wireFromModel(current) : undefined;
     if (!currentWire && currentModelName && models.length > 0) {
       currentWire = models.find(
         (m) =>

@@ -1,7 +1,7 @@
 // Plan 66 — omp model roles frames.
 //
 // Mirrors the contract in plan/66-omp-model-roles.md (the TypeScript side
-// lives in pi-extension/src/protocol/types.ts):
+// lives in omp-extension/src/protocol/types.ts):
 //   ClientMessage:  list_model_roles, model_role_set
 //   ServerMessage:  model_roles (reply when in_reply_to is set, broadcast
 //                   otherwise). model_role_set replies with action_ok /

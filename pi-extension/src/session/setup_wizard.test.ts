@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { mkdtempSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runSetupWizard, type WizardUI } from "./setup_wizard.js";
@@ -15,7 +15,7 @@ const YES = "Yes";
 const NO = "No";
 
 function tmpCwd(): string {
-  return mkdtempSync(join(tmpdir(), "pi-wiz-"));
+  return mkdtempSync(join(tmpdir(), "omp-wiz-"));
 }
 
 /** Sequencing helper: returns a UI mock that replays canned answers in order. */
@@ -89,9 +89,9 @@ describe("runSetupWizard (2 prompts + confirm)", () => {
   });
 
   test("2c) ui.input gets the default as its string placeholder (omp calls placeholder.trim())", async () => {
-    // Pi SDK / omp signature: input(title, placeholder?: string, opts?).
+    // omp signature: input(title, placeholder?: string, opts?).
     // omp 18.12 runs `placeholder?.trim()`, so an options object crashed
-    // `/remote-pi` on a fresh dir with "t?.trim is not a function".
+    // `/remote-omp` on a fresh dir with "t?.trim is not a function".
     const placeholders: unknown[] = [];
     const queue = ["", YES, YES];
     const ui = {
@@ -153,7 +153,7 @@ describe("runSetupWizard (2 prompts + confirm)", () => {
     expect(
       ui.notifies.some((n) =>
         n.msg.includes("relay forwards encrypted messages") ||
-        n.msg.includes("Remote Pi mobile app"),
+        n.msg.includes("Remote OMP mobile app"),
       ),
     ).toBe(true);
     // No daemon-context notify — daemon mode was removed from the wizard.
@@ -179,7 +179,7 @@ describe("localConfig integration with the wizard", () => {
     });
   });
 
-  test("/remote-pi setup with existing config: wizard uses current as defaults", async () => {
+  test("/remote-omp setup with existing config: wizard uses current as defaults", async () => {
     // Simulates the data flow without invoking the real handler.
     const cwd = tmpCwd();
     saveLocalConfig(cwd, {
@@ -206,9 +206,8 @@ describe("localConfig integration with the wizard", () => {
 
   test("legacy config without auto_start_relay → treated as true", () => {
     const cwd = tmpCwd();
-    const cfgPath = join(cwd, ".pi", "remote-pi", "config.json");
-    const { mkdirSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
-    mkdirSync(join(cwd, ".pi", "remote-pi"), { recursive: true });
+    const cfgPath = join(cwd, ".omp", "remote-omp", "config.json");
+    mkdirSync(join(cwd, ".omp", "remote-omp"), { recursive: true });
     writeFileSync(
       cfgPath,
       JSON.stringify({ agent_name: "legacy" }, null, 2),
@@ -232,9 +231,8 @@ describe("localConfig integration with the wizard", () => {
     // local UDS mesh is always a single fixed session — the field has no
     // meaning. Load should ignore it without error and not persist it back.
     const cwd = tmpCwd();
-    const cfgPath = join(cwd, ".pi", "remote-pi", "config.json");
-    const { mkdirSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
-    mkdirSync(join(cwd, ".pi", "remote-pi"), { recursive: true });
+    const cfgPath = join(cwd, ".omp", "remote-omp", "config.json");
+    mkdirSync(join(cwd, ".omp", "remote-omp"), { recursive: true });
     writeFileSync(
       cfgPath,
       JSON.stringify({
@@ -255,7 +253,7 @@ describe("defaultAgentName", () => {
   // plan/38 decision D: the name is the LEAF only — the cwd now travels as its
   // own address axis, so the old `parent/folder` prefix is gone.
   test("returns the leaf (basename) of the cwd", () => {
-    expect(defaultAgentName("/Users/jacob/Projects/remote_pi")).toBe("remote_pi");
+    expect(defaultAgentName("/Users/jacob/Projects/remote_omp")).toBe("remote_omp");
     expect(defaultAgentName("/home/dev/myapp/backend")).toBe("backend");
     expect(defaultAgentName("/foo")).toBe("foo");
   });

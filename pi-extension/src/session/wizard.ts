@@ -1,12 +1,12 @@
 import { listSessions, sessionHasSock } from "./global_config.js";
 
 /**
- * Minimal wizard for `/remote-pi join` with no argument.
+ * Minimal wizard for `/remote-omp join` with no argument.
  *
- * The Pi SDK `ExtensionUIContext.select` accepts a title and string options
+ * The omp `ExtensionUIContext.select` accepts a title and string options
  * and returns the chosen option. Wizard offers existing sessions + an "explicit
  * create" sentinel. If user picks the sentinel, prompts for a fresh name via
- * `select`-with-option-other (Pi's "Other" escape hatch). Returns the picked
+ * `select`-with-option-other (omp's "Other" escape hatch). Returns the picked
  * session name, or null if user cancelled.
  */
 export interface WizardUI {
@@ -31,7 +31,7 @@ export async function joinWizard(
   if (!picked) return null;
   if (picked === CREATE_SENTINEL) {
     // Caller is expected to follow up with a name prompt via ctx.ui.select
-    // (the Pi SDK input dialog). For non-interactive contexts we return the
+    // (the omp input dialog). For non-interactive contexts we return the
     // default name.
     return defaultName;
   }

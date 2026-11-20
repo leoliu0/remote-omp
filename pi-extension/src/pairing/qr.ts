@@ -3,7 +3,7 @@ import qrTerminal from "qrcode-terminal";
 
 /** Default ephemeral-token lifetime (also the QR rotation period). */
 export const TOKEN_TTL_MS = 60_000;
-/** Bounds for a caller-supplied pairing TTL (e.g. `/remote-pi pair --ttl <s>`). */
+/** Bounds for a caller-supplied pairing TTL (e.g. `/remote-omp pair --ttl <s>`). */
 export const PAIR_TTL_MIN_MS = 10_000;
 export const PAIR_TTL_MAX_MS = 600_000;
 
@@ -19,7 +19,7 @@ interface ActiveToken {
   consumed: boolean;
 }
 
-/** Encapsulates the single active QR token. One instance per Pi process. */
+/** Encapsulates the single active QR token. One instance per omp process. */
 export class QRSession {
   private active: ActiveToken | null = null;
 
@@ -64,15 +64,15 @@ export function buildQRUri(
   longtermEdPk: Uint8Array, // Ed25519 — only peer ID after E2E rollback
   sessionName: string,
   /**
-   * Pi room id (12 chars, base64url) derived from cwd. App routes pair_request
-   * to this room so the relay delivers it to the right Pi instance among N
+   * Room id (12 chars, base64url) derived from cwd. App routes pair_request
+   * to this room so the relay delivers it to the right omp instance among N
    * paralelos com mesmo epk. Adicionado no fix do plano 17 (sem `rm` o app
    * cai em room=main e o relay drops com "dest not found").
    */
   roomId?: string,
 ): string {
   // `r` (relay URL) removed in plano 14 — relay now comes from app config /
-  // pi-ext env|config|default chain. Keeps QR ~30-50 chars shorter.
+  // omp-ext env|config|default chain. Keeps QR ~30-50 chars shorter.
   // `n` (session name) is kept: the app uses it for the pre-pair_ok preview
   // screen (showing the agent name immediately after scan, before the
   // handshake completes). Dropping it briefly shrank the QR but the QR
@@ -94,7 +94,7 @@ export function buildQRUri(
  * is escape-free, see lib/main.js:48-53).
  *
  * The caller can either write the string to stderr (legacy path, breaks
- * the Pi TUI layout) or inject it via `pi.sendMessage` (renders inside
+ * the omp TUI layout) or inject it via `pi.sendMessage` (renders inside
  * the chat panel as proper content).
  */
 export function renderQRAscii(uri: string): string {
@@ -105,8 +105,8 @@ export function renderQRAscii(uri: string): string {
 
 /**
  * Legacy stderr writer — kept for the standalone CLI mode
- * (`pi-extension/src/index.ts` bottom block, which runs outside a Pi TUI).
- * Inside the Pi TUI extension flow, use `renderQRAscii` + `pi.sendMessage`
+ * (`omp-extension/src/index.ts` bottom block, which runs outside the omp TUI).
+ * Inside the omp TUI extension flow, use `renderQRAscii` + `pi.sendMessage`
  * instead — direct stderr writes from inside an extension break the TUI's
  * scrollable output widget (the QR overflows the panel and other writes
  * collide with the prompt area).

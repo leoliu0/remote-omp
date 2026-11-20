@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import {
   addDaemon,
   listDaemons,
@@ -16,25 +16,36 @@ import { daemonIdForCwd } from "./id.js";
 import { defaultAgentName } from "../session/local_config.js";
 
 /** Each test runs against an isolated $HOME-like directory so the registry
- *  writes never touch the developer's real `~/.pi/remote/daemons.json`, and
+ *  writes never touch the developer's real `~/.omp/remote/daemons.json`, and
  *  every scratch folder is created under `testHome` so `afterEach` cleans it. */
 let testHome: string;
+let prevOmpHome: string | undefined;
 
 const makeCwd = (prefix = "cwd-"): string => mkdtempSync(join(testHome, prefix));
 
 beforeEach(() => {
-  testHome = mkdtempSync(join(tmpdir(), "pi-regtest-"));
-  process.env["REMOTE_PI_HOME"] = testHome;
+  testHome = mkdtempSync(join(tmpdir(), "omp-regtest-"));
+  prevOmpHome = process.env["REMOTE_OMP_HOME"];
+  process.env["REMOTE_OMP_HOME"] = testHome;
 });
 
 afterEach(() => {
-  delete process.env["REMOTE_PI_HOME"];
+  if (prevOmpHome === undefined) delete process.env["REMOTE_OMP_HOME"];
+  else process.env["REMOTE_OMP_HOME"] = prevOmpHome;
   try { rmSync(testHome, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
 describe("registryPath", () => {
-  test("honors REMOTE_PI_HOME env override", () => {
-    expect(registryPath()).toBe(join(testHome, ".pi", "remote", "daemons.json"));
+  test("honors REMOTE_OMP_HOME env override", () => {
+    expect(registryPath()).toBe(join(testHome, ".omp", "remote", "daemons.json"));
+  });
+
+  test("does not read the registry an older version left in ~/.pi/remote (the supervisor's startup copies it)", () => {
+    const old = join(testHome, ".pi", "remote");
+    mkdirSync(old, { recursive: true });
+    writeFileSync(join(old, "daemons.json"), JSON.stringify({ daemons: [{ cwd: "/tmp/old" }] }));
+    expect(loadRegistry()).toEqual({ daemons: [] });
+    expect(listDaemons()).toEqual([]);
   });
 });
 
@@ -56,7 +67,7 @@ describe("normalizeCwd", () => {
   });
 
   test("throws on non-existent path (realpath ENOENT)", () => {
-    expect(() => normalizeCwd("/no/such/path/anywhere/xyz-pi-test")).toThrow();
+    expect(() => normalizeCwd("/no/such/path/anywhere/xyz-omp-test")).toThrow();
   });
 
   test("symlinks resolve to canonical realpath", () => {
@@ -87,21 +98,21 @@ describe("loadRegistry / saveRegistry", () => {
 
   test("malformed JSON tolerated on read (returns empty)", () => {
     const path = registryPath();
-    mkdirSync(join(testHome, ".pi", "remote"), { recursive: true });
+    mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, "{not-json");
     expect(loadRegistry()).toEqual({ daemons: [] });
   });
 
   test("unknown shape tolerated on read", () => {
     const path = registryPath();
-    mkdirSync(join(testHome, ".pi", "remote"), { recursive: true });
+    mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, JSON.stringify({ foo: "bar" }));
     expect(loadRegistry()).toEqual({ daemons: [] });
   });
 
   test("mutations refuse to overwrite a corrupted registry file", () => {
     const path = registryPath();
-    mkdirSync(join(testHome, ".pi", "remote"), { recursive: true });
+    mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, "{broken-json");
     const cwd = makeCwd("strict-");
     expect(() => addDaemon(cwd, "door")).toThrow(/malformed/i);
@@ -141,23 +152,62 @@ describe("addDaemon", () => {
     expect(onDisk.daemons[0]!.cwd).toBe(realpathSync(tmp));
   });
 
-  test("keeps the harness a daemon was registered with", () => {
-    const tmp = makeCwd("harness-");
-    addDaemon(tmp, "door", "omp");
-    expect(listDaemons()[0]).toMatchObject({ name: "door", harness: "omp" });
+  test("returns, lists and persists exactly { id, cwd, name }", () => {
+    const tmp = makeCwd("shape-");
+    const real = realpathSync(tmp);
+    expect(addDaemon(tmp, "door")).toEqual({ id: daemonIdForCwd(real), cwd: real, name: "door" });
+    expect(listDaemons()).toEqual([{ id: daemonIdForCwd(real), cwd: real, name: "door" }]);
+    const onDisk = JSON.parse(readFileSync(registryPath(), "utf8")) as { daemons: Array<Record<string, unknown>> };
+    expect(onDisk.daemons).toEqual([{ cwd: real, name: "door" }]);
   });
 
-  test("entries without a (valid) harness run pi and whitespace-only names fall back to folder name", () => {
-    saveRegistry({
-      daemons: [
-        { cwd: "/tmp/a", name: "   " },
-        { cwd: "/tmp/b", harness: "nonsense" as never },
-      ],
-    });
-    expect(listDaemons()).toMatchObject([
-      { cwd: "/tmp/a", name: "a", harness: "pi" },
-      { cwd: "/tmp/b", name: "b", harness: "pi" },
-    ]);
+  test("whitespace-only names fall back to the folder name", () => {
+    saveRegistry({ daemons: [{ cwd: "/tmp/a", name: "   " }] });
+    expect(listDaemons()).toMatchObject([{ cwd: "/tmp/a", name: "a" }]);
+  });
+});
+
+// Registries written before Remote OMP was omp-only also stored which agent CLI a daemon ran.
+describe("a `harness` key left in daemons.json by an older version", () => {
+  const writeOldRegistry = (): void => {
+    mkdirSync(dirname(registryPath()), { recursive: true });
+    writeFileSync(
+      registryPath(),
+      JSON.stringify({
+        daemons: [
+          { cwd: "/tmp/a", name: "A", harness: "omp" },
+          { cwd: "/tmp/b", name: "B", harness: "pi" },
+          { cwd: "/tmp/c", name: "C", harness: "nonsense" },
+        ],
+      }),
+    );
+  };
+
+  test("is ignored without a warning, whatever its value", () => {
+    writeOldRegistry();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(loadRegistry()).toEqual({
+        daemons: [{ cwd: "/tmp/a", name: "A" }, { cwd: "/tmp/b", name: "B" }, { cwd: "/tmp/c", name: "C" }],
+      });
+      expect(listDaemons().map((d) => [d.cwd, d.name])).toEqual([["/tmp/a", "A"], ["/tmp/b", "B"], ["/tmp/c", "C"]]);
+      expect(stderr).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  test("never reaches a record", () => {
+    writeOldRegistry();
+    for (const record of listDaemons()) expect(Object.keys(record).sort()).toEqual(["cwd", "id", "name"]);
+  });
+
+  test("is left out of the file by the next save", () => {
+    writeOldRegistry();
+    addDaemon(makeCwd("extra-"), "E");
+    const onDisk = JSON.parse(readFileSync(registryPath(), "utf8")) as { daemons: Array<Record<string, unknown>> };
+    expect(onDisk.daemons).toHaveLength(4);
+    for (const entry of onDisk.daemons) expect(Object.keys(entry).sort()).toEqual(["cwd", "name"]);
   });
 });
 
@@ -197,8 +247,8 @@ describe("listDaemons", () => {
     addDaemon(b);
     const out = listDaemons();
     expect(out).toEqual([
-      { id: daemonIdForCwd(realpathSync(a)), cwd: realpathSync(a), name: defaultAgentName(realpathSync(a)), harness: "pi" },
-      { id: daemonIdForCwd(realpathSync(b)), cwd: realpathSync(b), name: defaultAgentName(realpathSync(b)), harness: "pi" },
+      { id: daemonIdForCwd(realpathSync(a)), cwd: realpathSync(a), name: defaultAgentName(realpathSync(a)) },
+      { id: daemonIdForCwd(realpathSync(b)), cwd: realpathSync(b), name: defaultAgentName(realpathSync(b)) },
     ]);
   });
 
@@ -207,7 +257,7 @@ describe("listDaemons", () => {
     const cwd = realpathSync(dir);
     saveRegistry({ daemons: [{ cwd }] });
     const out = listDaemons();
-    expect(out).toEqual([{ id: daemonIdForCwd(cwd), cwd, name: defaultAgentName(cwd), harness: "pi" }]);
+    expect(out).toEqual([{ id: daemonIdForCwd(cwd), cwd, name: defaultAgentName(cwd) }]);
   });
 
   test("stat cache picks up out-of-band file modifications immediately", () => {
@@ -215,8 +265,8 @@ describe("listDaemons", () => {
     const b = makeCwd("cache-b-");
     addDaemon(a, "first");
     expect(listDaemons().map((d) => d.name)).toEqual(["first"]);
-    writeFileSync(registryPath(), JSON.stringify({ daemons: [{ cwd: realpathSync(b), name: "edited", harness: "omp" }] }));
-    expect(listDaemons().map((d) => ({ name: d.name, harness: d.harness }))).toEqual([{ name: "edited", harness: "omp" }]);
+    writeFileSync(registryPath(), JSON.stringify({ daemons: [{ cwd: realpathSync(b), name: "edited" }] }));
+    expect(listDaemons().map((d) => d.name)).toEqual(["edited"]);
   });
 
   test("empty registry yields []", () => {

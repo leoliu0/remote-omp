@@ -19,7 +19,7 @@ class WelcomeStep extends StatelessWidget {
           Icon(LucideIcons.terminal, color: colors.accent, size: 64),
           const SizedBox(height: 32),
           Text(
-            'Remote Pi',
+            'Remote OMP',
             textAlign: TextAlign.center,
             style: brandTextStyle(
               fontSize: 24,
@@ -30,7 +30,7 @@ class WelcomeStep extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Control your Pi agent from anywhere',
+            'Control your omp agent from anywhere',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontFamily: kMonoFamily,
@@ -40,7 +40,7 @@ class WelcomeStep extends StatelessWidget {
           ),
           const SizedBox(height: 28),
           Text(
-            'Pair this app with the Pi running on your computer '
+            'Pair this app with the omp session running on your computer '
             '(Mac, Linux, or Windows) so you can chat with it even '
             'when you\'re away from home.',
             textAlign: TextAlign.center,

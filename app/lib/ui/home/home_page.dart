@@ -6,6 +6,8 @@ import 'package:app/ui/core/themes/themes.dart';
 import 'package:app/ui/home/states/home_state.dart';
 import 'package:app/ui/settings/settings_sheet.dart';
 import 'package:app/ui/home/viewmodels/home_viewmodel.dart';
+import 'package:app/ui/home/open_session.dart';
+import 'package:app/ui/home/widgets/new_session_sheet.dart';
 import 'package:app/ui/home/widgets/widgets.dart';
 import 'package:app/ui/update/widgets/update_banner.dart';
 import 'package:flutter/material.dart';
@@ -133,7 +135,7 @@ class HomePage extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Remote Pi',
+                          'Remote OMP',
                           style: brandTextStyle(
                             fontSize: 32,
                             fontWeight: FontWeight.w700,
@@ -162,7 +164,7 @@ class HomePage extends StatelessWidget {
                     child: Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        'Remote Pi',
+                        'Remote OMP',
                         style: brandTextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -191,7 +193,7 @@ class HomePage extends StatelessWidget {
     );
   }
 
-  /// Subtitle line under "Remote Pi": ● Relay · [Connected|Awaiting pairing|Offline].
+  /// Subtitle line under "Remote OMP": ● Relay · [Connected|Awaiting pairing|Offline].
   /// Reflects the app→relay WS state (not per-Pi presence) so the
   /// user always knows whether the app itself is reachable.
   ///
@@ -334,7 +336,13 @@ class HomePage extends StatelessWidget {
     String? lastEpk;
     for (final it in visible) {
       if (it.peer.remoteEpk != lastEpk) {
-        children.add(PeerSectionHeader(peer: it.peer));
+        children.add(
+          PeerSectionHeader(
+            peer: it.peer,
+            onNewSession: () => _startNewSession(context, vm, it.peer),
+            newSessionEnabled: vm.canStartSession(it.peer.remoteEpk),
+          ),
+        );
         lastEpk = it.peer.remoteEpk;
       }
       children.add(_buildItemRowAt(context, vm, state, it));
@@ -581,7 +589,7 @@ class HomePage extends StatelessWidget {
                       'process ends and disappears from this list.'
                       '${working ? ' A turn is running and will be interrupted.' : ''}'
                 : 'Removes the session from this list only. If it is still '
-                      'running on the Pi, it reappears.',
+                      'running on the PC, it reappears.',
             style: TextStyle(color: colors.muted, fontSize: 12),
           ),
           actions: [
@@ -614,69 +622,46 @@ class HomePage extends StatelessWidget {
     PeerRecord peer,
     RoomInfo room,
   ) async {
-    // Sets prefs (selectedPeerEpk + room) + switchRoom so a fresh
-    // ChatViewModel binds to this session.
-    await vm.openSession(peer.remoteEpk, roomId: room.roomId);
-    if (!context.mounted) return;
-    final title = _titleFor(peer, room);
-    // Plan/32g — the device (Mac) name we already know here. The Chat AppBar's
-    // line 2 renders this immediately instead of flickering empty/room-title
-    // until the PeerRecord loads async.
-    final device = _deviceFor(peer);
-    // Plan/32g — the live state of this tile (the green dot). A working
-    // agent counts as online too (same rule as the Online tab).
-    final online =
-        vm.isRoomLive(peer.remoteEpk, room.roomId) ||
-        vm.isRoomWorking(peer.remoteEpk, room.roomId);
-    // Mark the UI selection — drives the tablet detail pane AND the
-    // highlighted tile. Set AFTER openSession so the detail's fresh
-    // ChatViewModel reads the already-updated prefs.
-    context.read<SessionSelection>().select(
-      peer.remoteEpk,
-      room.roomId,
-      title,
-      device,
-      online,
+    await openSession(context, vm, peer, room);
+  }
+
+  /// Plan 68 — "New session" on a PC's section: pick a folder, start an omp
+  /// session there, then open it like a tapped tile. A session that does not
+  /// show up in time is not an error (the PC may be slow): say so and let the
+  /// tile appear in the list when it is online.
+  static Future<void> _startNewSession(
+    BuildContext context,
+    HomeViewModel vm,
+    PeerRecord peer,
+  ) async {
+    final epk = peer.remoteEpk;
+    final outcome = await showNewSessionSheet(
+      context,
+      pcLabel: _deviceFor(peer),
+      requester: vm.newSessionRequester(epk),
+      liveFolders: vm.liveSessionFolders(epk),
     );
-    // Phone: full-screen chat (root push → native back/swipe). Tablet:
-    // the detail pane reacts to the selection above — no nav needed.
-    if (!isWideLayout(context)) {
-      context.push(
-        '/chat',
-        extra: {'title': title, 'device': device, 'online': online},
+    if (outcome == null || !context.mounted) return;
+    final room = outcome.room;
+    if (room == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Started "${outcome.spawn.name}". It will appear in the list '
+            'as soon as it is online.',
+          ),
+        ),
       );
+      return;
     }
+    await _open(context, vm, peer, room);
   }
 
   /// Plan/32g — the paired-device label for the Chat AppBar's line 2
   /// (nickname → sessionName → epk prefix). Mirrors [ChatPage]'s own peer
   /// resolution so there's no change when the PeerRecord finishes loading.
-  static String _deviceFor(PeerRecord peer) =>
-      (peer.nickname?.isNotEmpty ?? false)
-      ? peer.nickname!
-      : peer.sessionName.isNotEmpty
-      ? peer.sessionName
-      : peer.remoteEpk.substring(0, 8);
+  static String _deviceFor(PeerRecord peer) => sessionDevice(peer);
 
-  /// Plan/24-fix-title: the peer/room label we already know here, so the
-  /// Chat AppBar doesn't show '—' / 'Remote Pi' until the ChatViewModel
-  /// loads the PeerRecord + the first room_meta_updated arrives. Prefers
-  /// room.name (per-cwd title) → cwd tail → nickname → sessionName.
-  static String _titleFor(PeerRecord peer, RoomInfo room) {
-    final roomCwdTail = room.cwd
-        ?.split('/')
-        .where((s) => s.isNotEmpty)
-        .lastOrNull;
-    return (room.name?.isNotEmpty ?? false)
-        ? room.name!
-        : (roomCwdTail != null && roomCwdTail.isNotEmpty)
-        ? roomCwdTail
-        : (peer.nickname?.isNotEmpty ?? false)
-        ? peer.nickname!
-        : peer.sessionName.isNotEmpty
-        ? peer.sessionName
-        : peer.remoteEpk.substring(0, 8);
-  }
 }
 
 /// Plan-17 follow-up — soft empty state for paired-but-no-rooms.

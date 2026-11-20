@@ -1,7 +1,7 @@
 // Plan/57 — Bridge @eko24ive/pi-ask clarification flows to the paired app over
 // the extension_ui_request/response contract.
 //
-// pi-ask (when installed) runs ask_user in the Pi TUI on the desktop AND emits
+// pi-ask (when installed) runs ask_user in the omp TUI on the desktop AND emits
 // a same-process event contract on `pi.events` (docs/remote-events.md):
 //
 //   @eko24ive/pi-ask:started      { flowId, toolCallId?, source, title?, questions[] }
@@ -11,7 +11,7 @@
 //
 // This module subscribes to those events and translates them into the SDK's
 // extension_ui_request/response wire shapes (mirrored from
-// `pi --mode rpc`'s RpcExtensionUIRequest/Response) so the mobile app renders
+// `omp --mode rpc`'s RpcExtensionUIRequest/Response) so the mobile app renders
 // ask_user natively. pi-ask's richer schema rides in an optional `ask` envelope.
 //
 // Inert when pi-ask is absent: no events fire, nothing breaks. ask_user without
@@ -21,15 +21,15 @@
 // (`ctx.ui.custom`), e.g. TeX Guard's patch review: a yes/no question the
 // paired app answers next to the terminal, first answer wins.
 //
-//   remote-pi:confirm:request { id, title, message }  // the extension emits
-//   remote-pi:confirm:answer  { id, confirmed }       // we emit (app answered)
-//   remote-pi:confirm:closed  { id }                  // the extension emits once
-//                                                     // its prompt resolved
+//   remote-omp:confirm:request { id, title, message }  // the extension emits
+//   remote-omp:confirm:answer  { id, confirmed }       // we emit (app answered)
+//   remote-omp:confirm:closed  { id }                  // the extension emits once
+//                                                      // its prompt resolved
 //
 // `message` is markdown. The app shows it as a `confirm` request whose wire id
 // is `confirm:<id>`; an app cancel answers `confirmed: false`.
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "./omp-api.js";
 import type { PlainPeerChannel } from "./transport/peer_channel.js";
 import type {
   AskAnswerWire,
@@ -47,9 +47,9 @@ const PI_ASK_COMPLETED = "@eko24ive/pi-ask:completed";
 const PI_ASK_SUBMIT = "@eko24ive/pi-ask:submit";
 const PI_ASK_SUBMIT_RESULT = "@eko24ive/pi-ask:submit-result";
 
-export const CONFIRM_REQUEST = "remote-pi:confirm:request";
-export const CONFIRM_ANSWER = "remote-pi:confirm:answer";
-export const CONFIRM_CLOSED = "remote-pi:confirm:closed";
+export const CONFIRM_REQUEST = "remote-omp:confirm:request";
+export const CONFIRM_ANSWER = "remote-omp:confirm:answer";
+export const CONFIRM_CLOSED = "remote-omp:confirm:closed";
 const CONFIRM_ID_PREFIX = "confirm:";
 /** Keeps one prompt far below the relay's 4 MiB frame ceiling. */
 const CONFIRM_MESSAGE_MAX = 200_000;
@@ -73,7 +73,7 @@ interface ActiveFlow {
 
 export interface ExtensionUiBridge {
   /** Route an inbound `extension_ui_response` from a peer back to pi-ask or
-   *  to the extension that asked a `remote-pi:confirm` question. */
+   *  to the extension that asked a `remote-omp:confirm` question. */
   respond(msg: ExtensionUiResponseWire): void;
   /**
    * Requests still awaiting an answer, for `session_sync` to replay.
@@ -86,7 +86,7 @@ export interface ExtensionUiBridge {
 /**
  * Wire pi-ask's and the confirm event contracts to the relay's extension_ui_request/response
  * frames. Returns `null` only if the SDK exposes no usable `events` bus (defensive
- * — modern Pi always has one); callers stay null-safe.
+ * — omp always has one); callers stay null-safe.
  */
 export function createExtensionUiBridge(
   pi: ExtensionAPI,

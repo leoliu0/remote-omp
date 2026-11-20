@@ -41,7 +41,7 @@ export interface SelfRevokeStorage {
 export interface SelfRevokeOptions {
   client: MeshClient;
   storage: SelfRevokeStorage;
-  /** This Pi's long-term Ed25519 pubkey, raw 32 bytes. */
+  /** This PC's long-term Ed25519 pubkey, raw 32 bytes. */
   myPubkey: Uint8Array;
   intervalMs?: number;
   /** Raw storage handle first; canonical runtime Owner identity second. */

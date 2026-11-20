@@ -96,23 +96,26 @@ export type AskResponseEnrichmentWire =
   | { flow_id: string; kind: "cancel" };
 
 // ── omp plan mode: plan review + plan state ───────────────────────────────
-// omp (18.8.9 / 18.9.2) finishes planning when the agent writes the plan's
-// slug to `xd://propose`. The `write` tool_execution_end result then carries
-// `details.xdev = { tool: "propose", mode: "execute", inner: { planFilePath,
-// title, planExists } }` and omp aborts the turn (an empty `aborted` assistant
-// message, then agent_end) and opens its "Plan Review" overlay. That overlay is
-// a TUI-only component, not `ctx.ui.select`, so the Pi forwards it as an
-// extension_ui_request carrying the `plan` envelope below and answers it by
-// driving the overlay's own keys (the same keys a terminal user presses).
+// omp 19 finishes planning when the agent writes the plan's slug to
+// `xd://propose`, aborts that turn and opens its "Plan Review" overlay (a
+// TUI-only component, not `ctx.ui.select`). It reports the overlay to
+// extensions (`plan_review_requested` / `plan_review_resolved`), so the Pi
+// forwards it as an extension_ui_request carrying the `plan` envelope below
+// and answers it with `ctx.resolvePlanReview` — no keys are pressed. A review
+// that is still open is replayed on every session_sync. Plan mode needs omp's
+// interactive TUI: a headless `--mode rpc` daemon has none.
 
-/** The overlay's choices, in omp's order. `approve_execute` clears the session
- *  (new session) and runs the plan; `approve_compact` compacts first;
- *  `approve_keep` runs it in the current context (omp disables it above 95 %
- *  context); `refine` closes the review and stays in plan mode (the optional
- *  feedback becomes the next prompt, as a terminal user would type it);
- *  `save_quit` saves the plan to the cwd, leaves plan mode and starts a new
- *  session. A `cancelled` response is the overlay's Esc: close the review,
- *  stay in plan mode. */
+/** The review's choices, in omp's order, each one omp's native choice id:
+ *  `approve_execute` = `execute` (clears the session, runs the plan);
+ *  `approve_compact` = `compact` (compacts first); `approve_keep` = `keep`
+ *  (runs it in the current context; omp disables it above 95 % context);
+ *  `refine` = `refine` (the required feedback is omp's next planning prompt;
+ *  stays in plan mode); `save_quit` = `save` (omp writes the plan to the
+ *  project folder and leaves the review open — omp 19 has no "Save and
+ *  quit"; the wire name predates it). A `cancelled` response closes only the
+ *  client's sheet: omp offers an extension no way to dismiss its overlay,
+ *  which stays open on the PC (and re-opens from the plan button). A plain
+ *  chat message sent while the review is open answers it with `refine`. */
 export type PlanReviewAction =
   | "approve_execute"
   | "approve_compact"
@@ -145,13 +148,13 @@ export interface PlanReviewWire {
 /** The client's choice on a plan review (`extension_ui_response.plan`). */
 export interface PlanReviewAnswerWire {
   action: PlanReviewAction;
-  /** `refine` only: sent as the next prompt after the review closes. */
+  /** `refine` only, required (omp refuses a blank one): omp submits it as the next planning prompt. */
   feedback?: string;
 }
 
-/** omp's plan mode as the clients show it: `active` = planning (omp mode
- *  `plan`), `paused` = omp's `plan_paused` (one more `/plan` fully exits),
- *  `review` = a plan is waiting for a decision, `idle` = off. */
+/** omp's plan mode as the clients show it: `active` = planning, `paused` =
+ *  omp's paused plan mode (one more exit leaves it), `review` = a plan is
+ *  waiting for a decision, `idle` = off. Follows omp's `mode_changed`. */
 export type PlanStatus = "idle" | "active" | "paused" | "review";
 
 /** ServerMessage: interactive extension prompt. Mirrors RpcExtensionUIRequest
@@ -310,6 +313,105 @@ export interface FileCancelMessage {
   file_id: string;
 }
 
+// ── Plan/68 — upload a file from the phone to this PC ─────────────────────
+// The reverse of the plan/65 transfer: the phone sends `upload_chunk` frames
+// (256 KiB of raw bytes, base64 in `data`: a frame stays far under the relay's
+// 4 MiB `ct` cap and a slow uplink still delivers one in time) and the
+// extension answers each with a cumulative `upload_ack`. The phone keeps at
+// most 4 chunks in flight beyond the last ack (the relay has no backpressure).
+// The file lands in `~/.omp/remote/uploads/YYYY-MM-DD/<name>` and `upload_done`
+// carries its absolute path. `id` on the client frames is the usual request
+// id; replies are correlated by `upload_id` (a phone-chosen string, unique per
+// attempt), and an ack echoes the `id` of the frame it answers in
+// `in_reply_to`. Receivers ignore unknown fields.
+
+/** app → ext: announces an upload. `sha256` (lowercase hex of the whole file) is verified when given. */
+export interface UploadStartMessage {
+  type: "upload_start";
+  id: string;
+  upload_id: string;
+  name: string;
+  size: number;
+  mime?: string;
+  sha256?: string;
+}
+
+/** app → ext: one chunk, `seq` 0-based, `data` base64 of raw bytes (the phone sends 256 KiB; up to 2 MiB is accepted). */
+export interface UploadChunkMessage {
+  type: "upload_chunk";
+  id: string;
+  upload_id: string;
+  seq: number;
+  data: string;
+}
+
+/**
+ * app → ext: every chunk is acked; verify size and sha256, store, reply
+ * `upload_done`. `sha256` (lowercase hex of the whole file) is verified when
+ * given, in addition to the one on `upload_start`: the phone hashes while it
+ * sends, so the digest is only known now.
+ */
+export interface UploadEndMessage {
+  type: "upload_end";
+  id: string;
+  upload_id: string;
+  sha256?: string;
+}
+
+/** app → ext: abandon the upload; the partial file is deleted. */
+export interface UploadCancelMessage {
+  type: "upload_cancel";
+  id: string;
+  upload_id: string;
+}
+
+/**
+ * ext → app: cumulative ack. `seq` is the first chunk the PC still needs (every
+ * chunk below it is on disk, in order) and `received` the bytes those chunks
+ * hold. Sent for `upload_start` (also a repeated one: the phone resumes from
+ * `seq`), after every chunk, and for a duplicate or out-of-order chunk or an
+ * early `upload_end` (so the phone resends from `seq`). `in_reply_to` is the
+ * `id` of the frame being answered: the answer to a repeated `upload_start` is
+ * the PC's position after every frame sent before it, which is how the phone
+ * tells a lost chunk from a slow link.
+ */
+export interface UploadAckMessage {
+  type: "upload_ack";
+  upload_id: string;
+  seq: number;
+  received: number;
+  in_reply_to?: string;
+}
+
+/** ext → app: stored. `path` is absolute; a repeated `upload_end` is answered again. */
+export interface UploadDoneMessage {
+  type: "upload_done";
+  upload_id: string;
+  path: string;
+  size: number;
+}
+
+/** Why the extension refused or dropped an upload. Open for forward-compat. */
+export type UploadErrorCode =
+  | "too_large"
+  | "no_space"
+  | "invalid_upload"
+  | "size_mismatch"
+  | "sha_mismatch"
+  | "timeout"
+  | "unknown_upload"
+  | "too_many_uploads"
+  | "write_failed"
+  | (string & {});
+
+/** ext → app: the upload failed and its partial file is gone. `message` is for the user. */
+export interface UploadErrorMessage {
+  type: "upload_error";
+  upload_id: string;
+  code: UploadErrorCode;
+  message: string;
+}
+
 export type ClientMessage =
   | { type: "pair_request"; id: string; token: string; device_name: string }
   // Plan/30: optional `images` carry inline base64 attachments (one today).
@@ -339,6 +441,16 @@ export type ClientMessage =
   | { type: "reload_plugins"; id: string }
   | { type: "git_status"; id: string }
   | { type: "git_diff"; id: string; path: string; staged?: boolean }
+  // Mobile composer `@` file autocomplete — answered with `files_list`.
+  | { type: "list_files"; id: string; query: string; limit?: number }
+  // Plan/68 — new session from the phone. `list_dirs` browses the PC's folders
+  // (answered with `dirs_list`); `spawn_session` starts an omp session in one
+  // (answered with `spawn_result`, or an `error` whose `code` says why:
+  // cwd_busy, already_registered, not_found, supervisor_offline, …).
+  // `persistent` registers an always-on daemon (plan/67) instead of an
+  // ephemeral session that ends when the process does.
+  | { type: "list_dirs"; id: string; path?: string }
+  | { type: "spawn_session"; id: string; cwd: string; name?: string; persistent?: boolean }
   // Plan/66 — omp model roles (`modelRoles` in omp's config.yml). The list is
   // answered with `model_roles`. `model_role_set` assigns a role globally
   // (`provider/model_id[:thinking]`, as omp's TUI writes it); omitting both
@@ -354,16 +466,29 @@ export type ClientMessage =
       model_id?: string;
       thinking?: ThinkingLevel;
     }
-  // omp plan mode from a client, run as the terminal command would be:
-  // `enter` = `/plan`; `exit` = `/plan` until omp is back to idle (answering
-  // omp's "Exit plan mode?" confirm with Yes — clients ask the user first);
-  // `review` = `/plan-review` (re-opens the review of the latest plan).
-  // Replied with action_ok / action_error (`action: "plan_mode"`); the state
-  // change itself arrives as `plan_state`.
+  // omp plan mode from a client, through `ctx.sessionModes` / `ctx.openPlanReview`:
+  // `enter` / `exit` set omp's plan mode (exit leaves it without approving the
+  // plan or deleting its draft — clients ask the user first); `review` re-sends
+  // the open review, or asks omp to open one on the newest plan.
+  // Replied with action_ok / action_error (`action: "plan_mode"`, omp's own
+  // refusal text: a busy turn, a conflicting mode, …); the state change itself
+  // arrives as `plan_state`.
   | { type: "plan_mode"; id: string; action: "enter" | "exit" | "review" }
+  // Plan/68 — re-run the turn that just failed (omp's `/retry`): the same
+  // prompt runs again, no second user message. Replied with action_ok
+  // (`action: "retry_turn"`) once omp has scheduled the continuation (it then
+  // streams as any turn), or `error` with `in_reply_to` and a `code`:
+  // `busy` (a turn, compaction or retry is already running), `nothing_to_retry`,
+  // `unsupported` (the host is not omp) or `internal_error`.
+  | { type: "retry_turn"; id: string }
   // Mirrors RpcExtensionUIResponse; the optional `ask` envelope carries
   // pi-ask's structured answer so multi/preview/notes survive the round-trip.
   | ExtensionUiResponseWire
+  // Plan/68 — upload a file from the phone to this PC (see UploadStartMessage).
+  | UploadStartMessage
+  | UploadChunkMessage
+  | UploadEndMessage
+  | UploadCancelMessage
   // Plan/65 — file transfer replies from the receiving phone.
   | FileAckMessage
   | FileDoneMessage
@@ -422,6 +547,11 @@ export type SessionHistoryEvent =
       in_reply_to: string;
       text: string;
       usage?: Usage;
+      // A failed turn (assistant `stopReason: "error"`) replays as the same
+      // `⚠ <code>: <message>` text the live `error` frame renders, tagged with
+      // its code so a client can offer Retry. Receivers that ignore the field
+      // show it as plain assistant text.
+      error_code?: string;
     }
   // Plan/32: a context-compaction marker, replayed in history (survives
   // re-sync like images) so the app re-renders the "context compacted" notice.
@@ -436,8 +566,8 @@ export type ServerMessage =
       room_id: string;
       /**
        * Plan/27 Wave A: identifies the host coding agent driving this
-       * pi-extension instance. `name` is hardcoded to "Pi coding agent"
-       * today; future Pi forks (Claude Code, OpenCode) populate their own
+       * omp-extension instance. `name` is hardcoded to "omp coding agent"
+       * today; future harnesses (Claude Code, OpenCode) populate their own
        * here. `version` is the pi-extension `package.json` version.
        * Optional in the wire schema so app-side parsing tolerates older
        * Pi builds that predate this field — every new pairing emits both.
@@ -493,10 +623,16 @@ export type ServerMessage =
       // `events` window holds: the composer's history recall reads these.
       prompts?: string[];
     }
+  // omp's slash-command list for the composer menu (plan 69 step 4): `skills` holds the
+  // `/skill:<name>` commands, `commands` every other command this host can run for the phone
+  // (omp's builtins that run there, extension and prompt commands). `source` is
+  // "builtin" | "extension" | "prompt" | "skill". `commands` is absent from older extensions
+  // and when omp's builtin registry could not be read; the app then keeps its own menu.
   | {
       type: "skills_list";
       in_reply_to?: string;
       skills: Array<{ name: string; description: string }>;
+      commands?: Array<{ name: string; description: string; source: string; hint?: string }>;
     }
   // Plan/28 — Replies for typed app actions.
   // `action_ok` / `action_error` carry the original `ActionName` so the
@@ -547,9 +683,68 @@ export type ServerMessage =
   | FileChunkMessage
   | FileEndMessage
   | FileCancelMessage
+  // Plan/68 — replies to a phone → PC upload (see UploadAckMessage).
+  | UploadAckMessage
+  | UploadDoneMessage
+  | UploadErrorMessage
   // Mobile Git Diff / Changed Files viewer.
   | GitStatusResultMessage
-  | GitDiffResultMessage;
+  | GitDiffResultMessage
+  // Mobile composer `@` file autocomplete.
+  | FilesListMessage
+  // Plan/68 — replies for `list_dirs` / `spawn_session`.
+  | DirsListMessage
+  | SpawnResultMessage;
+
+/** Reply to `list_files`: ranked paths relative to `root` (the session cwd). */
+export interface FilesListMessage {
+  type: "files_list";
+  in_reply_to: string;
+  root: string;
+  files: string[];
+  truncated: boolean;
+}
+
+/** A subfolder in a `dirs_list` (hidden folders are left out). */
+export interface WireDirEntry {
+  name: string;
+  path: string;
+  /** Has a `.git` entry. */
+  is_git: boolean;
+}
+
+/** A folder recently used for agent sessions on this PC. */
+export interface WireRecentDir {
+  path: string;
+  name: string;
+  /** Epoch ms of the newest session in the folder; absent for a registered
+   *  always-on folder that has no session history. */
+  last_used?: number;
+}
+
+/** Reply to `list_dirs`. `parent` is null at the filesystem root. `dirs` is
+ *  sorted case-insensitively and capped (`truncated`). `recent` newest first. */
+export interface DirsListMessage {
+  type: "dirs_list";
+  in_reply_to: string;
+  path: string;
+  parent: string | null;
+  home: string;
+  dirs: WireDirEntry[];
+  recent: WireRecentDir[];
+  truncated: boolean;
+}
+
+/** Reply to `spawn_session`: the session is starting in `cwd` and will show up
+ *  as a live room named `name`. `daemon_id` is the supervisor's id for it. */
+export interface SpawnResultMessage {
+  type: "spawn_result";
+  in_reply_to: string;
+  cwd: string;
+  name: string;
+  persistent: boolean;
+  daemon_id: string;
+}
 
 export type GitFileStatus =
   | "modified"
@@ -728,17 +923,17 @@ export type ActionName =
   | "thinking_set"
   | "reload_plugins"
   | "plan_mode"
-  | "model_role_set";
+  | "model_role_set"
+  | "retry_turn";
 /**
  * Plan/28 — Mirror of the SDK's `ThinkingLevel` (defined in
- * `@earendil-works/pi-agent-core/types`). Re-declared locally so the wire
+ * `@oh-my-pi/pi-agent-core/types`). Re-declared locally so the wire
  * protocol owns its own enum and we don't leak SDK-internal types onto
  * the app's network surface.
  *
- * Note: `"xhigh"`/`"max"` are only honored by select model families. omp
- * offers each model's `thinking.efforts`; upstream pi uses each
- * `Model.thinkingLevelMap`. The app's picker hides unsupported levels via
- * `WireModel.thinking_levels`.
+ * Note: `"xhigh"`/`"max"` are only honored by select model families; omp
+ * offers each model's `thinking.efforts`. The app's picker hides
+ * unsupported levels via `WireModel.thinking_levels`.
  */
 export type ThinkingLevel =
   | "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -767,12 +962,10 @@ export interface WireModel {
    *  includes `"image"`). The app uses it to enable/disable the attach
    *  button — a text-only model greys out image attachments. */
   vision: boolean;
-  /** Thinking levels the host offers for this model, in the host's order.
-   *  omp: exactly its Shift+Tab / `/effort` list, `["off", "auto",
-   *  ...thinking.efforts]`. Upstream pi: `"auto"` plus pi-ai's
-   *  `getSupportedThinkingLevels` over `Model.thinkingLevelMap`. Non-reasoning
-   *  models get `["off"]`. Undefined when the model's metadata is unknown —
-   *  clients then offer every level. */
+  /** Thinking levels omp offers for this model, in omp's order: exactly its
+   *  Shift+Tab / `/effort` list, `["off", "auto", ...thinking.efforts]`.
+   *  Non-reasoning models get `["off"]`. Undefined when the model's metadata
+   *  is unknown — clients then offer every level. */
   thinking_levels?: ThinkingLevel[];
 }
 

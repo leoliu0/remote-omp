@@ -1,10 +1,9 @@
 /**
- * Footer renderer for the Pi TUI. Three status slots + window title.
+ * Footer renderer for the omp TUI. One combined status slot + window title.
  *
- * Slot keys (intentionally namespaced so other extensions don't collide):
- *   - remote-pi:session   — current local session + peer count
- *   - remote-pi:relay     — relay state (off / on / paired)
- *   - remote-pi:peer-active — active mobile device, if paired
+ * The slot key is intentionally namespaced so other extensions don't collide:
+ *   - remote-omp — relay state (off / on / paired), the local session + peer
+ *                  count, and the active mobile device, if paired
  */
 export interface FooterContext {
   ui: {
@@ -19,7 +18,7 @@ export interface FooterState {
   relayOn?: boolean;
   /** Active device session right now (drives the 📱 slot).
    *  Independent from `hasPairings` — a device may be paired globally
-   *  in peers.json without being actively connected to THIS Pi process. */
+   *  in peers.json without being actively connected to THIS omp process. */
   devicePaired?: string;
   /** At least one device has been paired with this machine before
    *  (peers.json is non-empty). Drives the 🟢/🟡 icon on the relay slot:
@@ -27,21 +26,13 @@ export interface FooterState {
    *  pairing needed). Pairing is per-machine (global), not per-process. */
   hasPairings?: boolean;
   /** Assigned agent name in the current session. Becomes the title prefix
-   *  (e.g. "backend · foo · relay") when set. Falls back to "Pi" otherwise. */
+   *  (e.g. "backend · foo · relay") when set. Falls back to "omp" otherwise. */
   agentName?: string;
 }
 
-const K_STATUS = "remote-pi";
-const K_SESSION = "remote-pi:session";
-const K_RELAY = "remote-pi:relay";
-const K_PEER = "remote-pi:peer-active";
+const K_STATUS = "remote-omp";
 
 export function updateFooter(ctx: FooterContext, state: FooterState): void {
-  // Clear legacy split slots
-  ctx.ui.setStatus(K_SESSION, undefined);
-  ctx.ui.setStatus(K_RELAY, undefined);
-  ctx.ui.setStatus(K_PEER, undefined);
-
   const parts: string[] = [];
 
   if (state.relayOn) {
@@ -69,7 +60,7 @@ export function updateFooter(ctx: FooterContext, state: FooterState): void {
   // `relay` repeated information the relay slot already shows. Collapsed
   // to "name + relay state in plain English" — same info, clearer at a
   // glance: terminal tabs read like `backend · On` / `backend · Off`.
-  const prefix = state.agentName?.trim() || "Pi";
+  const prefix = state.agentName?.trim() || "omp";
   const relayState = state.relayOn ? "On" : "Off";
   ctx.ui.setTitle(`${prefix} · ${relayState}`);
 }

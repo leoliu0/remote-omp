@@ -92,7 +92,7 @@ class _PairStepState extends State<PairStep> {
           ),
           const SizedBox(height: 12),
           Text(
-            'On your computer (Mac, Linux, or Windows), open Pi and run:',
+            'On your computer (Mac, Linux, or Windows), open omp and run:',
             style: TextStyle(
                 fontFamily: kMonoFamily, fontSize: 11, color: colors.muted),
           ),
@@ -105,7 +105,7 @@ class _PairStepState extends State<PairStep> {
               borderRadius: const BorderRadius.all(Radius.circular(6)),
             ),
             child: Text(
-              '/remote-pi pair',
+              '/remote-omp pair',
               style: TextStyle(
                 fontFamily: kMonoFamily,
                 fontSize: 13,

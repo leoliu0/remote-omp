@@ -7,12 +7,14 @@
  * see README "Model roles").
  */
 
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   handleListModelRoles,
   handleModelRoleSet,
+  _setOmpRoleHelpersForTest,
   loadOmpRoleApi,
   type OmpRoleApi,
+  type OmpRoleHelpers,
   type RoleModelRegistry,
 } from "./model_roles.js";
 import type { SdkModelLike } from "./handlers.js";
@@ -423,7 +425,100 @@ describe("handleModelRoleSet", () => {
 });
 
 describe("loadOmpRoleApi", () => {
-  test("outside omp the omp modules don't resolve, so it returns null", async () => {
-    await expect(loadOmpRoleApi()).resolves.toBeNull();
+  /**
+   * A bundled omp host: `ExtensionAPI.pi` hands out the live session, whose
+   * `settings` is the initialized singleton. Importing `config/settings` from an
+   * extension instead yields a second, never-initialized copy (omp ships as one
+   * bundle) — the old code returned null on that check, so the app got
+   * "model roles need omp" on a real omp 19.
+   */
+  const makeHost = () => {
+    const roles: Record<string, string> = { default: "anthropic/claude-opus-5-5" };
+    const hostCache: unknown[] = [];
+    const flush = vi.fn(async () => {});
+    const settings = {
+      revision: 7,
+      valueCache: hostCache,
+      getModelRoles: () => roles,
+      getModelRole: (r: string) => roles[r],
+      setModelRole: vi.fn((r: string, v: string | undefined) => {
+        if (v === undefined) delete roles[r];
+        else roles[r] = v;
+      }),
+      getModelRoleSource: () => "global",
+      flush,
+      // A method that needs its own `this` (omp's Settings uses #private fields).
+      rawValue(this: { revision: number }) {
+        return this.revision;
+      },
+    };
+    const api = {
+      pi: {
+        MAIN_AGENT_ID: "main",
+        AgentRegistry: { global: () => ({ get: () => ({ session: { settings } }) }) },
+      },
+    };
+    return { api, settings, roles, hostCache, flush };
+  };
+
+  /** omp's helper functions as a separate module copy would run them. */
+  const seen: Array<{ cache: unknown[]; revision: number; raw: unknown }> = [];
+  const helpers: OmpRoleHelpers = {
+    getKnownRoleIds: (s) => {
+      const t = s as unknown as { valueCache: unknown[]; revision: number; rawValue(): unknown };
+      t.valueCache[0] = "copy-slot";
+      seen.push({ cache: t.valueCache, revision: t.revision, raw: t.rawValue() });
+      return ["default", "plan"];
+    },
+    getRoleInfo: (role) => ({ name: role }),
+    roleCandidatePool: () => [],
+  };
+
+  afterEach(() => {
+    _setOmpRoleHelpersForTest(null);
+    seen.length = 0;
+  });
+
+  test("outside omp (no SDK on the API) it returns null", async () => {
+    await expect(loadOmpRoleApi({})).resolves.toBeNull();
+    await expect(loadOmpRoleApi(null)).resolves.toBeNull();
+  });
+
+  test("a bundled host: settings come from the live session, not from an import", async () => {
+    _setOmpRoleHelpersForTest(helpers);
+    const host = makeHost();
+    const api = await loadOmpRoleApi(host.api);
+    expect(api).not.toBeNull();
+    expect(api!.settings.getModelRole("default")).toBe("anthropic/claude-opus-5-5");
+    api!.settings.setModelRole("plan", "anthropic/claude-sonnet-5-5");
+    expect(host.settings.setModelRole).toHaveBeenCalledWith("plan", "anthropic/claude-sonnet-5-5");
+    expect(host.roles["plan"]).toBe("anthropic/claude-sonnet-5-5");
+    await api!.settings.flush?.();
+    expect(host.flush).toHaveBeenCalledTimes(1);
+  });
+
+  test("helpers from another module copy never write into the host's settings cache", async () => {
+    _setOmpRoleHelpersForTest(helpers);
+    const host = makeHost();
+    const api = (await loadOmpRoleApi(host.api))!;
+    expect(api.getKnownRoleIds(api.settings)).toEqual(["default", "plan"]);
+    // The copy's handle slot landed in its own cache; the host's stayed empty.
+    expect(host.hostCache).toEqual([]);
+    expect(seen[0]!.cache).not.toBe(host.hostCache);
+    expect(seen[0]!.cache[0]).toBe("copy-slot");
+    // Everything else still reads the host (revision, `this`-bound methods).
+    expect(seen[0]!.revision).toBe(7);
+    expect(seen[0]!.raw).toBe(7);
+  });
+
+  test("a host whose session has no usable settings yields null", async () => {
+    _setOmpRoleHelpersForTest(helpers);
+    const api = { pi: { MAIN_AGENT_ID: "main", AgentRegistry: { global: () => ({ get: () => ({ session: { settings: {} } }) }) } } };
+    await expect(loadOmpRoleApi(api)).resolves.toBeNull();
+  });
+
+  test("without omp's helper modules it returns null", async () => {
+    _setOmpRoleHelpersForTest(async () => null);
+    await expect(loadOmpRoleApi(makeHost().api)).resolves.toBeNull();
   });
 });

@@ -12,7 +12,7 @@ const String kMonoFamily = 'JetBrains Mono';
 /// Sans family for body/system text. `null` → the platform default sans.
 const String? kSansFamily = null;
 
-/// Brand wordmark style — the "Remote Pi" marca. **Always Inter** (the
+/// Brand wordmark style — the "Remote OMP" marca. **Always Inter** (the
 /// wireframe's `RP_SANS`: `screens.jsx` renders the title in `RP_SANS` bold),
 /// served via the `google_fonts` package so it renders identically on iOS and
 /// Android. This is the ONE font that must stay constant everywhere the product

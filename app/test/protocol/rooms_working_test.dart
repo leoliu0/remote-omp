@@ -1,7 +1,7 @@
 // Plan/32 — wire-level parsing of `meta.working` and the `RoomInfo.working`
 // field across `room_announced`, `room_meta_updated` and `rooms` snapshots.
 // The relay broadcasts `meta.working` (turn_start/turn_end from the
-// Pi-extension) to every room subscriber, so Home can light the blue dot on
+// omp-extension) to every room subscriber, so Home can light the blue dot on
 // any session — not just the connected one.
 
 import 'package:app/protocol/protocol.dart';

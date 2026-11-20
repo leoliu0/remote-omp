@@ -87,7 +87,7 @@ const {
   _stopForTest,
 } = await import("../src/index.js");
 
-import type { ExtensionAPI, ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory } from "../src/omp-api.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -112,7 +112,7 @@ function decodeSentCt(raw: string): { peer: string; inner: Record<string, unknow
  */
 async function pairUp(): Promise<void> {
   // Bring just the relay up (no UDS mesh — this test is relay-focused).
-  // The 2026-05-23 surface cleanup removed `remote-pi relay start`; the
+  // The 2026-05-23 surface cleanup removed `remote-omp relay start`; the
   // equivalent for tests is `_startRelayForTest`.
   const pi = {
     on: () => undefined,

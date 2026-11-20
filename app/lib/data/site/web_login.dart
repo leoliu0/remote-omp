@@ -99,7 +99,7 @@ WebLoginRequest parseWebLoginCode(String raw, {String? expectedHost}) {
   final host = params['h']?.toLowerCase();
   if (host == null || host != allowedHost) {
     throw WebLoginCodeException(
-      'Unknown website. Remote Pi only signs in browsers at $allowedHost.',
+      'Unknown website. Remote OMP only signs in browsers at $allowedHost.',
     );
   }
   final id = params['id'];

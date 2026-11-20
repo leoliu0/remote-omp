@@ -28,3 +28,19 @@ declare module "@oh-my-pi/pi-coding-agent/config/model-roles" {
 declare module "@oh-my-pi/pi-coding-agent/config/model-resolver" {
   export const resolveModelRoleValue: unknown;
 }
+
+// Plan/69 — omp's builtin slash-command registry, read by `src/slash_commands.ts`
+// to learn which builtins a headless host can run. Typed `unknown` and narrowed there.
+declare module "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry" {
+  export const BUILTIN_SLASH_COMMANDS_INTERNAL: unknown;
+}
+
+// Plan/69 — omp's TUI classes, read by `src/omp-host.ts` to draw the received-photo
+// message. Inside omp this resolves to the host's bundled instance; outside it does
+// not resolve at all. Typed `unknown` and narrowed there.
+declare module "@oh-my-pi/pi-tui" {
+  export const Box: unknown;
+  export const Container: unknown;
+  export const Image: unknown;
+  export const Text: unknown;
+}

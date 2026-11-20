@@ -29,6 +29,10 @@ class MessageRecord {
   /// Plan/32 — tokens reclaimed by a compaction (compaction rows only).
   final int? tokensBefore;
 
+  /// Plan/68 — assistant rows that record a failed turn carry the error code
+  /// (`provider_error`); the chat offers Retry under the newest one.
+  final String? errorCode;
+
   const MessageRecord({
     required this.id,
     required this.seq,
@@ -40,6 +44,7 @@ class MessageRecord {
     this.pending = false,
     this.steering = false,
     this.tokensBefore,
+    this.errorCode,
   });
 
   MessageRecord copyWith({
@@ -60,6 +65,7 @@ class MessageRecord {
     pending: pending ?? this.pending,
     steering: steering ?? this.steering,
     tokensBefore: tokensBefore,
+    errorCode: errorCode,
   );
 
   Map<String, dynamic> toJson() => {
@@ -73,6 +79,7 @@ class MessageRecord {
     'pending': pending,
     if (steering) 'steering': true,
     if (tokensBefore != null) 'tokens_before': tokensBefore,
+    if (errorCode != null) 'error_code': errorCode,
   };
 
   factory MessageRecord.fromJson(Map<String, dynamic> j) {
@@ -99,6 +106,7 @@ class MessageRecord {
       pending: (j['pending'] as bool?) ?? false,
       steering: (j['steering'] as bool?) ?? false,
       tokensBefore: (j['tokens_before'] as num?)?.toInt(),
+      errorCode: j['error_code'] as String?,
     );
   }
 
@@ -114,7 +122,7 @@ class MessageRecord {
           image: image,
         );
       case MsgRole.assistant:
-        return AssistantMsg(id: id, text: text);
+        return AssistantMsg(id: id, text: text, errorCode: errorCode);
       case MsgRole.tool:
         final t = tool;
         return ToolEvent(

@@ -16,6 +16,11 @@ import 'package:app/ui/chat/widgets/goal_menu_sheet.dart';
 import 'package:app/ui/chat/widgets/loop_menu_sheet.dart';
 import 'package:app/ui/chat/widgets/plan_menu_sheet.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:app/data/local/saved_prompts_store.dart';
+import 'package:app/ui/chat/widgets/file_mention.dart';
+import 'package:app/ui/chat/widgets/saved_prompts_sheet.dart';
+import 'package:app/ui/chat/upload/viewmodels/upload_viewmodel.dart';
+import 'package:app/ui/chat/upload/widgets/upload_strip.dart';
 
 // InputBar — bottom message composer.
 // - Disabled (grayed) when offline.
@@ -74,8 +79,17 @@ class InputBar extends StatefulWidget {
   /// button (offline/streaming); vision/has-image gating is internal.
   final VoidCallback? onOpenAttach;
 
+  /// Plan/68 — file-upload ViewModel: progress rows above the field, and the
+  /// absolute path of a finished upload appended to the text. Null in tests /
+  /// when uploads aren't wired (the attach button then offers images only).
+  final UploadViewModel? upload;
+
   /// Optional user message history for Up/Down arrow cycling (oldest to newest).
   final List<WireSkill> dynamicSkills;
+
+  /// omp's own command list for the slash menu. Null (an older extension): the
+  /// menu shows the app's built-in list plus [dynamicSkills].
+  final List<WireCommand>? hostCommands;
   final List<String> messageHistory;
 
   /// Initial draft text to populate in the composer.
@@ -98,6 +112,14 @@ class InputBar extends StatefulWidget {
 
   /// Fired whenever the typed composer text changes.
   final void Function(String text)? onDraftChanged;
+
+  /// Composer `@` autocomplete: resolves ranked relative paths for a query.
+  /// Null disables the feature; a throwing search (e.g. an extension too old
+  /// to know `list_files`) just shows no suggestions.
+  final Future<List<String>> Function(String query)? onSearchFiles;
+
+  /// App-local saved prompts. Null hides the bookmark button in the field.
+  final SavedPromptsStore? savedPrompts;
   const InputBar({
     super.key,
     required this.onSend,
@@ -113,9 +135,11 @@ class InputBar extends StatefulWidget {
     this.onVoiceError,
     this.attachment,
     this.onOpenAttach,
+    this.upload,
     this.messageHistory = const [],
     this.disabled = false,
     this.dynamicSkills = const [],
+    this.hostCommands,
     this.streaming = false,
     this.initialText = '',
     this.activeModel,
@@ -125,6 +149,8 @@ class InputBar extends StatefulWidget {
     this.planState,
     this.onPlanMode,
     this.onDraftChanged,
+    this.onSearchFiles,
+    this.savedPrompts,
   });
 
   @override
@@ -151,10 +177,22 @@ class _InputBarState extends State<InputBar> {
   bool _holding = false;
   StreamSubscription<String>? _transcriptSub;
   StreamSubscription<String>? _failureSub;
+  StreamSubscription<String>? _uploadSub;
   final List<String> _localHistory = [];
   int _historyIndex = -1;
   String _savedDraft = '';
   bool _navigatingHistory = false;
+
+  // --- @ file mentions ------------------------------------------------------
+  static const Duration _mentionDebounce = Duration(milliseconds: 120);
+  Timer? _mentionTimer;
+  int _mentionSeq = 0;
+  FileMentionToken? _mentionToken;
+  // Token the user closed with Esc/back; stays hidden until the token changes.
+  FileMentionToken? _mentionDismissed;
+  List<String> _mentionFiles = const [];
+
+  bool get _mentionVisible => _mentionToken != null && _mentionFiles.isNotEmpty;
 
   List<String> get _combinedHistory {
     final list = <String>[];
@@ -341,6 +379,7 @@ class _InputBarState extends State<InputBar> {
       });
     }
     _subscribeTranscripts();
+    _uploadSub = widget.upload?.insertions.listen(_appendUploadedPath);
   }
 
   @override
@@ -359,6 +398,10 @@ class _InputBarState extends State<InputBar> {
       _failureSub?.cancel();
       _subscribeTranscripts();
     }
+    if (!identical(old.upload, widget.upload)) {
+      _uploadSub?.cancel();
+      _uploadSub = widget.upload?.insertions.listen(_appendUploadedPath);
+    }
   }
 
   void _subscribeTranscripts() {
@@ -376,6 +419,17 @@ class _InputBarState extends State<InputBar> {
     _controller.selection = TextSelection.collapsed(offset: text.length);
   }
 
+  /// Plan/68 — the absolute path of a finished upload goes at the end of the
+  /// text, after a space, with the caret behind it.
+  void _appendUploadedPath(String path) {
+    if (!mounted) return;
+    final text = appendToComposerText(_controller.text, path);
+    _controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
   void _onTextChange() {
     if (!_navigatingHistory) {
       _historyIndex = -1;
@@ -387,12 +441,107 @@ class _InputBarState extends State<InputBar> {
       });
     }
     widget.onDraftChanged?.call(_controller.text);
+    _updateMention();
+  }
+
+  FileMentionToken? _currentMentionToken() {
+    if (widget.onSearchFiles == null || widget.disabled) return null;
+    final value = _controller.value;
+    final sel = value.selection;
+    if (!sel.isValid || !sel.isCollapsed) return null;
+    return findFileMentionToken(value.text, sel.baseOffset);
+  }
+
+  /// Re-evaluates the `@token` at the caret: debounced lookup while it is
+  /// live, hide as soon as it ends.
+  void _updateMention() {
+    final token = _currentMentionToken();
+    if (token == null) {
+      _mentionDismissed = null;
+      _resetMention();
+      return;
+    }
+    if (token == _mentionDismissed) {
+      _resetMention();
+      return;
+    }
+    if (token == _mentionToken) return; // selection-only change
+    final sameWord = _mentionToken?.start == token.start;
+    _mentionToken = token;
+    if (!sameWord && _mentionFiles.isNotEmpty) {
+      setState(() => _mentionFiles = const []);
+    }
+    _mentionTimer?.cancel();
+    _mentionTimer = Timer(
+      _mentionDebounce,
+      () => unawaited(_lookupMentions(token)),
+    );
+  }
+
+  void _resetMention() {
+    _mentionTimer?.cancel();
+    _mentionSeq++; // drops any reply still in flight
+    _mentionToken = null;
+    if (_mentionFiles.isNotEmpty) {
+      setState(() => _mentionFiles = const []);
+    }
+  }
+
+  void _dismissMention() {
+    final token = _mentionToken;
+    _resetMention();
+    _mentionDismissed = token;
+  }
+
+  Future<void> _lookupMentions(FileMentionToken token) async {
+    final search = widget.onSearchFiles;
+    if (search == null) return;
+    final seq = ++_mentionSeq;
+    List<String> files;
+    try {
+      files = await search(token.query);
+    } catch (_) {
+      files = const [];
+    }
+    if (!mounted || seq != _mentionSeq || token != _mentionToken) return;
+    setState(() => _mentionFiles = files.take(kFileMentionLimit).toList());
+  }
+
+  void _selectMention(String path) {
+    final token = _currentMentionToken();
+    if (token == null) return;
+    _controller.value = applyFileMention(_controller.value, token, path);
+    _focusNode.requestFocus();
+  }
+
+  // --- saved prompts --------------------------------------------------------
+
+  Future<void> _openSavedPrompts() async {
+    final store = widget.savedPrompts;
+    if (store == null) return;
+    final picked = await showSavedPromptsSheet(
+      context,
+      store: store,
+      currentText: _controller.text,
+    );
+    if (picked == null || !mounted) return;
+    final current = _controller.text;
+    final text = current.trim().isEmpty
+        ? picked
+        : '${current.trimRight()}\n$picked';
+    _controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    _focusNode.requestFocus();
   }
 
   @override
   void dispose() {
     _transcriptSub?.cancel();
     _failureSub?.cancel();
+    _uploadSub?.cancel();
+    _mentionTimer?.cancel();
     _controller.removeListener(_onTextChange);
     _controller.dispose();
     _focusNode.dispose();
@@ -438,6 +587,10 @@ class _InputBarState extends State<InputBar> {
   /// composer button, exactly as before.
   KeyEventResult _onComposerKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.escape && _mentionVisible) {
+      _dismissMention();
+      return KeyEventResult.handled;
+    }
     final isEnter =
         event.logicalKey == LogicalKeyboardKey.enter ||
         event.logicalKey == LogicalKeyboardKey.numpadEnter;
@@ -553,6 +706,7 @@ class _InputBarState extends State<InputBar> {
     final listenables = <Listenable>[
       if (widget.voice != null) widget.voice!,
       if (widget.attachment != null) widget.attachment!,
+      if (widget.upload != null) widget.upload!,
     ];
     if (listenables.isEmpty) return _composer(context);
     // Rebuild on every voice/attachment emit (tick / level / availability /
@@ -584,8 +738,8 @@ class _InputBarState extends State<InputBar> {
         widget.onOpenAttach != null &&
         canInteract &&
         !showStrip &&
-        !visionBlocked &&
-        !hasImage;
+        // Plan/68 — "File" stays on offer when no image can be attached.
+        (widget.upload != null || (!visionBlocked && !hasImage));
     final showQuickActions =
         _empty && !hasImage && canInteract && !showStrip && hasQuickActions;
 
@@ -614,7 +768,13 @@ class _InputBarState extends State<InputBar> {
         canInteract &&
         !showStrip &&
         widget.onCancel != null;
-    return Container(
+    return PopScope(
+      // Android back closes the @ suggestions before leaving the chat.
+      canPop: !(canInteract && _mentionVisible),
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _dismissMention();
+      },
+      child: Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 22),
       decoration: BoxDecoration(
         color: colors.bg,
@@ -631,6 +791,12 @@ class _InputBarState extends State<InputBar> {
                   image: attachState.image,
                   onRemove: widget.attachment!.removeImage,
                 ),
+              if (widget.upload != null)
+                UploadStrip(
+                  state: widget.upload!.state,
+                  onCancel: widget.upload!.cancel,
+                  onDismiss: widget.upload!.dismissNotice,
+                ),
               for (final item in widget.queuedMessages)
                 _QueuedMessagePreview(
                   text: item.text,
@@ -645,11 +811,13 @@ class _InputBarState extends State<InputBar> {
                   filterSlashCommands(
                     _controller.text,
                     widget.dynamicSkills,
+                    widget.hostCommands,
                   ).isNotEmpty)
                 SlashCommandMenu(
                   items: filterSlashCommands(
                     _controller.text,
                     widget.dynamicSkills,
+                    widget.hostCommands,
                   ),
                   onSelect: (cmd) {
                     _controller.text = '/${cmd.name} ';
@@ -658,6 +826,12 @@ class _InputBarState extends State<InputBar> {
                     );
                     _focusNode.requestFocus();
                   },
+                ),
+              if (canInteract && _mentionVisible)
+                FileMentionMenu(
+                  key: const Key('file-mention-menu'),
+                  files: _mentionFiles,
+                  onSelect: _selectMention,
                 ),
               TextField(
                 // Intercept hardware Enter on the field's OWN focus
@@ -682,6 +856,26 @@ class _InputBarState extends State<InputBar> {
                 ),
                 cursorColor: colors.accent,
                 decoration: InputDecoration(
+                  suffixIcon: widget.savedPrompts == null
+                      ? null
+                      : IconButton(
+                          key: const Key('input-bar-saved-prompts'),
+                          padding: EdgeInsets.zero,
+                          iconSize: 18,
+                          splashRadius: 18,
+                          tooltip: 'Saved prompts',
+                          icon: Icon(
+                            LucideIcons.bookmark,
+                            color: canInteract
+                                ? colors.muted2
+                                : colors.muted.withValues(alpha: 0.35),
+                          ),
+                          onPressed: canInteract ? _openSavedPrompts : null,
+                        ),
+                  suffixIconConstraints: const BoxConstraints(
+                    minWidth: 40,
+                    minHeight: 40,
+                  ),
                   hintText: widget.disabled
                       ? 'Offline…'
                       : hasImage
@@ -858,6 +1052,7 @@ class _InputBarState extends State<InputBar> {
             ),
         ],
       ),
+    ),
     );
   }
 }

@@ -1,9 +1,9 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "../omp-api.js";
 import { Type } from "typebox";
 import type { TransportErrorReason } from "./envelope.js";
 import type { AckResult, SessionPeer } from "./peer.js";
 
-const NOT_IN_SESSION = "Not in a session. Run /remote-pi join first";
+const NOT_IN_SESSION = "Not in a session. Run /remote-omp join first";
 const ACK_TIMEOUT_MS = 5_000;
 const LEGACY_REQUEST_TIMEOUT_MS = 30_000;
 const LIST_PEERS_TIMEOUT_MS = 2_000;
@@ -31,7 +31,7 @@ interface SendDetails {
 }
 
 /**
- * Registers the native tools the Pi LLM uses to talk to other agents in the
+ * Registers the native tools the omp LLM uses to talk to other agents in the
  * same UDS session (plano 19 transport + plan/25 Wave 0 ACK protocol):
  *
  *   - `agent_send`     — unified delivery with broker-level ACK. Returns
@@ -81,16 +81,14 @@ export function registerAgentTools(
     name: "agent_send",
     label: "Agent Send",
     description:
-      "Send a message to another Pi agent in the current local session and " +
+      "Send a message to another omp agent in the current local session and " +
       "wait for the broker's delivery ACK. Delivery is reliable: a peer that " +
-      "is mid-turn still receives the message (its harness enqueues it for " +
+      "is mid-turn still receives the message (omp enqueues it for " +
       "the next turn), so you never need to retry. Returns one of: `received` " +
       "(delivered; peer will process it in an upcoming turn), `denied` (peer " +
       "refused), `timeout` (no ACK in 5s — peer offline / transport error), " +
       "`sent` (broadcast/multicast — no ACK semantics). Use `re` to mark this " +
       "message as a reply to an incoming envelope's `id` (correlation only).",
-    promptSnippet:
-      "agent_send({to, body, re?}): unicast → returns {status: received|denied|timeout} (delivery is reliable; no retry-on-busy). Broadcast/multicast → fire-and-forget ({status:'sent'}).",
     parameters: SendParams,
     execute: async (_toolCallId, params) => {
       const peer = getSessionPeer();
@@ -169,8 +167,6 @@ export function registerAgentTools(
       "available, or after a `peer_joined` / `peer_left` notification to refresh " +
       "your mental model. Resolves in milliseconds — a metadata query to the " +
       "broker, not a turn of another agent.",
-    promptSnippet:
-      "list_peers(): returns {peers: string[]} of addresses `<cwd>@<name>` (`<pc>:` prefix cross-PC). Echo an address verbatim to agent_send; never compose one. Cheap; call freely.",
     parameters: ListPeersParams,
     execute: async (_toolCallId) => {
       const peer = getSessionPeer();
@@ -222,8 +218,6 @@ export function registerAgentTools(
       "it sends a message and synchronously blocks until the peer replies " +
       "or the timeout fires. Default 30s. Will be removed in a future " +
       "release; migrate to the event-driven pattern in the agent-network skill.",
-    promptSnippet:
-      "agent_request({to, body, timeout_ms?}): DEPRECATED synchronous request/reply (blocks current turn). Prefer agent_send + inbox observation.",
     parameters: RequestParams,
     execute: async (_toolCallId, params) => {
       const peer = getSessionPeer();
@@ -277,7 +271,7 @@ function _formatAck(to: string, ack: AckResult, re: string | null | undefined): 
       // be honest that it was NOT delivered, and point at the fix.
       return `NOT delivered — "${to}"${reSuffix} came back BUSY, which only ` +
         `happens when an out-of-date broker leader dropped the message. ` +
-        `Restart the agent leading the local broker (oldest Pi/remote-pi process) ` +
+        `Restart the agent leading the local broker (oldest omp process) ` +
         `to pick up the new build, then resend.`;
     case "denied":
       if (ack.reason === "not_authorized") {

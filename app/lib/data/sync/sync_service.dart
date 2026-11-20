@@ -180,6 +180,12 @@ class SyncService extends Service {
   Stream<List<WireSkill>> get dynamicSkillsStream => _skillsController.stream;
   List<WireSkill> get dynamicSkills => _dynamicSkills;
 
+  /// omp's own slash-command list from the last `skills_list`; null while the
+  /// peer's extension does not send one (the slash menu then keeps the app's
+  /// built-in list).
+  List<WireCommand>? _hostCommands;
+  List<WireCommand>? get hostCommands => _hostCommands;
+
   /// The active session's recent prompts for the composer's history recall
   /// (latest `session_history` plus live echoes). Null until a Pi that sends
   /// them answers a sync; the transcript is the fallback then.
@@ -778,6 +784,7 @@ class SyncService extends Service {
             seq: seq,
             role: MsgRole.assistant,
             text: '⚠ $code: $message',
+            errorCode: code,
             ts: DateTime.now(),
           ),
         );
@@ -802,9 +809,13 @@ class SyncService extends Service {
       case ModelRoles():
       case GitStatusResult():
       case GitDiffResult():
+      case FilesListResult():
+      case DirsListResult():
+      case SpawnResult():
         break;
-      case SkillsList(:final skills, :final inReplyTo):
+      case SkillsList(:final skills, :final commands, :final inReplyTo):
         _dynamicSkills = skills;
+        _hostCommands = commands;
         if (!_skillsController.isClosed) {
           _skillsController.add(skills);
         }
@@ -826,6 +837,11 @@ class SyncService extends Service {
       case FileChunk():
       case FileEnd():
       case FileCancel():
+        break;
+      // Plan 68 — uploads are handled by FileUploader, not chat rows.
+      case UploadAck():
+      case UploadDone():
+      case UploadError():
         break;
     }
   }
@@ -930,13 +946,14 @@ class SyncService extends Service {
               ts: DateTime.fromMillisecondsSinceEpoch(e.ts),
             ),
           );
-        case AgentMessageEvt(:final text):
+        case AgentMessageEvt(:final text, :final errorCode):
           out.add(
             MessageRecord(
               id: 'agent_${e.ts}_$seq',
               seq: seq++,
               role: MsgRole.assistant,
               text: text,
+              errorCode: errorCode,
               ts: DateTime.fromMillisecondsSinceEpoch(e.ts),
             ),
           );

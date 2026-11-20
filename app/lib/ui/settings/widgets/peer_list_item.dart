@@ -26,7 +26,7 @@ class PeerListItem extends StatelessWidget {
   });
 
   /// Platform hint for the secondary line (Mac / Linux / Windows / Pi
-  /// OS). Pi-extension hasn't surfaced this yet; once it does
+  /// OS). omp-extension hasn't surfaced this yet; once it does
   /// (PairOk extension or a new field on PeerRecord), wire here and
   /// the slot lights up. Until then returns null and the row stays
   /// title-only.

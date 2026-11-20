@@ -30,7 +30,7 @@ export interface AttachBridgeOptions {
   relayUrl: string;
   /** This host's Ed25519 identity (machine Pi-key). */
   keypair: Ed25519Keypair;
-  /** Retained Pi-produced topology. Supplying it bypasses discovery. */
+  /** Retained topology produced by this PC. Supplying it bypasses discovery. */
   topology?: MeshTopologySnapshot;
   /** Standalone discovery deadline per mesh request. Defaults to 5 seconds. */
   meshRequestTimeoutMs?: number;

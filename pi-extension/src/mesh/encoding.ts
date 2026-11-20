@@ -183,7 +183,7 @@ interface PreparedRoutingAlias {
 }
 
 /**
- * Allocates a deterministic bijection from canonical Pi key to effective alias.
+ * Allocates a deterministic bijection from canonical PC key to effective alias.
  * Every colliding base is suffixed with an adaptively expanded key prefix.
  */
 export function allocateRoutingAliases(

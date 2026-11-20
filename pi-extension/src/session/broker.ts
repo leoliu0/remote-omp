@@ -74,7 +74,7 @@ export function sanitizeMeshName(raw: string): string {
  *   - no such peer  → silent drop (sender times out)
  *
  * plan/34 removed the busy-drop: a message that arrives while the target is
- * mid-turn is **always delivered**, never dropped. The Pi harness
+ * mid-turn is **always delivered**, never dropped. The omp runtime
  * (`sendMessage(triggerTurn:true)`) enqueues mid-turn messages and processes
  * them in the upcoming turn, so the broker needs no busy gate or mailbox.
  * Consequently `busy` is no longer a possible ACK status for unicast new
@@ -238,7 +238,7 @@ export class Broker {
    * Returns the ACK status so the caller (broker_remote) can pack and
    * forward an ACK envelope back across the relay:
    *   - `received` — target exists, envelope delivered (plan/34: always
-   *     delivered when the peer is online — the Pi harness enqueues mid-turn
+   *     delivered when the peer is online — the omp runtime enqueues mid-turn
    *     messages, so there is no busy-drop)
    *   - `denied` — no such local peer (or write failed) — caller maps to
    *     transport_error or denied ACK as it sees fit
@@ -308,7 +308,7 @@ export class Broker {
   }
 
   private async _handleLine(conn: PeerConn, line: string): Promise<void> {
-    // Unregistered conn: a read-only `list_peers` probe (the `remote-pi peers`
+    // Unregistered conn: a read-only `list_peers` probe (the `remote-omp peers`
     // CLI — answered without registering, so it leaves no trace on the mesh) or
     // the mandatory `register` handshake. Anything else `_handleRegister` drops.
     if (!conn.name) {
@@ -398,7 +398,7 @@ export class Broker {
 
   /**
    * Answer a read-only `list_peers` request from an UNREGISTERED connection
-   * (the `remote-pi peers` CLI probe). Returns true when the line was such a
+   * (the `remote-omp peers` CLI probe). Returns true when the line was such a
    * probe — the reply is written and the connection stays unregistered: no
    * name assigned, no `peer_joined`/`peer_left` broadcast, no sibling push, so
    * querying the roster from the shell never perturbs the mesh. Returns false
@@ -532,7 +532,7 @@ export class Broker {
     const isUnicast = typeof env.to === "string" && env.to !== "broadcast";
 
     // plan/34: reliable delivery — always write to the target's socket. The
-    // Pi harness enqueues messages that arrive mid-turn, so there is no
+    // omp runtime enqueues messages that arrive mid-turn, so there is no
     // busy-drop and `busy` is no longer a possible ACK status. Unicast sends
     // to an online peer always ACK `received`.
     let ackStatus: AckStatus | "none" = "none";
@@ -623,7 +623,7 @@ export class Broker {
       return;
     }
     // plan/34: `turn_state` is no longer consumed — the broker doesn't gate
-    // delivery on busy state. The Pi extension still publishes working state
+    // delivery on busy state. The omp extension still publishes working state
     // as room_meta over the relay (index.ts), independent of the broker.
   }
 

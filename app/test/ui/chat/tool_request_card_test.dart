@@ -262,7 +262,7 @@ void main() {
       testWidgets('live tool_result error: exact strings + red exit', (
         tester,
       ) async {
-        // Shape of a live `tool_result` for a failing command: pi-extension
+        // Shape of a live `tool_result` for a failing command: omp-extension
         // sends the full tool text as `error` (isError) → status failed.
         const failed = ToolEvent(
           id: 'tc1',

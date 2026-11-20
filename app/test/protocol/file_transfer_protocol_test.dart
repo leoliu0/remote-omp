@@ -1,5 +1,5 @@
 // Plan 65 step 1 — file transfer frames. Wire names mirror the table in
-// plan/65-send-file-to-phone.md exactly (shared with pi-extension's codec).
+// plan/65-send-file-to-phone.md exactly (shared with omp-extension's codec).
 
 import 'dart:convert';
 

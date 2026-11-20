@@ -164,13 +164,13 @@ const List<SlashCommandItem> kSlashCommands = [
     icon: LucideIcons.server,
   ),
   SlashCommandItem(
-    name: 'remote-pi',
-    description: 'Remote Pi device pairing, status, and relay controls',
+    name: 'remote-omp',
+    description: 'Remote OMP device pairing, status, and relay controls',
     icon: LucideIcons.smartphone,
   ),
   SlashCommandItem(
     name: 'rc',
-    description: 'Shortcut for /remote-pi commands',
+    description: 'Shortcut for /remote-omp commands',
     icon: LucideIcons.smartphone,
   ),
   SlashCommandItem(
@@ -509,27 +509,27 @@ const List<SlashCommandItem> kSlashCommands = [
   ),
 ];
 
+/// Slash menu entries for [input].
+///
+/// With [hostCommands] (omp's own list, sent by an extension that has the
+/// field) the menu is exactly what that host can run: its commands, then its
+/// skills. Entries of [kSlashCommands] the host does not have are dropped; the
+/// ones it has only lend their icon. Without it (an older extension, or an
+/// empty list) the menu is [kSlashCommands] plus [dynamicSkills], as before.
 List<SlashCommandItem> filterSlashCommands(
   String input, [
   List<WireSkill>? dynamicSkills,
+  List<WireCommand>? hostCommands,
 ]) {
   if (!input.startsWith('/')) return const [];
   final raw = input.substring(1);
   if (raw.contains(' ')) return const []; // Command name already completed
   final query = raw.trim().toLowerCase();
 
-  final List<SlashCommandItem> catalog = [
-    ...kSlashCommands,
-    if (dynamicSkills != null)
-      for (final s in dynamicSkills)
-        if (!kSlashCommands.any((c) => c.name == s.name))
-          SlashCommandItem(
-            name: s.name,
-            description: s.description,
-            category: 'Skill',
-            icon: LucideIcons.sparkles,
-          ),
-  ];
+  final List<SlashCommandItem> catalog =
+      hostCommands != null && hostCommands.isNotEmpty
+      ? _hostCatalog(hostCommands, dynamicSkills)
+      : _builtInCatalog(dynamicSkills);
 
   if (query.isEmpty) return catalog;
 
@@ -538,6 +538,60 @@ List<SlashCommandItem> filterSlashCommands(
         cmd.description.toLowerCase().contains(query);
   }).toList();
 }
+
+List<SlashCommandItem> _builtInCatalog(List<WireSkill>? dynamicSkills) => [
+  ...kSlashCommands,
+  if (dynamicSkills != null)
+    for (final s in dynamicSkills)
+      if (!kSlashCommands.any((c) => c.name == s.name))
+        SlashCommandItem(
+          name: s.name,
+          description: s.description,
+          category: 'Skill',
+          icon: LucideIcons.sparkles,
+        ),
+];
+
+List<SlashCommandItem> _hostCatalog(
+  List<WireCommand> commands,
+  List<WireSkill>? skills,
+) {
+  final known = {for (final c in kSlashCommands) c.name: c};
+  final seen = <String>{};
+  final out = <SlashCommandItem>[];
+  for (final c in commands) {
+    if (!seen.add(c.name)) continue;
+    final base = known[c.name];
+    out.add(
+      SlashCommandItem(
+        name: c.name,
+        description: c.description.isNotEmpty
+            ? c.description
+            : (base?.description ?? ''),
+        category: _categoryFor(c.source),
+        icon: base?.icon ?? LucideIcons.terminal,
+      ),
+    );
+  }
+  for (final s in skills ?? const <WireSkill>[]) {
+    if (!seen.add(s.name)) continue;
+    out.add(
+      SlashCommandItem(
+        name: s.name,
+        description: s.description,
+        category: 'Skill',
+        icon: LucideIcons.sparkles,
+      ),
+    );
+  }
+  return out;
+}
+
+String _categoryFor(String source) => switch (source) {
+  'extension' => 'Extension',
+  'prompt' => 'Prompt',
+  _ => 'Command',
+};
 
 class SlashCommandMenu extends StatelessWidget {
   final List<SlashCommandItem> items;

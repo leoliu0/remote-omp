@@ -11,29 +11,30 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { daemonIdForCwd } from "./id.js";
 import { defaultAgentName } from "../session/local_config.js";
-import { isHarness, type Harness } from "./harness.js";
+import { remoteOmpHome } from "../paths.js";
 
 /**
  * The global daemon registry: which working directories are promoted to
  * always-on daemons under the supervisor.
  *
- * Schema: `~/.pi/remote/daemons.json` persists `{ cwd, name, harness }` per
- * entry. The supervisor injects `{ agent_name: name, auto_start_relay: true }`
- * into each child via `REMOTE_PI_DIRECT_CONFIG` (no per-cwd config file needed).
- * Legacy `{ cwd }` entries fall back to `defaultAgentName(cwd)` and `harness: "pi"`.
+ * Schema: `~/.omp/remote/daemons.json` persists `{ cwd, name }` per entry. The
+ * supervisor injects `{ agent_name: name, auto_start_relay: true }` into each
+ * child via `REMOTE_OMP_DIRECT_CONFIG` (no per-cwd config file needed). Legacy
+ * `{ cwd }` entries fall back to `defaultAgentName(cwd)`. Any other key an older
+ * file carries (it also recorded which agent CLI to run) is ignored without a
+ * warning and left out of the next save.
  * The daemon `id` is always derived from `cwd` via `daemonIdForCwd`, never persisted.
  *
  * Cwds are always normalized to an **absolute realpath** before storage.
- * A user typing `/remote-pi create ~/Movies` or `/remote-pi create .`
- * results in the same entry as `/remote-pi create /Users/x/Movies` — no
+ * A user typing `/remote-omp create ~/Movies` or `/remote-omp create .`
+ * results in the same entry as `/remote-omp create /Users/x/Movies` — no
  * surprise duplicates, symlinks collapse correctly.
  */
 
-/** Resolved at call time so tests can override via `REMOTE_PI_HOME`. The
- *  prod path is always `~/.pi/remote/daemons.json`. */
+/** Resolved at call time so tests can redirect it via `REMOTE_OMP_HOME`. The
+ *  prod path is always `~/.omp/remote/daemons.json`. */
 function registryPathInternal(): string {
-  const root = process.env["REMOTE_PI_HOME"] || homedir();
-  return join(root, ".pi", "remote", "daemons.json");
+  return join(remoteOmpHome(), "daemons.json");
 }
 
 export interface DaemonEntry {
@@ -41,13 +42,11 @@ export interface DaemonEntry {
   cwd: string;
   /**
    * Display name (mesh `agent_name`). Persisted here because the supervisor
-   * injects the daemon's config via `REMOTE_PI_DIRECT_CONFIG` at spawn
-   * instead of relying on a per-cwd `.pi/remote-pi/config.json`. Legacy entries
+   * injects the daemon's config via `REMOTE_OMP_DIRECT_CONFIG` at spawn
+   * instead of relying on a per-cwd `.omp/remote-omp/config.json`. Legacy entries
    * (cwd only) fall back to `defaultAgentName(cwd)`.
    */
   name?: string;
-  /** CLI this daemon runs. Entries written before plan/67 have none and run pi. */
-  harness?: Harness;
 }
 
 /** A registry entry as the supervisor consumes it: id derived, defaults filled. */
@@ -55,7 +54,6 @@ export interface DaemonRecord {
   readonly id: string;
   readonly cwd: string;
   readonly name: string;
-  readonly harness: Harness;
 }
 
 export interface DaemonRegistry {
@@ -81,7 +79,7 @@ function _invalidateCache(): void {
  * components against `process.cwd()`, and runs `realpath` to canonicalize
  * symlinks. Throws if the resulting path doesn't exist on disk.
  *
- * `/remote-pi create` always stores normalized paths so two registrations
+ * `/remote-omp create` always stores normalized paths so two registrations
  * of the same logical folder via different aliases produce a single entry.
  */
 export function normalizeCwd(input: string): string {
@@ -107,7 +105,7 @@ function _parseRegistryFile(path: string, strict: boolean): DaemonRegistry {
     }
     const msg = `Failed to read daemon registry ${path}: ${err instanceof Error ? err.message : String(err)}`;
     if (strict) throw new Error(msg);
-    process.stderr.write(`[remote-pi] ${msg}\n`);
+    process.stderr.write(`[remote-omp] ${msg}\n`);
     return { daemons: [] };
   }
 
@@ -117,14 +115,14 @@ function _parseRegistryFile(path: string, strict: boolean): DaemonRegistry {
   } catch (err) {
     const msg = `Malformed daemon registry JSON at ${path}: ${err instanceof Error ? err.message : String(err)}`;
     if (strict) throw new Error(msg);
-    process.stderr.write(`[remote-pi] ${msg}\n`);
+    process.stderr.write(`[remote-omp] ${msg}\n`);
     return { daemons: [] };
   }
 
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     const msg = `Invalid daemon registry at ${path}: expected JSON object`;
     if (strict) throw new Error(msg);
-    process.stderr.write(`[remote-pi] ${msg}\n`);
+    process.stderr.write(`[remote-omp] ${msg}\n`);
     return { daemons: [] };
   }
 
@@ -132,35 +130,25 @@ function _parseRegistryFile(path: string, strict: boolean): DaemonRegistry {
   if (!Array.isArray(arr)) {
     const msg = `Invalid daemon registry shape at ${path}: expected { "daemons": [...] }`;
     if (strict) throw new Error(msg);
-    process.stderr.write(`[remote-pi] ${msg}\n`);
+    process.stderr.write(`[remote-omp] ${msg}\n`);
     return { daemons: [] };
   }
 
   const daemons: DaemonEntry[] = [];
   for (const [idx, item] of arr.entries()) {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
-      process.stderr.write(`[remote-pi] skipping malformed registry entry #${idx} in ${path}\n`);
+      process.stderr.write(`[remote-omp] skipping malformed registry entry #${idx} in ${path}\n`);
       continue;
     }
     const cwd = (item as { cwd?: unknown }).cwd;
     if (typeof cwd !== "string" || cwd.length === 0) {
-      process.stderr.write(`[remote-pi] skipping registry entry #${idx} without valid cwd in ${path}\n`);
+      process.stderr.write(`[remote-omp] skipping registry entry #${idx} without valid cwd in ${path}\n`);
       continue;
     }
     const entry: DaemonEntry = { cwd };
     const rawName = (item as { name?: unknown }).name;
     const trimmedName = typeof rawName === "string" ? rawName.trim() : "";
     if (trimmedName.length > 0) entry.name = trimmedName;
-    const rawHarness = (item as { harness?: unknown }).harness;
-    if (rawHarness !== undefined) {
-      if (isHarness(rawHarness)) {
-        entry.harness = rawHarness;
-      } else {
-        process.stderr.write(
-          `[remote-pi] unknown harness "${String(rawHarness)}" for ${cwd} in ${path}; defaulting to "pi"\n`,
-        );
-      }
-    }
     daemons.push(entry);
   }
   return { daemons };
@@ -194,12 +182,9 @@ export function saveRegistry(reg: DaemonRegistry): void {
 /**
  * Adds a daemon entry. Refuses duplicates (same normalized cwd already
  * present) and refuses to overwrite a corrupted registry file. Returns the
- * full `DaemonRecord` (`{ id, cwd, name, harness }`).
+ * full `DaemonRecord` (`{ id, cwd, name }`).
  */
-export function addDaemon(rawCwd: string, name?: string, harness: Harness = "pi"): DaemonRecord {
-  if (!isHarness(harness)) {
-    throw new Error(`unknown harness "${String(harness)}" (expected pi or omp)`);
-  }
+export function addDaemon(rawCwd: string, name?: string): DaemonRecord {
   const cwd = normalizeCwd(rawCwd);
   const reg = _loadRegistryStrict();
   if (reg.daemons.some((d) => d.cwd === cwd)) {
@@ -208,9 +193,9 @@ export function addDaemon(rawCwd: string, name?: string, harness: Harness = "pi"
   // Always persist a name (the registry is the source of truth now that the
   // supervisor injects config via env instead of a local config file).
   const resolvedName = name?.trim() || defaultAgentName(cwd);
-  reg.daemons.push({ cwd, name: resolvedName, harness });
+  reg.daemons.push({ cwd, name: resolvedName });
   saveRegistry(reg);
-  return { id: daemonIdForCwd(cwd), cwd, name: resolvedName, harness };
+  return { id: daemonIdForCwd(cwd), cwd, name: resolvedName };
 }
 
 /**
@@ -234,7 +219,6 @@ function _toRecords(reg: DaemonRegistry): DaemonRecord[] {
     // Legacy entries (cwd only) fall back to the folder-derived name so a
     // daemon is never nameless. New entries already carry an explicit name.
     name: d.name ?? defaultAgentName(d.cwd),
-    harness: d.harness ?? "pi",
   }));
 }
 
@@ -290,7 +274,7 @@ export function migrateRegistryNames(): number {
   return changed;
 }
 
-/** Test/diag-only: returns the resolved registry file path (honoring `REMOTE_PI_HOME`). */
+/** Test/diag-only: returns the resolved registry file path (honoring `REMOTE_OMP_HOME`). */
 export function registryPath(): string {
   return registryPathInternal();
 }

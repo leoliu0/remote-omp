@@ -89,7 +89,7 @@ void main() {
     );
 
     testWidgets(
-      'Skip returns "Pi" when no hostname hint is available (legacy Pi)',
+      'Skip returns "PC" when no hostname hint is available (legacy extension)',
       (tester) async {
         String? result;
         await _openSheet(
@@ -101,7 +101,7 @@ void main() {
         await tester.tap(find.byKey(const Key('nickname-sheet-skip')));
         await tester.pumpAndSettle();
 
-        expect(result, 'Pi');
+        expect(result, 'PC');
       },
     );
 

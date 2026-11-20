@@ -17,6 +17,7 @@ import 'dart:convert';
 
 import 'package:app/data/transport/channel.dart';
 import 'package:app/data/transport/relay_config.dart';
+import 'package:app/data/transport/room_demux.dart';
 import 'package:app/protocol/protocol.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
@@ -115,9 +116,11 @@ class WsTransport implements PeerTransport, IControlLink {
             // SessionRepository is singleton; without this guard,
             // AgentChunks for a chat the user just left bleed into
             // the chat they're now viewing. When senderRoom doesn't
-            // match the currently-addressed Pi cwd, drop the payload.
+            // match the currently-addressed Pi cwd, drop the payload
+            // (RoomDemux also admits the reply to a request sent to
+            // another room — plan 68).
             // Legacy Pis without `room` route unconditionally.
-            if (senderRoom != null && senderRoom != transport._activeRoom) {
+            if (!transport._demux.admits(senderRoom, bytes)) {
               debugPrint(
                 '[ws-in] bytes=${rawStr.length} kind=envelope '
                 'sender_room=$senderRoom DROPPED (room-mismatch)',
@@ -204,26 +207,29 @@ class WsTransport implements PeerTransport, IControlLink {
   String _peerPubkey = '';
   StreamSubscription? _sub;
 
-  /// Active target room on the Pi side. Plan 17: set via
-  /// `setActiveRoom`, defaults to 'main' when unset. The outer envelope
-  /// embeds this so the Pi can route the inner message to the right
+  /// Which Pi-side room is addressed (plan 17: set via `setActiveRoom`,
+  /// 'main' when unset) and whose frames are accepted. The outer envelope
+  /// embeds the room so the Pi can route the inner message to the right
   /// per-cwd session.
-  String _activeRoom = 'main';
+  final RoomDemux _demux = RoomDemux();
 
   /// Override the destination room (Pi side). The app remains on the
   /// 'main' room itself (that's what we sent in `hello.room_id`).
-  void setActiveRoom(String room) {
-    if (room == _activeRoom) {
-      return;
-    }
-    _activeRoom = room;
-  }
+  void setActiveRoom(String room) => _demux.setActiveRoom(room);
+
+  /// Plan 68 — the reply to request [requestId] will come from [room], which
+  /// is not the active one: let that single frame through. See [RoomDemux].
+  void expectReply(String requestId, String room) =>
+      _demux.expectReply(requestId, room);
+
+  /// The request is finished; stop expecting its reply.
+  void cancelReply(String requestId) => _demux.cancelReply(requestId);
 
   @override
   Future<void> send(Uint8List data) async {
     _ws.sink.add(jsonEncode({
       'peer': _peerPubkey,
-      'room': _activeRoom,
+      'room': _demux.activeRoom,
       'ct': base64.encode(data),
     }));
   }

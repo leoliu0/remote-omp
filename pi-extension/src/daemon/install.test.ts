@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
@@ -7,29 +7,40 @@ import { basename, dirname, isAbsolute, join } from "node:path";
  *  Windows (symlinks/`~/.local/bin`, systemd, launchd). */
 const posixOnly = process.platform === "win32";
 import {
+  LAUNCHD_LABEL,
+  LEGACY_CLI_LINKS,
+  LEGACY_LAUNCHD_LABEL,
+  LEGACY_SYSTEMD_UNIT,
+  LEGACY_WINDOWS_TASK_NAME,
+  SYSTEMD_UNIT,
+  WINDOWS_TASK_NAME,
   buildCmdShim,
   buildElevatedCmd,
   defaultRenderVars,
   detectPlatform,
   findNodeBinary,
   findSupervisorScript,
-  findRemotePiScript,
+  findRemoteOmpScript,
   findTemplate,
   isOnPath,
   launchdPlistPath,
+  legacyLaunchdPlistPath,
+  legacySystemdUnitPath,
   linkCliBinaries,
   renderTemplate,
+  supervisordLogPath,
   systemdUnitPath,
+  taskXmlPath,
   unlinkCliBinaries,
   userLocalBinDir,
   vbsLauncherPath,
 } from "./install.js";
 
 /**
- * Pure-function tests for the install module. We do NOT exercise the
- * actual `launchctl`/`systemctl` calls — those are platform-specific +
- * change real OS state. The smoke test for activation is documented in
- * the README and run manually.
+ * Pure-function tests for the install module. The real `launchctl`/`systemctl`/
+ * `schtasks` calls are never made here — they change real OS state; the install
+ * and uninstall flows run against an injected system in `install_service.test.ts`.
+ * The smoke test for activation is documented in the README and run manually.
  */
 
 describe("detectPlatform", () => {
@@ -69,6 +80,8 @@ describe("findTemplate", () => {
     expect(content).not.toContain("After=default.target");
     expect(content).toContain("{NODE}");
     expect(content).toContain("{SUPERVISOR}");
+    expect(content).toContain("Description=Remote OMP daemon supervisor");
+    expect(content).toContain("Documentation=https://github.com/leoliu0/remote-omp");
   });
 
   test("launchd template file exists on disk", () => {
@@ -76,7 +89,8 @@ describe("findTemplate", () => {
     expect(p.endsWith("launchd.plist.template")).toBe(true);
     const content = readFileSync(p, "utf8");
     expect(content).toContain("<key>Label</key>");
-    expect(content).toContain("dev.remotepi.supervisord");
+    expect(content).toContain(`<string>${LAUNCHD_LABEL}</string>`);
+    expect(content).toContain("{HOME}/.omp/remote/supervisord.log");
     expect(content).toContain("{NODE}");
     expect(content).toContain("{SUPERVISOR}");
   });
@@ -112,6 +126,14 @@ describe("findTemplate", () => {
     expect(content).toContain("{SUPERVISOR}");
     expect(content).toContain("{LOG}");
   });
+
+  test("no template names the pre-rename service, data directory or agent", () => {
+    for (const name of ["systemd", "launchd", "taskscheduler", "vbs-launcher"] as const) {
+      const content = readFileSync(findTemplate(name), "utf8");
+      expect(content, name).not.toMatch(/remote-pi|remotepi|pi-supervisord|\.pi\/remote/i);
+      expect(content, name).not.toMatch(/\bpi\b/i);
+    }
+  });
 });
 
 describe("renderTemplate", () => {
@@ -121,8 +143,8 @@ describe("renderTemplate", () => {
     home: "/Users/x",
     user: "jacob",
     path: "/usr/local/bin:/usr/bin:/bin",
-    vbs: "/Users/x/.pi/remote/RemotePiSupervisorLauncher.vbs",
-    logPath: "/Users/x/.pi/remote/supervisord.log",
+    vbs: "/Users/x/.omp/remote/RemoteOmpSupervisorLauncher.vbs",
+    logPath: "/Users/x/.omp/remote/supervisord.log",
   };
 
   test("substitutes every placeholder in systemd template", () => {
@@ -148,7 +170,7 @@ describe("renderTemplate", () => {
     expect(out).not.toContain("{PATH}");
     expect(out).toContain(`<string>${vars.node}</string>`);
     expect(out).toContain(`<string>${vars.supervisor}</string>`);
-    expect(out).toContain(`<string>${vars.home}/.pi/remote/supervisord.log</string>`);
+    expect(out).toContain(`<string>${vars.home}/.omp/remote/supervisord.log</string>`);
   });
 
   test("global replacement (multiple occurrences of same placeholder)", () => {
@@ -184,12 +206,37 @@ describe("renderTemplate", () => {
   });
 });
 
-describe("vbsLauncherPath", () => {
-  test("is absolute and ends with the launcher .vbs under ~/.pi/remote", () => {
+describe("data-dir paths (taskXmlPath, vbsLauncherPath, supervisordLogPath)", () => {
+  let prevOmpHome: string | undefined;
+  let scratch: string;
+
+  beforeEach(() => {
+    prevOmpHome = process.env["REMOTE_OMP_HOME"];
+    scratch = mkdtempSync(join(tmpdir(), "omp-install-paths-"));
+  });
+
+  afterEach(() => {
+    if (prevOmpHome === undefined) delete process.env["REMOTE_OMP_HOME"];
+    else process.env["REMOTE_OMP_HOME"] = prevOmpHome;
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  test("vbsLauncherPath is absolute and ends with the launcher .vbs under ~/.omp/remote", () => {
     const p = vbsLauncherPath();
     expect(isAbsolute(p)).toBe(true);
-    expect(p.endsWith("RemotePiSupervisorLauncher.vbs")).toBe(true);
-    expect(p.endsWith(join(".pi", "remote", "RemotePiSupervisorLauncher.vbs"))).toBe(true);
+    expect(p.endsWith("RemoteOmpSupervisorLauncher.vbs")).toBe(true);
+    expect(p.endsWith(join(".omp", "remote", "RemoteOmpSupervisorLauncher.vbs"))).toBe(true);
+  });
+
+  test("all three follow REMOTE_OMP_HOME, evaluated when called", () => {
+    process.env["REMOTE_OMP_HOME"] = scratch;
+    expect(taskXmlPath()).toBe(join(scratch, ".omp", "remote", "RemoteOmpSupervisor.xml"));
+    expect(vbsLauncherPath()).toBe(join(scratch, ".omp", "remote", "RemoteOmpSupervisorLauncher.vbs"));
+    expect(supervisordLogPath()).toBe(join(scratch, ".omp", "remote", "supervisord.log"));
+
+    const other = join(scratch, "other");
+    process.env["REMOTE_OMP_HOME"] = other;
+    expect(supervisordLogPath()).toBe(join(other, ".omp", "remote", "supervisord.log"));
   });
 });
 
@@ -206,17 +253,17 @@ describe("buildElevatedCmd", () => {
   test("redirects schtasks lines to the log but leaves control-flow bare", () => {
     const out = buildElevatedCmd(
       [
-        "schtasks /End /TN RemotePiSupervisor",
-        "schtasks /Create /XML \"x.xml\" /TN RemotePiSupervisor /F",
+        "schtasks /End /TN RemoteOmpSupervisor",
+        "schtasks /Create /XML \"x.xml\" /TN RemoteOmpSupervisor /F",
         "if errorlevel 1 exit /b 1",
-        "schtasks /Run /TN RemotePiSupervisor",
+        "schtasks /Run /TN RemoteOmpSupervisor",
       ],
       "C:\\Temp\\out.log",
     );
     expect(out.startsWith("@echo off\r\n")).toBe(true);
     // schtasks lines get the redirect…
-    expect(out).toContain('schtasks /End /TN RemotePiSupervisor >> "C:\\Temp\\out.log" 2>&1');
-    expect(out).toContain('schtasks /Run /TN RemotePiSupervisor >> "C:\\Temp\\out.log" 2>&1');
+    expect(out).toContain('schtasks /End /TN RemoteOmpSupervisor >> "C:\\Temp\\out.log" 2>&1');
+    expect(out).toContain('schtasks /Run /TN RemoteOmpSupervisor >> "C:\\Temp\\out.log" 2>&1');
     // …control flow does NOT (redirecting it would swallow the exit code).
     expect(out).toContain("if errorlevel 1 exit /b 1\r\n");
     expect(out).not.toContain('exit /b 1 >> ');
@@ -226,11 +273,33 @@ describe("buildElevatedCmd", () => {
 // systemd/launchd paths are POSIX-only (Windows uses Task Scheduler — plan/40).
 describe.skipIf(posixOnly)("paths", () => {
   test("systemdUnitPath lives under ~/.config/systemd/user/", () => {
-    expect(systemdUnitPath()).toMatch(/\.config\/systemd\/user\/remote-pi-supervisord\.service$/);
+    expect(systemdUnitPath()).toMatch(/\.config\/systemd\/user\/remote-omp-supervisord\.service$/);
   });
 
   test("launchdPlistPath lives under ~/Library/LaunchAgents/", () => {
-    expect(launchdPlistPath()).toMatch(/Library\/LaunchAgents\/dev\.remotepi\.supervisord\.plist$/);
+    expect(launchdPlistPath()).toMatch(/Library\/LaunchAgents\/dev\.remoteomp\.supervisord\.plist$/);
+  });
+
+  test("the unit and plist directories hang off the given home, not the real one", () => {
+    expect(systemdUnitPath("/tmp/h")).toBe(join("/tmp/h", ".config", "systemd", "user", "remote-omp-supervisord.service"));
+    expect(launchdPlistPath("/tmp/h")).toBe(join("/tmp/h", "Library", "LaunchAgents", "dev.remoteomp.supervisord.plist"));
+    expect(legacySystemdUnitPath("/tmp/h")).toBe(join("/tmp/h", ".config", "systemd", "user", "remote-pi-supervisord.service"));
+    expect(legacyLaunchdPlistPath("/tmp/h")).toBe(join("/tmp/h", "Library", "LaunchAgents", "dev.remotepi.supervisord.plist"));
+  });
+});
+
+describe("service names", () => {
+  test("the current service is named after Remote OMP", () => {
+    expect(SYSTEMD_UNIT).toBe("remote-omp-supervisord.service");
+    expect(LAUNCHD_LABEL).toBe("dev.remoteomp.supervisord");
+    expect(WINDOWS_TASK_NAME).toBe("RemoteOmpSupervisor");
+  });
+
+  test("the pre-rename names survive only so an old install can be cleaned up", () => {
+    expect(LEGACY_SYSTEMD_UNIT).toBe("remote-pi-supervisord.service");
+    expect(LEGACY_LAUNCHD_LABEL).toBe("dev.remotepi.supervisord");
+    expect(LEGACY_WINDOWS_TASK_NAME).toBe("RemotePiSupervisor");
+    expect([...LEGACY_CLI_LINKS]).toEqual(["remote-pi", "pi-supervisord"]);
   });
 });
 
@@ -247,9 +316,9 @@ describe("defaultRenderVars", () => {
 
 // ── CLI bin linking (plan/27) ────────────────────────────────────────────────
 
-describe("findRemotePiScript", () => {
+describe("findRemoteOmpScript", () => {
   test("resolves to dist/index.js sibling of supervisord", () => {
-    const p = findRemotePiScript();
+    const p = findRemoteOmpScript();
     expect(basename(p)).toBe("index.js");
     // Same dist root as supervisord: dirname(index.js) === dirname(dist/bin).
     expect(dirname(p)).toBe(dirname(dirname(findSupervisorScript())));
@@ -271,23 +340,23 @@ describe.skipIf(posixOnly)("userLocalBinDir + isOnPath", () => {
   });
 });
 
-// CLI symlinks are POSIX-only — linkCliBinaries returns early on Windows
-// (npm-global provides the `.cmd` shims there), so these don't apply.
+// CLI symlinks are POSIX-only — on Windows linkCliBinaries writes `.cmd` shims
+// instead (the describe below).
 describe.skipIf(posixOnly)("linkCliBinaries / unlinkCliBinaries", () => {
   let tmpHome: string;
-  let fakePaths: { remotePi: string; supervisord: string };
+  let fakePaths: { remoteOmp: string; supervisord: string };
 
   beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), "pi-link-"));
+    tmpHome = mkdtempSync(join(tmpdir(), "omp-link-"));
     // Stand-ins for the real extension files so the test doesn't depend
     // on `pnpm build` having run.
     const stub = join(tmpHome, "fake-ext");
     mkdirSync(join(stub, "bin"), { recursive: true });
     fakePaths = {
-      remotePi: join(stub, "index.js"),
+      remoteOmp: join(stub, "index.js"),
       supervisord: join(stub, "bin", "supervisord.js"),
     };
-    writeFileSync(fakePaths.remotePi, "#!/usr/bin/env node\n");
+    writeFileSync(fakePaths.remoteOmp, "#!/usr/bin/env node\n");
     writeFileSync(fakePaths.supervisord, "#!/usr/bin/env node\n");
   });
 
@@ -301,7 +370,7 @@ describe.skipIf(posixOnly)("linkCliBinaries / unlinkCliBinaries", () => {
     expect(result.links).toHaveLength(2);
 
     const names = result.links.map((l) => l.name).sort();
-    expect(names).toEqual(["pi-supervisord", "remote-pi"]);
+    expect(names).toEqual(["remote-omp", "remote-omp-supervisord"]);
 
     for (const link of result.links) {
       expect(lstatSync(link.path).isSymbolicLink()).toBe(true);
@@ -323,15 +392,15 @@ describe.skipIf(posixOnly)("linkCliBinaries / unlinkCliBinaries", () => {
     const binDir = join(tmpHome, ".local", "bin");
     mkdirSync(binDir, { recursive: true });
     // Write a fake stale symlink first
-    const stale = join(binDir, "remote-pi");
+    const stale = join(binDir, "remote-omp");
     writeFileSync(join(tmpHome, "fake-old.js"), "// old\n");
-    require("node:fs").symlinkSync(join(tmpHome, "fake-old.js"), stale);
+    symlinkSync(join(tmpHome, "fake-old.js"), stale);
     expect(readlinkSync(stale)).toBe(join(tmpHome, "fake-old.js"));
 
     const result = linkCliBinaries(tmpHome, fakePaths);
-    const pi = result.links.find((l) => l.name === "remote-pi")!;
-    expect(readlinkSync(pi.path)).toBe(pi.target);
-    expect(readlinkSync(pi.path)).not.toBe(join(tmpHome, "fake-old.js"));
+    const cli = result.links.find((l) => l.name === "remote-omp")!;
+    expect(readlinkSync(cli.path)).toBe(cli.target);
+    expect(readlinkSync(cli.path)).not.toBe(join(tmpHome, "fake-old.js"));
   });
 
   test("link signals onPath=false when binDir is absent from PATH (typical CI)", () => {
@@ -366,25 +435,102 @@ describe.skipIf(posixOnly)("linkCliBinaries / unlinkCliBinaries", () => {
       expect(existsSync(link.target)).toBe(true);
     }
   });
+
+  // The pre-rename build (Remote Pi) linked `remote-pi` and `pi-supervisord`. The new link
+  // step and unlink retire them — but only symlinks: anything else under those names is
+  // somebody else's file.
+  describe("pre-rename links", () => {
+    let binDir: string;
+    let oldTarget: string;
+    const present = (path: string): boolean => {
+      try {
+        lstatSync(path);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    beforeEach(() => {
+      binDir = join(tmpHome, ".local", "bin");
+      mkdirSync(binDir, { recursive: true });
+      oldTarget = join(tmpHome, "old-ext", "index.js");
+      mkdirSync(dirname(oldTarget), { recursive: true });
+      writeFileSync(oldTarget, "// old\n");
+    });
+
+    test("link removes them (a dangling one too) and creates the new links", () => {
+      symlinkSync(oldTarget, join(binDir, "remote-pi"));
+      symlinkSync(join(tmpHome, "gone.js"), join(binDir, "pi-supervisord")); // target does not exist
+
+      const result = linkCliBinaries(tmpHome, fakePaths);
+
+      for (const name of LEGACY_CLI_LINKS) expect(present(join(binDir, name))).toBe(false);
+      expect(result.links.map((l) => readlinkSync(l.path))).toEqual([fakePaths.remoteOmp, fakePaths.supervisord]);
+      expect(result.log).toContain(`removed ${join(binDir, "remote-pi")}`);
+      expect(result.log).toContain(`removed ${join(binDir, "pi-supervisord")}`);
+    });
+
+    test("link leaves a regular file under an old name alone", () => {
+      const mine = join(binDir, "remote-pi");
+      writeFileSync(mine, "#!/bin/sh\necho mine\n");
+
+      const result = linkCliBinaries(tmpHome, fakePaths);
+
+      expect(readFileSync(mine, "utf8")).toBe("#!/bin/sh\necho mine\n");
+      expect(lstatSync(mine).isSymbolicLink()).toBe(false);
+      expect(result.log.some((l) => l.includes(`left ${mine} alone`))).toBe(true);
+    });
+
+    test("unlink removes the old symlinks too, listing them after the current names", () => {
+      linkCliBinaries(tmpHome, fakePaths);
+      for (const name of LEGACY_CLI_LINKS) symlinkSync(oldTarget, join(binDir, name));
+
+      const result = unlinkCliBinaries(tmpHome);
+
+      expect(result.removed.map((r) => [r.name, r.existed])).toEqual([
+        ["remote-omp", true],
+        ["remote-omp-supervisord", true],
+        ["remote-pi", true],
+        ["pi-supervisord", true],
+      ]);
+      for (const r of result.removed) expect(present(r.path)).toBe(false);
+      expect(existsSync(oldTarget)).toBe(true); // targets are never touched
+    });
+
+    test("unlink leaves a regular file under any reserved name alone", () => {
+      const names = ["remote-omp", "remote-omp-supervisord", ...LEGACY_CLI_LINKS];
+      for (const name of names) writeFileSync(join(binDir, name), `#!/bin/sh\necho ${name}\n`);
+
+      const result = unlinkCliBinaries(tmpHome);
+
+      for (const name of names) expect(readFileSync(join(binDir, name), "utf8")).toBe(`#!/bin/sh\necho ${name}\n`);
+      expect(result.removed.map((r) => [r.name, r.existed])).toEqual([
+        ["remote-omp", false],
+        ["remote-omp-supervisord", false],
+      ]);
+    });
+  });
 });
 
-// Windows variant (plan/40): real `.cmd` shims, not symlinks. `mutatePath:false`
-// keeps the test from touching the real user PATH; `node` is injected so the
-// shim contents are deterministic.
-describe.skipIf(!posixOnly)("linkCliBinaries / unlinkCliBinaries (Windows .cmd shims)", () => {
+// Windows variant (plan/40): real `.cmd` shims, not symlinks. `platform: "win32"`
+// takes the Windows branch on any host, `mutatePath:false` keeps the test from
+// touching the real user PATH, and `node` is injected so the shim contents are
+// deterministic.
+describe("linkCliBinaries / unlinkCliBinaries (Windows .cmd shims)", () => {
   let tmpHome: string;
-  let fakePaths: { remotePi: string; supervisord: string };
+  let fakePaths: { remoteOmp: string; supervisord: string };
   const node = "C:\\Program Files\\nodejs\\node.exe";
 
   beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), "pi-link-win-"));
+    tmpHome = mkdtempSync(join(tmpdir(), "omp-link-win-"));
     const stub = join(tmpHome, "fake-ext");
     mkdirSync(join(stub, "bin"), { recursive: true });
     fakePaths = {
-      remotePi: join(stub, "index.js"),
+      remoteOmp: join(stub, "index.js"),
       supervisord: join(stub, "bin", "supervisord.js"),
     };
-    writeFileSync(fakePaths.remotePi, "// stub\n");
+    writeFileSync(fakePaths.remoteOmp, "// stub\n");
     writeFileSync(fakePaths.supervisord, "// stub\n");
   });
 
@@ -392,11 +538,11 @@ describe.skipIf(!posixOnly)("linkCliBinaries / unlinkCliBinaries (Windows .cmd s
     rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  test("link writes remote-pi.cmd + pi-supervisord.cmd pointing at node + targets", () => {
-    const result = linkCliBinaries(tmpHome, fakePaths, { node, mutatePath: false });
+  test("link writes remote-omp.cmd + remote-omp-supervisord.cmd pointing at node + targets", () => {
+    const result = linkCliBinaries(tmpHome, fakePaths, { node, mutatePath: false, platform: "win32" });
     expect(result.binDir).toBe(join(tmpHome, ".local", "bin"));
     const names = result.links.map((l) => l.name).sort();
-    expect(names).toEqual(["pi-supervisord.cmd", "remote-pi.cmd"]);
+    expect(names).toEqual(["remote-omp-supervisord.cmd", "remote-omp.cmd"]);
     for (const link of result.links) {
       expect(existsSync(link.path)).toBe(true);
       const content = readFileSync(link.path, "utf8");
@@ -407,19 +553,51 @@ describe.skipIf(!posixOnly)("linkCliBinaries / unlinkCliBinaries (Windows .cmd s
   });
 
   test("link is idempotent (re-running overwrites the same .cmd files)", () => {
-    linkCliBinaries(tmpHome, fakePaths, { node, mutatePath: false });
-    const second = linkCliBinaries(tmpHome, fakePaths, { node, mutatePath: false });
+    linkCliBinaries(tmpHome, fakePaths, { node, mutatePath: false, platform: "win32" });
+    const second = linkCliBinaries(tmpHome, fakePaths, { node, mutatePath: false, platform: "win32" });
     for (const link of second.links) {
       expect(readFileSync(link.path, "utf8")).toBe(buildCmdShim(node, link.target));
     }
   });
 
   test("unlink removes both .cmd shims, idempotent on second call", () => {
-    linkCliBinaries(tmpHome, fakePaths, { node, mutatePath: false });
-    const first = unlinkCliBinaries(tmpHome);
+    linkCliBinaries(tmpHome, fakePaths, { node, mutatePath: false, platform: "win32" });
+    const first = unlinkCliBinaries(tmpHome, { platform: "win32" });
     expect(first.removed.map((r) => r.existed)).toEqual([true, true]);
     for (const r of first.removed) expect(existsSync(r.path)).toBe(false);
-    const second = unlinkCliBinaries(tmpHome);
+    const second = unlinkCliBinaries(tmpHome, { platform: "win32" });
     expect(second.removed.map((r) => r.existed)).toEqual([false, false]);
+  });
+
+  test("link removes the pre-rename shims it recognises and leaves a hand-written one alone", () => {
+    const binDir = join(tmpHome, ".local", "bin");
+    mkdirSync(binDir, { recursive: true });
+    const oldShim = join(binDir, "remote-pi.cmd");
+    const mine = join(binDir, "pi-supervisord.cmd");
+    writeFileSync(oldShim, buildCmdShim(node, "C:\\old\\dist\\index.js"));
+    writeFileSync(mine, "@echo off\r\necho my own wrapper\r\n");
+
+    const result = linkCliBinaries(tmpHome, fakePaths, { node, mutatePath: false, platform: "win32" });
+
+    expect(existsSync(oldShim)).toBe(false);
+    expect(readFileSync(mine, "utf8")).toBe("@echo off\r\necho my own wrapper\r\n");
+    expect(result.log.some((l) => l.includes(`left ${mine} alone`))).toBe(true);
+  });
+
+  test("unlink removes our shims — current and pre-rename — and nothing else", () => {
+    const binDir = join(tmpHome, ".local", "bin");
+    linkCliBinaries(tmpHome, fakePaths, { node, mutatePath: false, platform: "win32" });
+    writeFileSync(join(binDir, "remote-pi.cmd"), buildCmdShim(node, "C:\\old\\dist\\index.js"));
+    writeFileSync(join(binDir, "pi-supervisord.cmd"), "@echo off\r\necho my own wrapper\r\n");
+
+    const result = unlinkCliBinaries(tmpHome, { platform: "win32" });
+
+    expect(result.removed.map((r) => [r.name, r.existed])).toEqual([
+      ["remote-omp.cmd", true],
+      ["remote-omp-supervisord.cmd", true],
+      ["remote-pi.cmd", true],
+    ]);
+    expect(existsSync(join(binDir, "remote-pi.cmd"))).toBe(false);
+    expect(readFileSync(join(binDir, "pi-supervisord.cmd"), "utf8")).toBe("@echo off\r\necho my own wrapper\r\n");
   });
 });

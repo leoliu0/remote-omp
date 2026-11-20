@@ -37,7 +37,7 @@ export interface MeshSelfRelayBridge {
 }
 
 export interface MeshNodeOptions {
-  /** UDS broker socket path (e.g. ~/.pi/remote/sessions/local/broker.sock). */
+  /** UDS broker socket path (e.g. ~/.omp/remote/sessions/local/broker.sock). */
   sockPath: string;
   /** Requested mesh name (broker may add a #N collision suffix). */
   name: string;
@@ -602,7 +602,7 @@ export class MeshNode {
     }
   }
 
-  /** Announce the local peer set to siblings (Pi broker peer_joined/left). */
+  /** Announce the local peer set to siblings (omp broker peer_joined/left). */
   onLocalPeersChanged(local: string[]): void {
     this.brokerRemote?.onLocalPeersChanged(local);
   }

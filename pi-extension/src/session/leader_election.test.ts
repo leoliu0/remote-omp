@@ -9,7 +9,7 @@ function tmpSock(): string {
   // Per-test unique IPC address (pipe on Windows; `.sock` file on POSIX). The
   // suffix embeds the unique tmpdir basename so machine-global pipe names don't
   // collide across tests/workers (plan/40).
-  const dir = mkdtempSync(join(tmpdir(), "pi-le-"));
+  const dir = mkdtempSync(join(tmpdir(), "omp-le-"));
   return ipcAddress(`le-${basename(dir)}`, join(dir, "broker.sock"));
 }
 

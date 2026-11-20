@@ -1,21 +1,35 @@
 #!/usr/bin/env bash
 #
-# Remote Pi — zero-to-running bootstrap installer
-# ================================================
+# Remote OMP — zero-to-running bootstrap installer
+# =================================================
 #
 #   curl -fsSL https://remote-pi.jacobmoura.work/install.sh | bash
 #
+# or straight from the repository:
+#
+#   curl -fsSL https://raw.githubusercontent.com/leoliu0/remote-omp/main/omp-extension/install.sh | bash
+#
 # What it does (all user-space, NO sudo, idempotent):
-#   1. Node      — uses the system Node if it's >= 20.6.0; otherwise installs
-#                  it via nvm under ~/.nvm (never touches the system Node).
-#   2. Pi        — installs the Pi coding agent (npm package
-#                  @earendil-works/pi-coding-agent) into a user-space prefix
-#                  (~/.local) so `pi` lands on ~/.local/bin without root.
-#   3. remote-pi — installs this plugin into Pi (`pi install npm:remote-pi`).
-#   4. CLI link  — symlinks the `remote-pi` CLI into ~/.local/bin.
-#   5. Supervisor— installs the per-user service (launchd GUI agent on macOS,
-#                  `systemd --user` on Linux) via `remote-pi install`.
-#   6. Stops.    — does NOT pair. Prints the next step (pair your phone).
+#   1. Node       — uses the system Node if it's >= 20.6.0; otherwise installs
+#                   it via nvm under ~/.nvm (never touches the system Node).
+#                   Only the `remote-omp` CLI and the supervisor run on Node;
+#                   omp itself does not need it.
+#   2. omp        — if `omp` (oh-my-pi, https://github.com/can1357/oh-my-pi) is
+#                   not on PATH, installs it with omp's official installer
+#                   (https://omp.sh/install: a standalone binary in
+#                   ~/.local/bin). Prefer a package manager? Install omp first
+#                   (`brew install can1357/tap/omp`, or
+#                   `bun install -g @oh-my-pi/pi-coding-agent`) and re-run.
+#   3. remote-omp — installs this plugin into omp (`omp plugin install
+#                   remote-omp`). From a checkout of the repository — run the
+#                   script from it, or set REMOTE_OMP_FROM_CLONE=<dir> — it
+#                   links that checkout instead (`omp plugin link <dir>`; build
+#                   it first with `pnpm install && pnpm build`).
+#   4. CLI link   — symlinks `remote-omp` and `remote-omp-supervisord` from the
+#                   plugin's dist/ into ~/.local/bin.
+#   5. Supervisor — installs the per-user service (launchd GUI agent on macOS,
+#                   `systemd --user` on Linux) via `remote-omp install`.
+#   6. Stops.     — does NOT pair. Prints the next step (pair your phone).
 #
 # OS support: macOS and native Linux. Windows is asked to use WSL and exits
 # cleanly. Re-running is a no-op once everything is in place.
@@ -27,19 +41,22 @@ set -euo pipefail
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-MIN_NODE="20.6.0"               # Pi requires Node >= 20.6.0
+MIN_NODE="20.6.0"               # the remote-omp CLI and supervisor run on Node >= 20.6.0
 NODE_LTS="22"                   # what we install via nvm when Node is missing
-PI_PKG="@earendil-works/pi-coding-agent"
-PLUGIN_SPEC="npm:remote-pi"
-PLUGIN_NAME="remote-pi"
-USER_PREFIX="$HOME/.local"      # user-space npm global prefix (sudo-free)
-LOCAL_BIN="$USER_PREFIX/bin"
+OMP_INSTALL_URL="https://omp.sh/install"   # omp's official installer (macOS / Linux)
+PLUGIN_NAME="remote-omp"        # npm package name == omp plugin name
+LOCAL_BIN="$HOME/.local/bin"    # where omp's installer and our CLI links land (sudo-free)
 
-# Resolved at runtime by ensure_plugin() — `pi install npm:remote-pi` runs
-# `npm install -g`, so the plugin lands under `npm root -g`, NOT in
-# ~/.pi/agent/npm. We can't hardcode it: it depends on the effective npm
-# prefix (nvm dir, ~/.local, a user .npmrc, …). Always ask `npm root -g`.
-PLUGIN_DIST=""
+# A checkout to link into omp instead of installing the npm package:
+# REMOTE_OMP_FROM_CLONE=<dir> (the repo root, or its omp-extension/ folder).
+# Running this script from inside a checkout does the same — see find_clone().
+FROM_CLONE="${REMOTE_OMP_FROM_CLONE:-}"
+CLONE_DIR=""
+
+# Resolved at runtime by resolve_plugin_dir(): omp decides where plugins live
+# (normally ~/.omp/plugins/node_modules/remote-omp; PI_CONFIG_DIR / XDG move
+# it), so we ask omp instead of hardcoding the path.
+PLUGIN_DIR=""
 
 # ── Pretty output ────────────────────────────────────────────────────────────
 
@@ -77,7 +94,7 @@ OS="$(detect_os)"
 
 if [ "$OS" = "windows" ]; then
   cat <<EOF
-${BOLD}Remote Pi${RST} doesn't run natively on Windows.
+${BOLD}Remote OMP${RST}'s installer doesn't run natively on Windows.
 
 Please use ${BOLD}WSL${RST} (Windows Subsystem for Linux) and re-run this
 installer inside your WSL shell — it's treated as Linux and works the same:
@@ -96,7 +113,7 @@ if [ "$OS" = "unknown" ]; then
   die "unsupported platform '$(uname -s 2>/dev/null)'. Only macOS and Linux are supported."
 fi
 
-printf '%s\n' "${BOLD}Remote Pi installer${RST} ${DIM}(${OS}, user-space, no sudo)${RST}"
+printf '%s\n' "${BOLD}Remote OMP installer${RST} ${DIM}(${OS}, user-space, no sudo)${RST}"
 echo
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -116,45 +133,22 @@ ensure_local_bin_on_path() {
   esac
 }
 
-# Resolve the global node_modules root that `npm install -g` (and therefore
-# `pi install npm:…`) writes to, honoring the effective npm config. We point
-# it at our user-space prefix by default so global installs stay sudo-free —
-# but whatever prefix actually wins, pi and this script read the SAME config,
-# so they can never disagree on where the plugin lands.
-npm_global_root() { npm root -g 2>/dev/null; }
-
-# Whether the active Node is provided by nvm (we installed it, or the user
-# already had an nvm Node on PATH). Set by ensure_node(). This gates whether
-# we may touch npm_config_prefix at all — see configure_npm_prefix().
-NODE_FROM_NVM=0
-
-# GOLDEN RULE: never export npm_config_prefix while nvm is (or might be) in
-# play — nvm flat-out refuses to run with that env var set and aborts. So we
-# decide the prefix AFTER Node is settled, and only for the system-Node case:
-#
-#   • nvm Node      → its global root (`npm root -g`) is already user-writable.
-#                     Leave npm_config_prefix UNSET (setting it breaks nvm).
-#   • system Node   → if `npm root -g` isn't writable without sudo, redirect
-#                     global installs into ~/.local via npm_config_prefix.
-#
-# Either way resolve_plugin_dist() finds the plugin via `npm root -g`, since
-# pi and this script read the same effective npm config.
-configure_npm_prefix() {
-  if [ "$NODE_FROM_NVM" = "1" ]; then
-    unset npm_config_prefix 2>/dev/null || true   # must stay unset for nvm Node
-    return 0
-  fi
-  # System Node: is the global node_modules root writable without sudo?
-  local groot gparent
-  groot="$(npm_global_root)"
-  [ -n "$groot" ] || return 0
-  gparent="$(dirname "$groot")"
-  while [ -n "$gparent" ] && [ ! -e "$gparent" ]; do gparent="$(dirname "$gparent")"; done
-  if [ -n "$gparent" ] && [ ! -w "$gparent" ]; then
-    info "system npm global root '$groot' is not writable — redirecting global installs to $USER_PREFIX (sudo-free)"
-    export npm_config_prefix="$USER_PREFIX"
+# Make the places omp may live visible for the rest of THIS run (the user's
+# shell rc is not touched here): omp's installer drops a standalone binary into
+# ~/.local/bin, `bun install -g` uses ~/.bun/bin. The latter is only appended,
+# so it can never shadow the Node we settled on.
+add_omp_dirs_to_path() {
+  ensure_local_bin_on_path
+  if [ -d "$HOME/.bun/bin" ]; then
+    case ":$PATH:" in
+      *":$HOME/.bun/bin:"*) : ;;
+      *) export PATH="$PATH:$HOME/.bun/bin" ;;
+    esac
   fi
 }
+
+# Physical (symlink-free) path of directory $1 — empty when it doesn't exist.
+physical_dir() { (cd "$1" 2>/dev/null && pwd -P) || true; }
 
 # Append an `export PATH` line to the user's shell rc (idempotent) so the bins
 # survive a new shell. We never rewrite existing lines — only add if missing.
@@ -172,7 +166,7 @@ persist_path_in_rc() {
     return 0
   fi
   {
-    printf '\n# Added by Remote Pi installer\n%s\n' "$line"
+    printf '\n# Added by Remote OMP installer\n%s\n' "$line"
   } >> "$rc"
   warn "added ~/.local/bin to PATH in $rc — open a new shell or 'source $rc'"
 }
@@ -188,8 +182,8 @@ ensure_node() {
       # Classify by path: an nvm Node lives under ~/.nvm, even if it was
       # already on PATH when we started.
       case "$(command -v node)" in
-        "$HOME/.nvm/"*) NODE_FROM_NVM=1; ok "using existing nvm Node v$have"; record "Node:       v$have (nvm)" ;;
-        *)              NODE_FROM_NVM=0; ok "using system Node v$have";       record "Node:       v$have (system)" ;;
+        "$HOME/.nvm/"*) ok "using existing nvm Node v$have"; record "Node:       v$have (nvm)" ;;
+        *)              ok "using system Node v$have";       record "Node:       v$have (system)" ;;
       esac
       return 0
     fi
@@ -202,8 +196,8 @@ ensure_node() {
 }
 
 install_node_via_nvm() {
-  # nvm is INCOMPATIBLE with npm_config_prefix and aborts if it's set (whether
-  # we set it or the user's environment did). Clear it before any nvm call.
+  # nvm is INCOMPATIBLE with npm_config_prefix and aborts if it's set (the
+  # user's environment may have it). Clear it before any nvm call.
   unset npm_config_prefix 2>/dev/null || true
   export NVM_DIR="$HOME/.nvm"
   if [ ! -s "$NVM_DIR/nvm.sh" ]; then
@@ -226,138 +220,204 @@ install_node_via_nvm() {
   command -v node >/dev/null 2>&1 || die "nvm install finished but 'node' is still not on PATH"
   local have; have="$(node -v | sed 's/^v//')"
   version_gte "$have" "$MIN_NODE" || die "installed Node v$have is still < $MIN_NODE"
-  NODE_FROM_NVM=1
   ok "installed Node v$have via nvm"
   record "Node:       v$have (nvm)"
 }
 
-# ── 2. Pi coding agent ───────────────────────────────────────────────────────
+# ── 2. omp (oh-my-pi) ────────────────────────────────────────────────────────
 
-ensure_pi() {
-  step "Installing the Pi coding agent"
+ensure_omp() {
+  step "Checking omp (oh-my-pi)"
+  add_omp_dirs_to_path
 
-  if command -v pi >/dev/null 2>&1; then
-    local v; v="$(pi --version 2>/dev/null | head -n1 || true)"
-    ok "Pi already installed (${v:-version unknown}) — skipping"
-    record "Pi:         ${v:-installed} (pre-existing)"
+  if command -v omp >/dev/null 2>&1; then
+    local v; v="$(omp --version 2>/dev/null | head -n1 || true)"
+    ok "omp already installed (${v:-version unknown}) — skipping"
+    record "omp:        ${v:-installed} (pre-existing)"
     return 0
   fi
 
-  # Guard the no-sudo promise: the global node_modules root must be writable.
-  # On a clean box (nvm Node, or ~/.local prefix) it is. If it points at a
-  # root-owned dir (e.g. system Node's /usr/local), fail with a clear hint
-  # instead of triggering an EACCES / sudo prompt mid-install.
-  local groot; groot="$(npm_global_root)"
-  if [ -n "$groot" ]; then
-    local gparent; gparent="$(dirname "$groot")"   # …/lib  (created on first install)
-    while [ -n "$gparent" ] && [ ! -e "$gparent" ]; do gparent="$(dirname "$gparent")"; done
-    if [ -n "$gparent" ] && [ ! -w "$gparent" ]; then
-      die "npm global prefix '$groot' is not writable without sudo.
-    This installer never uses sudo. Fix it user-space, then re-run:
-      npm config set prefix \"\$HOME/.local\"
-    (or install Node via nvm, which uses a writable prefix automatically)."
-    fi
+  # omp's own installer: a prebuilt standalone binary in ~/.local/bin — no sudo,
+  # and no Node or bun needed. Prefer to manage omp yourself? Install it first
+  # and re-run this script, which then just finds it:
+  #   brew install can1357/tap/omp
+  #   bun install -g @oh-my-pi/pi-coding-agent
+  info "omp not found — installing it with the official installer ($OMP_INSTALL_URL)"
+  if ! curl -fsSL "$OMP_INSTALL_URL" | sh; then
+    die "omp's installer failed (see above). Install omp yourself, then re-run this script:
+      brew install can1357/tap/omp
+      bun install -g @oh-my-pi/pi-coding-agent"
   fi
 
-  # User-space global install: --prefix keeps `pi` in ~/.local/bin, no sudo.
-  info "npm install -g --prefix $USER_PREFIX $PI_PKG"
-  npm install -g --prefix "$USER_PREFIX" "$PI_PKG" >/dev/null
-
-  command -v pi >/dev/null 2>&1 || die "Pi installed but 'pi' is not on PATH (expected $LOCAL_BIN/pi)"
-  local v; v="$(pi --version 2>/dev/null | head -n1 || true)"
-  ok "installed Pi (${v:-version unknown})"
-  record "Pi:         ${v:-installed} (${PI_PKG})"
+  add_omp_dirs_to_path   # re-resolve PATH: the binary lands in ~/.local/bin (or ~/.bun/bin)
+  command -v omp >/dev/null 2>&1 \
+    || die "omp was installed but 'omp' is not on PATH (looked in $LOCAL_BIN and ~/.bun/bin)"
+  local v; v="$(omp --version 2>/dev/null | head -n1 || true)"
+  ok "installed omp (${v:-version unknown})"
+  record "omp:        ${v:-installed} ($OMP_INSTALL_URL)"
 }
 
-# ── 3. remote-pi plugin ──────────────────────────────────────────────────────
+# ── 3. remote-omp plugin ─────────────────────────────────────────────────────
 
-# Locate the plugin's compiled entry. Pi's install path CHANGED across versions:
-#   • Pi >= 0.78 (@earendil-works): installs into ~/.pi/agent/npm/node_modules/
-#   • Pi  = 0.73 (@mariozechner):   ran `npm install -g` → lands in `npm root -g`
-# We check both, current-behavior first, and use whichever exists. Sets the
-# global PLUGIN_DIST. Returns 1 if neither is found.
-plugin_dist_candidates() {
-  printf '%s\n' "$HOME/.pi/agent/npm/node_modules/remote-pi/dist/index.js"
-  local root; root="$(npm_global_root)"
-  [ -n "$root" ] && printf '%s\n' "$root/remote-pi/dist/index.js"
+# True when $1 is the extension's package directory (its package.json is named
+# remote-omp).
+is_extension_dir() {
+  [ -f "$1/package.json" ] && grep -q "\"name\": *\"$PLUGIN_NAME\"" "$1/package.json"
 }
 
-resolve_plugin_dist() {
-  local cand
-  while IFS= read -r cand; do
-    [ -n "$cand" ] || continue
-    if [ -f "$cand" ]; then PLUGIN_DIST="$cand"; return 0; fi
-  done < <(plugin_dist_candidates)
-  return 1
+# Sets CLONE_DIR to a checkout to link instead of installing from npm: from
+# REMOTE_OMP_FROM_CLONE (the repo root or its omp-extension/ folder), else the
+# folder this script sits in. Under `curl | bash` there is no script file, so
+# CLONE_DIR stays empty (= install from npm).
+find_clone() {
+  local cand src
+  if [ -n "$FROM_CLONE" ]; then
+    for cand in "$FROM_CLONE" "$FROM_CLONE/omp-extension"; do
+      if is_extension_dir "$cand"; then CLONE_DIR="$(physical_dir "$cand")"; return 0; fi
+    done
+    die "REMOTE_OMP_FROM_CLONE=$FROM_CLONE is not a Remote OMP checkout (expected a package.json named $PLUGIN_NAME there or in omp-extension/)."
+  fi
+  src="${BASH_SOURCE[0]:-}"
+  if [ -n "$src" ] && [ -f "$src" ]; then
+    cand="$(physical_dir "$(dirname "$src")")"
+    if [ -n "$cand" ] && is_extension_dir "$cand"; then CLONE_DIR="$cand"; fi
+  fi
+  return 0
+}
+
+# Where omp keeps plugin $1 — empty when it isn't installed. Asks omp itself, so
+# PI_CONFIG_DIR / XDG overrides are honoured; falls back to the default
+# ~/.omp/plugins/node_modules/<name>.
+plugin_dir_of() {
+  local name="$1" json dir=""
+  if json="$(omp plugin list --json 2>/dev/null)"; then
+    dir="$(printf '%s' "$json" | node -e '
+      let s = "";
+      process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+        try {
+          const hit = (JSON.parse(s).npm || []).find((p) => p && p.name === process.argv[1]);
+          if (hit && typeof hit.path === "string") process.stdout.write(hit.path);
+        } catch {}
+      });
+    ' "$name" 2>/dev/null)" || dir=""
+  fi
+  if [ -z "$dir" ] && [ -f "$HOME/.omp/plugins/node_modules/$name/package.json" ]; then
+    dir="$HOME/.omp/plugins/node_modules/$name"
+  fi
+  printf '%s' "$dir"
+}
+
+# Sets PLUGIN_DIR to the installed plugin. Returns 1 unless its compiled entry
+# (dist/index.js, the `omp.extensions` target) is there.
+resolve_plugin_dir() {
+  PLUGIN_DIR="$(plugin_dir_of "$PLUGIN_NAME")"
+  [ -n "$PLUGIN_DIR" ] && [ -f "$PLUGIN_DIR/dist/index.js" ]
 }
 
 ensure_plugin() {
-  step "Installing the remote-pi plugin into Pi"
+  step "Installing the $PLUGIN_NAME plugin into omp"
 
-  if resolve_plugin_dist; then
-    ok "plugin already installed ($(dirname "$(dirname "$PLUGIN_DIST")")) — skipping"
-    record "Plugin:     remote-pi (pre-existing)"
-    return 0
+  # The pre-rename plugin registers /remote-pi and the old supervisor; next to
+  # this one the two would fight over the relay. Never remove it on the user's
+  # behalf — say how.
+  local old; old="$(plugin_dir_of remote-pi)"
+  if [ -n "$old" ]; then
+    warn "the old Remote Pi plugin is still installed in omp ($old)"
+    warn "remove it so only one of them loads:  omp plugin uninstall remote-pi"
   fi
 
-  info "pi install $PLUGIN_SPEC"
-  pi install "$PLUGIN_SPEC" >/dev/null
-
-  # Pi may install into ~/.pi/agent/npm (>= 0.78) or `npm root -g` (0.73).
-  # resolve_plugin_dist() checks both — never a single hardcoded path.
-  if ! resolve_plugin_dist; then
-    die "plugin install ran but remote-pi/dist/index.js was not found.
-    Looked in:
-      $HOME/.pi/agent/npm/node_modules/remote-pi/dist/index.js
-      $(npm_global_root)/remote-pi/dist/index.js
-    Check the 'pi install $PLUGIN_SPEC' output above."
+  find_clone
+  if [ -n "$CLONE_DIR" ]; then
+    # From a checkout: omp symlinks the directory into its plugin set, so a
+    # rebuild is enough to pick up changes. It must be built first — omp loads
+    # dist/index.js.
+    if [ ! -f "$CLONE_DIR/dist/index.js" ]; then
+      die "$CLONE_DIR is not built (dist/index.js is missing). Build it, then re-run this script:
+      cd \"$CLONE_DIR\" && pnpm install && pnpm build"
+    fi
+    if resolve_plugin_dir && [ "$(physical_dir "$PLUGIN_DIR")" = "$CLONE_DIR" ]; then
+      ok "plugin already linked to $CLONE_DIR — skipping"
+      record "Plugin:     $PLUGIN_NAME (linked from $CLONE_DIR)"
+      return 0
+    fi
+    info "omp plugin link $CLONE_DIR"
+    omp plugin link "$CLONE_DIR" </dev/null >/dev/null \
+      || die "'omp plugin link $CLONE_DIR' failed — see the error above."
+  else
+    if resolve_plugin_dir; then
+      ok "plugin already installed ($PLUGIN_DIR) — skipping"
+      record "Plugin:     $PLUGIN_NAME (pre-existing)"
+      return 0
+    fi
+    info "omp plugin install $PLUGIN_NAME"
+    omp plugin install "$PLUGIN_NAME" </dev/null >/dev/null \
+      || die "'omp plugin install $PLUGIN_NAME' failed — see the error above.
+    Not published yet? Run this script from a checkout of
+    https://github.com/leoliu0/remote-omp (build it first) and it links that instead."
   fi
-  local pkg_json; pkg_json="$(dirname "$(dirname "$PLUGIN_DIST")")/package.json"
-  local v; v="$(node -p "require('$pkg_json').version" 2>/dev/null || true)"
-  ok "installed remote-pi plugin${v:+ v$v} → $PLUGIN_DIST"
-  record "Plugin:     remote-pi${v:+ v$v}"
+
+  if ! resolve_plugin_dir; then
+    die "the plugin command succeeded but $PLUGIN_NAME/dist/index.js was not found.
+    Looked where 'omp plugin list --json' says, then in ~/.omp/plugins/node_modules/$PLUGIN_NAME.
+    'omp plugin doctor' shows what omp thinks is wrong."
+  fi
+  local v; v="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version' "$PLUGIN_DIR/package.json" 2>/dev/null || true)"
+  ok "installed $PLUGIN_NAME plugin${v:+ v$v} → $PLUGIN_DIR"
+  record "Plugin:     $PLUGIN_NAME${v:+ v$v}"
 }
 
-# ── 4. Link the remote-pi CLI into ~/.local/bin ──────────────────────────────
+# ── 4. Link the CLI into ~/.local/bin ────────────────────────────────────────
 #
-# `pi install npm:remote-pi` makes the slash command available inside Pi, but it
-# does NOT put the `remote-pi` CLI on $PATH. We symlink it ourselves (the same
-# thing `/remote-pi install` does from inside Pi's TUI, which we can't run from a
-# headless installer).
+# `omp plugin install` makes the /remote-omp slash command available inside omp,
+# but it does NOT put the `remote-omp` CLI on $PATH. We symlink it ourselves (the
+# same thing `/remote-omp install` does from inside omp's TUI, which we can't run
+# from a headless installer), plus the supervisor binary the service runs. The
+# links point into the plugin directory omp reported, so a later `omp plugin
+# upgrade` or `omp plugin link` swaps the code underneath without relinking.
 
 link_cli() {
-  step "Linking the remote-pi CLI into $LOCAL_BIN"
+  step "Linking the remote-omp CLI into $LOCAL_BIN"
   mkdir -p "$LOCAL_BIN"
-  local target="$PLUGIN_DIST"
-  local link="$LOCAL_BIN/$PLUGIN_NAME"
+  local name target link
+  for name in remote-omp remote-omp-supervisord; do
+    case "$name" in
+      remote-omp)             target="$PLUGIN_DIR/dist/index.js" ;;
+      remote-omp-supervisord) target="$PLUGIN_DIR/dist/bin/supervisord.js" ;;
+    esac
+    [ -f "$target" ] || die "expected $target — is the plugin built?"
+    chmod +x "$target" 2>/dev/null || true   # tsc strips the +x bit; shebang is present
 
-  chmod +x "$target" 2>/dev/null || true   # tsc strips the +x bit; shebang is present
-
-  if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
-    ok "symlink already points at the plugin — skipping"
-  else
-    ln -sf "$target" "$link"
-    ok "symlinked $link → $target"
-  fi
-  record "CLI:        $link"
+    link="$LOCAL_BIN/$name"
+    if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
+      ok "$name already points at the plugin — skipping"
+    elif [ -e "$link" ] && [ ! -L "$link" ]; then
+      die "$link exists and is not a symlink — move it away, then re-run."
+    else
+      ln -sf "$target" "$link"
+      ok "symlinked $link → $target"
+    fi
+  done
+  record "CLI:        $LOCAL_BIN/remote-omp (+ remote-omp-supervisord)"
 }
 
 # ── 5. Supervisor (per-user service) ─────────────────────────────────────────
 #
-# `remote-pi install` writes a launchd GUI agent (macOS) or `systemd --user`
-# unit (Linux) and activates it. It's idempotent (re-running refreshes the
-# unit) and never asks for sudo — it only touches per-user paths.
+# `remote-omp install` writes a launchd GUI agent (macOS) or `systemd --user`
+# unit (Linux) and activates it. It also removes the pre-rename Remote Pi unit /
+# label if one is there. It's idempotent (re-running refreshes the unit) and
+# never asks for sudo — it only touches per-user paths.
 
 install_supervisor() {
   step "Installing the user supervisor service ($OS)"
-  # Run via the CLI we just linked. PATH already includes ~/.local/bin.
-  if remote-pi install; then
+  # Run the CLI we just linked, by absolute path: no other `remote-omp` on PATH
+  # can win.
+  if "$LOCAL_BIN/remote-omp" install </dev/null; then
     ok "supervisor installed and activated"
     record "Supervisor: installed (${OS})"
   else
     warn "supervisor install reported an error — see the output above"
-    warn "you can re-run it any time with:  remote-pi install"
-    record "Supervisor: FAILED — re-run 'remote-pi install'"
+    warn "you can re-run it any time with:  remote-omp install"
+    record "Supervisor: FAILED — re-run 'remote-omp install'"
   fi
 }
 
@@ -365,7 +425,7 @@ install_supervisor() {
 
 print_next_steps() {
   echo
-  printf '%s\n' "${GRN}${BOLD}Remote Pi is installed.${RST} Here's what's on disk:"
+  printf '%s\n' "${GRN}${BOLD}Remote OMP is installed.${RST} Here's what's on disk:"
   echo
   local entry
   for entry in "${SUMMARY[@]}"; do
@@ -375,22 +435,24 @@ print_next_steps() {
   printf '%s\n' "${BOLD}Next step — pair your phone:${RST}"
   cat <<EOF
 
-    1. Install the ${BOLD}Remote Pi${RST} app on your phone.
-    2. In any terminal, open Pi and start Remote Pi:
+    1. Install the ${BOLD}Remote OMP${RST} app on your phone.
+    2. In any terminal, open omp and start Remote OMP:
 
-         ${BOLD}pi${RST}
-         ${BOLD}/remote-pi${RST}
+         ${BOLD}omp${RST}
+         ${BOLD}/remote-omp${RST}
 
-       (the first run shows a short wizard, then prints a QR code)
-    3. Scan the QR with the app to pair.
+       (the first run shows a short setup wizard)
+    3. Show the pairing QR and scan it with the app:
 
-    Manage the always-on daemon later with ${BOLD}remote-pi${RST} (now on your PATH).
-    Docs: ${DIM}https://remote-pi.jacobmoura.work${RST}
+         ${BOLD}/remote-omp pair${RST}
+
+    Manage the always-on daemon later with ${BOLD}remote-omp${RST} (now on your PATH).
+    Docs: ${DIM}https://remote-pi.jacobmoura.work${RST} · ${DIM}https://github.com/leoliu0/remote-omp${RST}
 
 EOF
   case ":$PATH:" in
     *":$LOCAL_BIN:"*) : ;;
-    *) warn "Open a new shell (or 'source' your shell rc) so 'pi' and 'remote-pi' are on PATH." ;;
+    *) warn "Open a new shell (or 'source' your shell rc) so 'omp' and 'remote-omp' are on PATH." ;;
   esac
 }
 
@@ -398,9 +460,8 @@ EOF
 
 main() {
   ensure_local_bin_on_path
-  ensure_node            # may use nvm — must run BEFORE we touch npm_config_prefix
-  configure_npm_prefix   # only sets npm_config_prefix for the system-Node case
-  ensure_pi
+  ensure_node            # may use nvm — settled before anything runs on Node
+  ensure_omp
   ensure_plugin
   link_cli
   install_supervisor

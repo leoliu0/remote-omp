@@ -160,11 +160,11 @@ export function buildWebhookRequest(
   if (safeTitle) headers["Title"] = safeTitle;
   headers["Priority"] = priority;
   headers["Tags"] = tagForKind(event.kind);
-  headers["X-Remote-Pi-Event"] = event.kind;
+  headers["X-Remote-Omp-Event"] = event.kind;
   const safeSession = sanitizeHeaderValue(event.session);
-  if (safeSession) headers["X-Remote-Pi-Session"] = safeSession;
+  if (safeSession) headers["X-Remote-Omp-Session"] = safeSession;
   const safeHost = sanitizeHeaderValue(host);
-  if (safeHost) headers["X-Remote-Pi-Host"] = safeHost;
+  if (safeHost) headers["X-Remote-Omp-Host"] = safeHost;
 
   return {
     url,
@@ -251,8 +251,8 @@ export class PushNotifier {
     return this.postWebhook(cfg, {
       kind: "test",
       id: `test:${Date.now()}`,
-      title: `${session || "remote-pi"}: Test notification`,
-      body: `Remote Pi push test from ${this.safeHostname()} (${cwd || process.cwd()})`,
+      title: `${session || "remote-omp"}: Test notification`,
+      body: `Remote OMP push test from ${this.safeHostname()} (${cwd || process.cwd()})`,
       session,
       cwd,
       hostname: this.safeHostname(),
@@ -315,7 +315,7 @@ export class PushNotifier {
       ts: Date.now(),
     });
     if (!result.ok) {
-      process.stderr.write(`[remote-pi] notify failed: ${result.error ?? `HTTP ${result.status}`}\n`);
+      process.stderr.write(`[remote-omp] notify failed: ${result.error ?? `HTTP ${result.status}`}\n`);
     }
   }
 

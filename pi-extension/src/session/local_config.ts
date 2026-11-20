@@ -1,22 +1,25 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-const LOCAL_DIR = ".pi/remote-pi";
+const LOCAL_DIR = ".omp/remote-omp";
+// Where Remote Pi (before plan/69) kept the same file. Read once by the migration
+// in `loadLocalConfig`; never written.
+const LEGACY_LOCAL_DIR = ".pi/remote-pi";
 const LOCAL_FILE = "config.json";
 
 /**
  * Escape hatch: when set, carries the WHOLE local config as inline JSON,
  * bypassing the on-disk `config.json`. For CI/ops/daemons that inject config
- * via env instead of writing a file — mirrors `REMOTE_PI_RELAY` for the relay
+ * via env instead of writing a file — mirrors `REMOTE_OMP_RELAY` for the relay
  * URL. Takes precedence over the file; an unset/empty/unparseable value falls
  * back to the file (never fatal).
  */
-const DIRECT_CONFIG_ENV = "REMOTE_PI_DIRECT_CONFIG";
+const DIRECT_CONFIG_ENV = "REMOTE_OMP_DIRECT_CONFIG";
 
 export interface LocalConfig {
   agent_name?: string;
   /**
-   * If true (default), `/remote-pi` with no args auto-joins the local UDS
+   * If true (default), `/remote-omp` with no args auto-joins the local UDS
    * mesh and starts the relay on a fresh terminal. The field name is
    * historical (plano 21); the UX wording was reworked to "use the relay
    * on this terminal to connect to the remote mesh (mobile + PCs)". Legacy
@@ -30,8 +33,8 @@ export interface LocalConfig {
   // simply ignored on read (parseLocalConfig surfaces only known fields).
 }
 
-function pathFor(cwd: string): string {
-  return join(cwd, LOCAL_DIR, LOCAL_FILE);
+function pathFor(cwd: string, dir: string = LOCAL_DIR): string {
+  return join(cwd, dir, LOCAL_FILE);
 }
 
 /**
@@ -100,71 +103,101 @@ function parseLocalConfig(raw: string): LocalConfig | null {
   return cfg;
 }
 
-/** Inline config from `REMOTE_PI_DIRECT_CONFIG`, when set + parseable; else null. */
+/** Inline config from `REMOTE_OMP_DIRECT_CONFIG`, when set + parseable; else null. */
 function directConfig(): LocalConfig | null {
   const raw = process.env[DIRECT_CONFIG_ENV];
   if (!raw || raw.trim().length === 0) return null;
   const parsed = parseLocalConfig(raw);
   if (!parsed) {
-    process.stderr.write("[remote-pi] ignoring malformed REMOTE_PI_DIRECT_CONFIG\n");
+    process.stderr.write("[remote-omp] ignoring malformed REMOTE_OMP_DIRECT_CONFIG\n");
   }
   return parsed;
 }
 
 /**
- * True when a local config is available for this cwd — either inline via
- * `REMOTE_PI_DIRECT_CONFIG` or as `<cwd>/.pi/remote-pi/config.json` on disk.
+ * True when a local config is available for this cwd — inline via
+ * `REMOTE_OMP_DIRECT_CONFIG`, as `<cwd>/.omp/remote-omp/config.json` on disk, or
+ * as the pre-rename `<cwd>/.pi/remote-pi/config.json` (which `loadLocalConfig`
+ * carries over on first read).
  */
 export function localConfigExists(cwd: string): boolean {
-  return directConfig() !== null || existsSync(pathFor(cwd));
+  return (
+    directConfig() !== null ||
+    existsSync(pathFor(cwd)) ||
+    existsSync(pathFor(cwd, LEGACY_LOCAL_DIR))
+  );
+}
+
+/** Parses the config file at `p`; null (after a note on stderr) when it is unreadable or invalid. */
+function readConfigFile(p: string): LocalConfig | null {
+  try {
+    const parsed = parseLocalConfig(readFileSync(p, "utf8"));
+    if (!parsed) process.stderr.write(`[remote-omp] ignoring invalid local config at ${p}\n`);
+    return parsed;
+  } catch (err) {
+    process.stderr.write(
+      `[remote-omp] could not read ${p}: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Best-effort persistence: returns the failure message instead of throwing. A
+ * read-only config.json is a legitimate deployment (NixOS/Home Manager symlink
+ * into the immutable Nix store, read-only root, EPERM). The name/config sync is
+ * cosmetic — it must NEVER crash the omp process with an uncaughtException.
+ * `saveLocalConfig` is reached via fire-and-forget async paths (the agent-name
+ * sync from `turn_start` / `session_start`), so a sync throw from `mkdirSync` /
+ * `writeFileSync` sails past the runner's per-handler try/catch and takes down
+ * omp. Both fs calls are guarded together so a partial attempt can't throw past
+ * the caller.
+ */
+function writeConfigFile(p: string, cfg: LocalConfig): string | null {
+  try {
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, JSON.stringify(cfg, null, 2));
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 export function loadLocalConfig(cwd: string): LocalConfig {
-  // Precedence: inline `REMOTE_PI_DIRECT_CONFIG` env wins over the file. An
+  // Precedence: inline `REMOTE_OMP_DIRECT_CONFIG` env wins over the files. An
   // unset/empty/malformed env falls through to the on-disk config.json.
   const direct = directConfig();
   if (direct) return direct;
 
   const p = pathFor(cwd);
-  if (!existsSync(p)) return {};
-  try {
-    const parsed = parseLocalConfig(readFileSync(p, "utf8"));
-    if (!parsed) {
-      process.stderr.write(`[remote-pi] ignoring invalid local config at ${p}\n`);
-      return {};
-    }
-    return parsed;
-  } catch (err) {
-    process.stderr.write(
-      `[remote-pi] could not read ${p}: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-    return {};
-  }
+  if (existsSync(p)) return readConfigFile(p) ?? {};
+
+  // One-time migration (plan/69): a folder Remote Pi configured only has the
+  // legacy `.pi/remote-pi/config.json`. Carry its values over into the new
+  // file so later reads and saves use it; the old file is left untouched (an
+  // older install may still read it). The write is best-effort — in a
+  // read-only folder every load simply serves the legacy file again — and a
+  // failure must never surface to the caller.
+  const legacyPath = pathFor(cwd, LEGACY_LOCAL_DIR);
+  if (!existsSync(legacyPath)) return {};
+  const migrated = readConfigFile(legacyPath);
+  if (!migrated) return {};
+  writeConfigFile(p, migrated);
+  return migrated;
 }
 
 export function saveLocalConfig(cwd: string, patch: Partial<LocalConfig>): void {
   const p = pathFor(cwd);
+  // `loadLocalConfig` also serves a folder that only has the legacy file, so
+  // its fields carry over into the new file on the first save.
   const current = loadLocalConfig(cwd);
   const next: LocalConfig = { ...current, ...patch };
   // Always persist auto_start_relay explicitly (default true) so future reads
   // never need to guess. Backward-compat: legacy files without the field
   // are treated as true on read; we lock that intent in on first save.
   if (typeof next.auto_start_relay !== "boolean") next.auto_start_relay = true;
-  // Best-effort persistence: a read-only config.json is a legitimate deployment
-  // (NixOS/Home Manager symlink into the immutable Nix store, read-only root,
-  // EPERM). The name/config sync is cosmetic — it must NEVER crash the pi
-  // process with an uncaughtException. `saveLocalConfig` is reached via
-  // fire-and-forget async paths (`void _syncNameFromPi()` from `turn_start` /
-  // `session_start`), so a sync throw from `mkdirSync`/`writeFileSync` sails
-  // past the runner's per-handler try/catch and takes down pi. Guard both fs
-  // calls together so a partial attempt can't throw past the caller.
-  try {
-    mkdirSync(dirname(p), { recursive: true });
-    writeFileSync(p, JSON.stringify(next, null, 2));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[remote-pi] could not persist local config ${p}: ${message}`);
-  }
+  const failure = writeConfigFile(p, next);
+  if (failure !== null) console.warn(`[remote-omp] could not persist local config ${p}: ${failure}`);
 }
 
 /**

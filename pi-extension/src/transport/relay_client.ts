@@ -31,7 +31,7 @@ interface AuthMsg { type: "auth"; sig: string }
 export interface RoomMeta {
   name: string;
   cwd: string;
-  /** Friendly model name (e.g. "claude-sonnet-4.5"). Optional — pi-ext sends
+  /** Friendly model name (e.g. "claude-sonnet-4.5"). Optional — omp-ext sends
    *  when `ExtensionContext.model` is available; relay/app tolerate absence. */
   model?: string;
 }
@@ -68,7 +68,7 @@ export interface RelayClientEvents {
 }
 
 /**
- * Thin WebSocket client for the Remote Pi relay.
+ * Thin WebSocket client for the Remote OMP relay.
  *
  * Lifecycle:
  *   const relay = new RelayClient(url, ed25519Keypair)
@@ -102,7 +102,7 @@ export class RelayClient extends EventEmitter {
    *
    * `options.roomId` (12-char id derived from cwd, see `src/rooms.ts`) is
    * included in the hello so the relay can multiplex N concurrent peers
-   * with the same Ed25519 pubkey but different rooms (one pi-ext per cwd).
+   * with the same Ed25519 pubkey but different rooms (one omp-ext per cwd).
    * Omitting `roomId` is backward-compat with old relays (treated as the
    * default "main" room server-side).
    *

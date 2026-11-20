@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Remote Pi are documented in this file.
+All notable changes to Remote OMP (formerly Remote Pi) are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 For the canonical protocol specification, see [PROTOCOL.md](PROTOCOL.md).
 
 ---
+
+## [2.0.0] — Remote OMP (unreleased)
+
+Remote Pi is now **Remote OMP** and supports [omp (oh-my-pi)](https://github.com/can1357/oh-my-pi)
+only. Plans 68 (phone features) and 69 (rename, omp compatibility). The relay wire
+protocol is unchanged, so older apps and PCs keep talking to the relay.
+
+### Changed
+
+- **Renamed everywhere.** CLI `remote-omp` (`remote-omp-supervisord`, unit `remote-omp-supervisord.service`, launchd `dev.remoteomp.supervisord`, Windows task `RemoteOmpSupervisor`), npm package and omp plugin `remote-omp`, slash command `/remote-omp` (`/rc` stays), environment `REMOTE_OMP_*` (the old `REMOTE_PI_*` names are not read), data in `~/.omp/remote`, per-folder config `<folder>/.omp/remote-omp/config.json`, extension source `omp-extension/`, repository github.com/leoliu0/remote-omp.
+- **Android app** is `work.jacobmoura.remoteomp` "Remote OMP" 2.0.0 (`RemoteOMP.apk`). It installs next to the old app; pair it again.
+- **Migration:** the first start copies `~/.pi/remote` (identity, paired devices, settings, daemons, uploads) into `~/.omp/remote` once and leaves the old folder alone for sessions still running the old version; the keyring identity is copied to `dev.remoteomp.omp`; per-folder config is copied from `.pi/remote-pi/`. `remote-omp install` removes the old service.
+- **omp only.** Upstream Pi support is gone: no `--harness`, daemons always run omp, the plugin manifest is `omp`, thinking levels follow omp's `/effort` list.
+- The scheduled upstream merge workflow is manual-only.
+
+### Added (plan 68)
+
+- **New session from the phone.** Home → a PC's "New session": recent folders, a folder browser, an optional name and "Keep always on". Without it the session ends for good when you quit it; with it the folder becomes a permanent daemon. Refuses a folder that already has a live session; needs `remote-omp install`.
+- **Upload any file to the PC.** Attach → File. 256 KiB acknowledged chunks over the relay with progress and Cancel; the file lands in `~/.omp/remote/uploads/<date>/<name>` after size and SHA-256 checks, and its path is added to your message. Cap 256 MiB (`REMOTE_OMP_MAX_UPLOAD_MIB`), 1 GiB of disk kept free (`REMOTE_OMP_UPLOAD_RESERVE_MIB`); a slow uplink is told apart from loss, so it does not resend.
+- **`@` file autocomplete** in the composer, ranked from the session folder (`rg`, then `git ls-files`, then a bounded walk).
+- **Saved prompts** behind a bookmark in the composer: one tap inserts, save the current text, delete, reorder.
+- **Session switcher:** tap the chat title for all sessions, live first, with working/idle state; every session has its own colour, shown in the app bar and on Home.
+- **Retry** under a failed turn re-runs it with omp's `retry()`, without sending the prompt twice.
+- **Questions one at a time.** A multi-question ask shows one question per page with Back/Next; Submit stays disabled until every question is answered (optional ones have an explicit Skip), and closing with answers asks first.
+- The `/` menu lists the commands the PC actually has (omp builtins, extension and prompt commands, skills).
+
+### Fixed on omp (plan 69)
+
+- Plan review: Refine and Save and quit pressed the wrong rows on omp 19; the phone now answers omp's plan review through its API, and the loop badge follows omp's session modes.
+- A phone message is echoed as soon as omp accepts it, not after the whole reply (it vanished for ~20 s in daemons).
+- Slash commands typed on the phone run as commands, also in daemons (through the supervisor into omp's prompt pipeline); commands omp cannot run there answer `command_unavailable`. Cockpit control frames no longer reach the model, and prompts sent to a busy daemon queue instead of failing.
+- A daemon's `ask` with no phone attached is pushed and replayed to the phone and waits up to 30 min (`REMOTE_OMP_ASK_TIMEOUT_MS`); other extensions' dialogs there are cancelled after the same time instead of hanging.
+- Model and thinking picks are saved through omp's settings; nothing is written under `~/.pi` or `<folder>/.pi` any more. The model-roles tab works with omp's bundled build.
+- omp's intermediate `agent_end` no longer reports the turn done early; data-only notices stay out of the model's context; `/new`, `/clear` and `/resume` on the PC reset the phone's chat; injected prompts no longer replay as your messages; daemon restart and exit shut omp down cleanly.
+- A multi-choice answer with typed text now reaches the agent with both.
 
 ## [Unreleased] — PC mesh foundation
 

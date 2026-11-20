@@ -25,7 +25,7 @@ describe("roomIdForCwd", () => {
 
   test("realpath: symlinks resolve to the same id", () => {
     // Real fs setup: dir + symlink → dir. Both must produce identical ids.
-    const tmp = mkdtempSync(join(tmpdir(), "remote-pi-rooms-"));
+    const tmp = mkdtempSync(join(tmpdir(), "remote-omp-rooms-"));
     const real = join(tmp, "real");
     mkdirSync(real);
     writeFileSync(join(real, "marker"), "x");
@@ -41,7 +41,7 @@ describe("roomIdForCwd", () => {
   });
 });
 
-describe("roomIdFor (plan/41 — App↔Pi room per (cwd, name))", () => {
+describe("roomIdFor (plan/41 — App↔PC room per (cwd, name))", () => {
   const cwd = "/tmp/proj/backend";              // basename → default name "backend"
   const dflt = defaultAgentName(cwd);           // "backend"
 
@@ -68,7 +68,7 @@ describe("roomIdFor (plan/41 — App↔Pi room per (cwd, name))", () => {
   });
 
   test("realpath: a symlinked cwd yields the SAME name-scoped id as the real dir", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "remote-pi-rooms41-"));
+    const tmp = mkdtempSync(join(tmpdir(), "remote-omp-rooms41-"));
     const real = join(tmp, "real");
     mkdirSync(real);
     writeFileSync(join(real, "marker"), "x");

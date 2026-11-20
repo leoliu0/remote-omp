@@ -694,7 +694,7 @@ class ConnectionManager extends Service {
     //
     // Dedup contract: relay re-pushes `peer_online`, `presence`, and
     // `rooms` aggressively (every reconnect of every device, every
-    // pi-extension restart, periodically as keep-alive). Without
+    // omp-extension restart, periodically as keep-alive). Without
     // de-duplication every push fires `_presenceController` /
     // `_roomsController`, which propagates to `HomeViewModel`, which
     // rebuilds the whole list, which keeps the CPU busy and the
@@ -1080,6 +1080,65 @@ class ConnectionManager extends Service {
     return true;
   }
 
+  /// Plan 68 — sends one typed request to a specific live room of the
+  /// connected PC and lets its reply through, without moving the UI's room.
+  ///
+  /// Home has no chat open, yet starting a session needs an answer from "some
+  /// live agent on this PC". Like [quitRoom], the envelope is addressed to
+  /// [roomId] only for the send itself. Unlike it, a reply is awaited, and it
+  /// comes back stamped with [roomId] — which the transport's room demux drops
+  /// unless told to expect it, so [requestId] is registered first (see
+  /// `RoomDemux.expectReply`; it admits that one frame and nothing else from
+  /// the room). The caller matches the reply on `in_reply_to` from
+  /// [channel]'s `serverMessages` and calls [cancelRoomReply] when done.
+  ///
+  /// Returns `false`, sending nothing, when the relay link is down, [epk] is
+  /// not the PC this manager is connected to (the socket is bound to a single
+  /// peer) or [roomId] is not live. A failed send is rethrown.
+  Future<bool> sendToRoom(
+    String epk,
+    String roomId,
+    ClientMessage msg, {
+    required String requestId,
+  }) async {
+    final cur = _status;
+    if (cur is! StatusOnline) return false;
+    final active = _activePeer;
+    if (active == null ||
+        toStandardB64(active.remoteEpk) != toStandardB64(epk)) {
+      return false;
+    }
+    if (!isRoomInLiveSet(epk, roomId)) return false;
+    final ch = cur.channel;
+    final prev = _activeRoomId;
+    try {
+      (ch as dynamic).expectReply(requestId, roomId);
+    } catch (_) {
+      // Transports without a room demux deliver every room's frames anyway.
+    }
+    _propagateActiveRoom(roomId, ch);
+    final Future<void> sent;
+    try {
+      // The envelope, room included, is built before `send` first yields.
+      sent = ch.send(msg);
+    } finally {
+      _propagateActiveRoom(prev, ch);
+    }
+    await sent;
+    return true;
+  }
+
+  /// The request sent with [sendToRoom] is over (answered, failed or timed
+  /// out): the transport stops expecting its reply.
+  void cancelRoomReply(String requestId) {
+    final cur = _status;
+    if (cur is! StatusOnline) return;
+    try {
+      (cur.channel as dynamic).cancelReply(requestId);
+    } catch (_) {
+      // See [sendToRoom].
+    }
+  }
 
   /// Plan/32 — `true` when the relay's last room-meta broadcast for
   /// `(epk, roomId)` carried `working: true` (an in-flight agent turn).

@@ -1,4 +1,4 @@
-/// Public Remote Pi website: download page and docs.
+/// Public Remote OMP website: download page and docs.
 const String kSiteBaseUrl = 'https://remote-pi.jacobmoura.work';
 
 /// This fork's own web client (`/web`), served over HTTPS from the relay VPS.

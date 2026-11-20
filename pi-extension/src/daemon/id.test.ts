@@ -23,7 +23,7 @@ describe("daemonIdForCwd", () => {
   });
 
   test("realpath: symlinks collapse to the same id", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-daemonid-"));
+    const tmp = mkdtempSync(join(tmpdir(), "omp-daemonid-"));
     const real = join(tmp, "real");
     mkdirSync(real);
     const link = join(tmp, "link");

@@ -1,7 +1,7 @@
 import type { LocalConfig } from "./local_config.js";
 
 /**
- * Pi SDK UI surface needed by the wizard. Subset of `ExtensionUIContext` —
+ * omp UI surface needed by the wizard. Subset of `ExtensionUIContext` —
  * declared inline so tests can mock cleanly without dragging the full
  * ExtensionContext shape.
  */
@@ -31,14 +31,14 @@ const CANCEL_TOKEN = "__cancel__";
  *   1. Agent name (default: parent/folder of cwd)
  *   2. Use the relay on this terminal? (yes/no) — gates connection to the
  *      remote mesh (mobile devices + other PCs over the relay). "No" means
- *      local-only: this Pi joins the UDS mesh but doesn't open WSS.
+ *      local-only: this omp session joins the UDS mesh but doesn't open WSS.
  *   Final: review + confirm "Save and activate?" yes/no
  *
  * Daemon mode (run agents 24/7 via systemd/launchd) is intentionally NOT in
- * the wizard — it's an explicit, separate opt-in via `/remote-pi install`.
+ * the wizard — it's an explicit, separate opt-in via `/remote-omp install`.
  *
  * The local UDS mesh is always single per machine ("local" session) — no
- * session question. All Pis on the same machine see each other through
+ * session question. All omp sessions on the same machine see each other through
  * the same broker.
  */
 export async function runSetupWizard(
@@ -53,7 +53,7 @@ export async function runSetupWizard(
   if (agent_name === null) return null;
 
   ui.notify?.(
-    "The relay forwards encrypted messages to the Remote Pi mobile app and other PCs in your mesh. Skip this if you only want a local-only mesh on this machine.",
+    "The relay forwards encrypted messages to the Remote OMP mobile app and other PCs in your mesh. Skip this if you only want a local-only mesh on this machine.",
     "info",
   );
   const useRelayChoice = await ui.select(

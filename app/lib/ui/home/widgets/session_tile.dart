@@ -3,6 +3,7 @@ import 'package:app/protocol/protocol.dart';
 import 'package:app/ui/core/themes/themes.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:app/ui/core/themes/session_color.dart';
 
 /// A row in the Home list.
 ///
@@ -82,6 +83,13 @@ class SessionTile extends StatelessWidget {
               children: [
                 _Avatar(name: _avatarName()),
                 const SizedBox(width: 14),
+                // Plan/68 - the session's colour, next to the title.
+                SessionColorBar(
+                  peerEpk: peer.remoteEpk,
+                  roomId: room?.roomId ?? 'main',
+                  height: 34,
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: _TitleBlock(peer: peer, room: room),
                 ),

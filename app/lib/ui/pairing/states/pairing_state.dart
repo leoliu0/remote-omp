@@ -23,10 +23,10 @@ class PairingConnecting extends PairingState {
 /// Pi confirmed; channel adopted. UI navigates straight to chat
 /// after the post-pair nickname modal is dismissed.
 ///
-/// Plan/27 Wave A — [hostnameHint] is what the pi-extension reported
+/// Plan/27 Wave A — [hostnameHint] is what the omp-extension reported
 /// as its OS hostname in `pair_ok.hostname`. The post-pair nickname
 /// modal pre-fills its input with it (e.g. "Mac do Jacob") instead
-/// of the generic "Pi" placeholder. `null` on legacy Pis that
+/// of the generic "PC" placeholder. `null` on legacy extensions that
 /// haven't been upgraded yet.
 class PairingPaired extends PairingState {
   final PeerRecord peer;

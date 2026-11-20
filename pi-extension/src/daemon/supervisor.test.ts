@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { Supervisor, decideFireAction, getSupervisorSockPath } from "./supervisor.js";
 import { addDaemon } from "./registry.js";
 import { readCronLog } from "./cron_log.js";
+import { MIGRATION_MARKER } from "../legacy_migration.js";
 import {
   encodeRequest,
   parseReply,
@@ -15,17 +16,18 @@ import {
 
 /**
  * Supervisor integration tests. We spin up a real `Supervisor` against a
- * scratch `REMOTE_PI_HOME`, connect to its UDS, send requests, and
+ * scratch `REMOTE_OMP_HOME`, connect to its UDS, send requests, and
  * inspect replies.
  *
  * `extensionPath` points at a non-existent path so the children's spawn
  * fails fast — sufficient to exercise the supervisor's request/reply
- * surface without actually booting Pi. We test child lifecycle proper
+ * surface without actually booting omp. We test child lifecycle proper
  * in `rpc_child.test.ts` separately (where applicable).
  */
 
 let testHome: string;
 let supervisor: Supervisor | null = null;
+let prevOmpHome: string | undefined;
 
 const makeCwd = (prefix = "cwd-"): string => mkdtempSync(join(testHome, prefix));
 
@@ -49,11 +51,12 @@ async function ask<R = ControlReply<unknown>>(req: ControlRequest): Promise<R> {
 }
 
 beforeEach(async () => {
-  testHome = mkdtempSync(join(tmpdir(), "pi-sv-"));
-  process.env["REMOTE_PI_HOME"] = testHome;
+  testHome = mkdtempSync(join(tmpdir(), "omp-sv-"));
+  prevOmpHome = process.env["REMOTE_OMP_HOME"];
+  process.env["REMOTE_OMP_HOME"] = testHome;
   supervisor = new Supervisor({
     // Point at a non-existent extension. The supervisor will try to
-    // spawn `<piBin> --mode rpc -e <path>` and the child exits immediately —
+    // spawn `<ompBin> --mode rpc -e <path>` and the child exits immediately —
     // fine for testing the control surface (we assert on op replies, not on
     // the child's exit code).
     extensionPath: "/no/such/extension.js",
@@ -62,7 +65,7 @@ beforeEach(async () => {
     // Windows CI). Node rejects the `--mode` arg and exits non-zero right away,
     // which is harmless here — the spawning tests only check `started/restarted`
     // booleans, returned synchronously at spawn time.
-    piBin: process.execPath,
+    ompBin: process.execPath,
   });
   await supervisor.start();
 });
@@ -72,7 +75,8 @@ afterEach(async () => {
     await supervisor.stop();
     supervisor = null;
   }
-  delete process.env["REMOTE_PI_HOME"];
+  if (prevOmpHome === undefined) delete process.env["REMOTE_OMP_HOME"];
+  else process.env["REMOTE_OMP_HOME"] = prevOmpHome;
   try { rmSync(testHome, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
@@ -82,20 +86,24 @@ describe("Supervisor — control UDS surface", () => {
     expect(r).toMatchObject({ ok: true, data: { daemons: [] } });
   });
 
-  test("register adds an entry with optional name and harness and rejects unknown harness", async () => {
+  test("register adds an entry with an optional name and answers { id, cwd, name }", async () => {
     const tmp = makeCwd("sv-cwd-");
-    const r = await ask({ op: "register", cwd: tmp, name: "door", harness: "omp" }) as ControlReply<{ id: string; cwd: string; name: string; harness: string }>;
+    const r = await ask({ op: "register", cwd: tmp, name: "door" }) as ControlReply<{ id: string; cwd: string; name: string }>;
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.data!.id).toMatch(/^[0-9a-f]{8}$/);
       expect(r.data!.name).toBe("door");
-      expect(r.data!.harness).toBe("omp");
+      expect(Object.keys(r.data!).sort()).toEqual(["cwd", "id", "name"]);
     }
-    const list = await ask({ op: "list" }) as ControlReply<{ daemons: Array<{ id: string; harness?: string }> }>;
-    expect(list.ok && list.data!.daemons[0]?.harness).toBe("omp");
+    const list = await ask({ op: "list" }) as ControlReply<{ daemons: Array<Record<string, unknown>> }>;
+    expect(list.ok && list.data!.daemons[0]).toMatchObject({ name: "door" });
+    expect(list.ok && list.data!.daemons[0]).not.toHaveProperty("harness");
+  });
 
-    const bad = await ask({ op: "register", cwd: makeCwd("sv-bad-"), harness: "claude" as never });
-    expect(bad.ok).toBe(false);
+  test("a `harness` an older CLI still sends is ignored, not rejected", async () => {
+    const r = await ask({ op: "register", cwd: makeCwd("sv-old-cli-"), harness: "pi" } as unknown as ControlRequest) as ControlReply<Record<string, unknown>>;
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).not.toHaveProperty("harness");
   });
 
   test("register twice rejects with `already registered`", async () => {
@@ -223,6 +231,30 @@ describe("Supervisor — control UDS surface", () => {
       // before our addDaemon call, so this entry isn't in the children map.
       expect(found?.state).toBe("stopped");
     }
+  });
+});
+
+// The copy from ~/.pi/remote is the supervisor binary's first step (bin/supervisord.ts calls
+// ensureDataDirMigrated() before constructing a Supervisor). The Supervisor class itself must
+// stay free of it: it is also the unit every test here builds against a scratch directory.
+describe("Supervisor — does not migrate the pre-rename data directory itself", () => {
+  test("start() leaves ~/.pi/remote untouched and reads only the new directory", async () => {
+    await supervisor!.stop();
+    supervisor = null;
+
+    const legacyDir = join(testHome, ".pi", "remote");
+    mkdirSync(legacyDir, { recursive: true });
+    const legacyRegistry = JSON.stringify({ daemons: [{ cwd: makeCwd("sv-legacy-"), name: "legacy" }] });
+    writeFileSync(join(legacyDir, "daemons.json"), legacyRegistry);
+
+    supervisor = new Supervisor({ extensionPath: "/no/such/extension.js", ompBin: process.execPath });
+    await supervisor.start();
+
+    expect(await ask({ op: "list" })).toMatchObject({ ok: true, data: { daemons: [] } });
+    const newDir = join(testHome, ".omp", "remote");
+    expect(existsSync(join(newDir, "daemons.json"))).toBe(false);
+    expect(existsSync(join(newDir, MIGRATION_MARKER))).toBe(false);
+    expect(readFileSync(join(legacyDir, "daemons.json"), "utf8")).toBe(legacyRegistry);
   });
 });
 

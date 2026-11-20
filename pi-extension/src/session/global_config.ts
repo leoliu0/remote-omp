@@ -1,13 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { remoteOmpHome } from "../paths.js";
 import { ipcAddress, usesNamedPipe } from "./ipc.js";
 
-const HOME_PI_REMOTE = join((process.env["REMOTE_PI_HOME"] || homedir()), ".pi", "remote");
-const SESSIONS_DIR = join(HOME_PI_REMOTE, "sessions");
-const SKILLS_DIR = join(HOME_PI_REMOTE, "skills");
 /**
- * Fixed UDS session name. The local mesh is single per machine — every Pi
+ * Fixed UDS session name. The local mesh is single per machine — every omp
  * process on the host shares this broker. Previous versions exposed
  * multi-session support (named sessions, leave/rename/sessions commands);
  * those were removed in the 2026-05-23 simplification because in practice
@@ -16,10 +13,10 @@ const SKILLS_DIR = join(HOME_PI_REMOTE, "skills");
  */
 export const LOCAL_SESSION_NAME = "local";
 
-/** Ensures the new subdirs exist inside the existing ~/.pi/remote/. */
+/** Ensures the new subdirs exist inside the existing ~/.omp/remote/. */
 export function ensureGlobalDirs(): void {
-  mkdirSync(SESSIONS_DIR, { recursive: true });
-  mkdirSync(SKILLS_DIR, { recursive: true });
+  mkdirSync(sessionsDir(), { recursive: true });
+  mkdirSync(skillsDir(), { recursive: true });
 }
 
 /**
@@ -28,34 +25,37 @@ export function ensureGlobalDirs(): void {
  * both the same; only the address string differs.
  */
 export function sessionSockPath(name: string): string {
-  return ipcAddress(`broker-${name}`, join(SESSIONS_DIR, name, "broker.sock"));
+  return ipcAddress(`broker-${name}`, join(sessionsDir(), name, "broker.sock"));
 }
 
 /** Path to the audit log for a named session. */
 export function sessionAuditPath(name: string): string {
-  return join(SESSIONS_DIR, name, "audit.jsonl");
+  return join(sessionsDir(), name, "audit.jsonl");
 }
 
 /** Path to the session metadata JSON. */
 export function sessionMetaPath(name: string): string {
-  return join(SESSIONS_DIR, name, "session.json");
+  return join(sessionsDir(), name, "session.json");
 }
 
+// Both dirs hang off `remoteOmpHome()`, resolved at call time (never at import
+// time) so `REMOTE_OMP_HOME` can redirect the whole tree and the one-time
+// legacy data-dir migration (`legacy_migration.ts`) can run before anything is created.
 export function sessionsDir(): string {
-  return SESSIONS_DIR;
+  return join(remoteOmpHome(), "sessions");
 }
 
 export function skillsDir(): string {
-  return SKILLS_DIR;
+  return join(remoteOmpHome(), "skills");
 }
 
 /** Lists discovered session names from disk. */
 export function listSessions(): string[] {
   ensureGlobalDirs();
   try {
-    return readdirSync(SESSIONS_DIR).filter((entry) => {
+    return readdirSync(sessionsDir()).filter((entry) => {
       try {
-        return statSync(join(SESSIONS_DIR, entry)).isDirectory();
+        return statSync(join(sessionsDir(), entry)).isDirectory();
       } catch { return false; }
     });
   } catch {

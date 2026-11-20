@@ -1,24 +1,24 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Supervisor } from "./supervisor.js";
-import { addDaemon } from "./registry.js";
+import { addDaemon, registryPath } from "./registry.js";
+import { daemonIdForCwd } from "./id.js";
 import { callSupervisor } from "./client.js";
-import type { Harness } from "./harness.js";
 
 /**
  * Plan 67 — the supervisor is the only authority over a daemon's lifetime.
  *
- * The harness is a shell script that logs its argv (and optionally env) and
+ * The fake omp is a shell script that logs its argv (and optionally env) and
  * behaves as the `mode` file says, so each test drives real process exits
  * through the real supervisor. POSIX-only (shebang script + signals).
  */
-const FAKE_HARNESS = `#!/bin/sh
+const FAKE_OMP = `#!/bin/sh
 echo "$*" >> "$RP_FAKE_LOG"
 if [ -n "$RP_FAKE_ENV_LOG" ]; then
-  printf '%s|%s\n' "$REMOTE_PI_HARNESS" "$RP_CHILD_TEST_VAR" >> "$RP_FAKE_ENV_LOG"
+  printf '%s|%s|%s\n' "$REMOTE_OMP_DAEMON" "$(env | grep -c '_HARNESS=')" "$RP_CHILD_TEST_VAR" >> "$RP_FAKE_ENV_LOG"
 fi
 case "$(cat "$RP_FAKE_MODE" 2>/dev/null)" in
   exit0_once) echo "stay" > "$RP_FAKE_MODE"; exit 0 ;;
@@ -38,8 +38,9 @@ let cwd: string;
 let log: string;
 let envLog: string;
 let mode: string;
-let harness: string;
+let fakeOmp: string;
 let supervisor: Supervisor | null = null;
+let prevOmpHome: string | undefined;
 
 const spawns = (): string[] =>
   existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : [];
@@ -64,18 +65,20 @@ async function daemonInfo(id?: string) {
 async function boot(opts: {
   backoffs: [number, ...number[]];
   stableUptimeMs?: number;
-  writeHarness?: boolean;
-  daemonHarness?: Harness;
+  writeOmp?: boolean;
+  /** Register the folder through `addDaemon` (default); false when the test wrote the registry itself. */
+  register?: boolean;
   loadChildEnv?: () => Promise<NodeJS.ProcessEnv | undefined>;
 }): Promise<string> {
-  if (opts.writeHarness !== false) {
-    writeFileSync(harness, FAKE_HARNESS);
-    chmodSync(harness, 0o755);
+  if (opts.writeOmp !== false) {
+    writeFileSync(fakeOmp, FAKE_OMP);
+    chmodSync(fakeOmp, 0o755);
   }
-  const { id } = addDaemon(cwd, "door", opts.daemonHarness ?? "pi");
+  if (opts.register !== false) addDaemon(cwd, "door");
+  const id = daemonIdForCwd(cwd);
   supervisor = new Supervisor({
     extensionPath: "/no/such/extension.js",
-    piBin: harness,
+    ompBin: fakeOmp,
     restartBackoffsMs: opts.backoffs,
     ...(opts.stableUptimeMs !== undefined ? { stableUptimeMs: opts.stableUptimeMs } : {}),
     ...(opts.loadChildEnv ? { loadChildEnv: opts.loadChildEnv } : {}),
@@ -85,13 +88,14 @@ async function boot(opts: {
 }
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "pi-life-"));
-  cwd = mkdtempSync(join(tmpdir(), "pi-life-cwd-"));
+  home = mkdtempSync(join(tmpdir(), "omp-life-"));
+  cwd = mkdtempSync(join(tmpdir(), "omp-life-cwd-"));
   log = join(home, "spawns.log");
   envLog = join(home, "env.log");
   mode = join(home, "mode");
-  harness = join(home, "fake-harness.sh");
-  process.env["REMOTE_PI_HOME"] = home;
+  fakeOmp = join(home, "fake-omp.sh");
+  prevOmpHome = process.env["REMOTE_OMP_HOME"];
+  process.env["REMOTE_OMP_HOME"] = home;
   process.env["RP_FAKE_LOG"] = log;
   process.env["RP_FAKE_MODE"] = mode;
   process.env["RP_NODE_EXE"] = process.execPath;
@@ -99,7 +103,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (supervisor) { await supervisor.stop(); supervisor = null; }
-  delete process.env["REMOTE_PI_HOME"];
+  if (prevOmpHome === undefined) delete process.env["REMOTE_OMP_HOME"];
+  else process.env["REMOTE_OMP_HOME"] = prevOmpHome;
   delete process.env["RP_FAKE_LOG"];
   delete process.env["RP_FAKE_ENV_LOG"];
   delete process.env["RP_FAKE_MODE"];
@@ -138,7 +143,7 @@ describe.skipIf(process.platform === "win32")("Supervisor — lifetime authority
     writeFileSync(mode, "exit43_once");
     supervisor = new Supervisor({
       extensionPath: "/no/such/extension.js",
-      piBin: harness,
+      ompBin: fakeOmp,
       restartBackoffsMs: [60_000],
     });
     await supervisor.start();
@@ -179,7 +184,7 @@ describe.skipIf(process.platform === "win32")("Supervisor — lifetime authority
     writeFileSync(mode, "flaky"); // lives 250 ms, then dies
     supervisor = new Supervisor({
       extensionPath: "/no/such/extension.js",
-      piBin: harness,
+      ompBin: fakeOmp,
       restartBackoffsMs: [10, 60_000],
       stableUptimeMs: 100,
     });
@@ -187,12 +192,12 @@ describe.skipIf(process.platform === "win32")("Supervisor — lifetime authority
     await until("the third spawn after reset", () => spawns().length >= 3, 4000);
   });
 
-  test("a harness binary that is missing at first is picked up once it appears", async () => {
+  test("an omp binary that is missing at first is picked up once it appears", async () => {
     writeFileSync(mode, "stay");
-    const id = await boot({ backoffs: [30], writeHarness: false });
+    const id = await boot({ backoffs: [30], writeOmp: false });
     await until("several failed spawn retries", async () => ((await daemonInfo(id))?.restart_count ?? 0) >= 2);
-    writeFileSync(harness, FAKE_HARNESS);
-    chmodSync(harness, 0o755);
+    writeFileSync(fakeOmp, FAKE_OMP);
+    chmodSync(fakeOmp, 0o755);
     await until("the daemon to run", () => spawns().length >= 1);
     await until("running state", async () => (await daemonInfo(id))?.state === "running");
   });
@@ -209,16 +214,16 @@ describe.skipIf(process.platform === "win32")("Supervisor — lifetime authority
   });
 
   test("stop_all during backoff keeps all daemons down", async () => {
-    const cwd2 = mkdtempSync(join(tmpdir(), "pi-life-cwd2-"));
+    const cwd2 = mkdtempSync(join(tmpdir(), "omp-life-cwd2-"));
     try {
       writeFileSync(mode, "exit1");
-      writeFileSync(harness, FAKE_HARNESS);
-      chmodSync(harness, 0o755);
+      writeFileSync(fakeOmp, FAKE_OMP);
+      chmodSync(fakeOmp, 0o755);
       const d1 = addDaemon(cwd, "d1");
       const d2 = addDaemon(cwd2, "d2");
       supervisor = new Supervisor({
         extensionPath: "/no/such/extension.js",
-        piBin: harness,
+        ompBin: fakeOmp,
         restartBackoffsMs: [600],
       });
       await supervisor.start();
@@ -260,13 +265,18 @@ describe.skipIf(process.platform === "win32")("Supervisor — lifetime authority
     expect((await callSupervisor({ op: "list" })).daemons).toEqual([]);
   });
 
-  test("harness=omp passes omp flags and injects REMOTE_PI_HARNESS=omp + loadChildEnv without mutating supervisor env", async () => {
+  test("runs omp with its flags and REMOTE_OMP_DAEMON=1, exports no agent-CLI selector, and adds loadChildEnv without mutating supervisor env", async () => {
     process.env["RP_FAKE_ENV_LOG"] = envLog;
     writeFileSync(mode, "stay");
     const id = await boot({
       backoffs: [50],
-      daemonHarness: "omp",
-      loadChildEnv: async () => ({ RP_CHILD_TEST_VAR: "from-login-shell" }),
+      // Both selector names are blanked in the inheritance, so one that shows up in the child's
+      // environment was exported by the supervisor itself.
+      loadChildEnv: async () => ({
+        RP_CHILD_TEST_VAR: "from-login-shell",
+        REMOTE_PI_HARNESS: undefined,
+        REMOTE_OMP_HARNESS: undefined,
+      }),
     });
     await until("omp child running", async () => spawns().length === 1 && (await daemonInfo(id))?.state === "running");
 
@@ -274,7 +284,20 @@ describe.skipIf(process.platform === "win32")("Supervisor — lifetime authority
     expect(spawns()[0]).not.toContain("--approve");
     expect(spawns()[0]).not.toContain("--name");
     await until("env logged", () => envLines().length >= 1);
-    expect(envLines()[0]).toBe("omp|from-login-shell");
+    expect(envLines()[0]).toBe("1|0|from-login-shell");
     expect(process.env["RP_CHILD_TEST_VAR"]).toBeUndefined();
+  });
+
+  test("a registry entry an older version saved with a harness runs omp all the same", async () => {
+    mkdirSync(dirname(registryPath()), { recursive: true });
+    writeFileSync(registryPath(), JSON.stringify({ daemons: [{ cwd: realpathSync(cwd), name: "door", harness: "pi" }] }));
+    writeFileSync(mode, "stay");
+    const id = await boot({ backoffs: [50], register: false });
+    await until("the saved entry to run", async () => spawns().length === 1 && (await daemonInfo(id))?.state === "running");
+
+    expect(spawns()[0]).toContain("--mode rpc");
+    expect(spawns()[0]).toContain("--allow-home");
+    expect(spawns()[0]).not.toContain("--approve");
+    expect(spawns()[0]).not.toContain("--name");
   });
 });

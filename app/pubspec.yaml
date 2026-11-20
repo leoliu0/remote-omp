@@ -1,5 +1,5 @@
 name: app
-description: "A new Flutter project."
+description: "Remote OMP — mobile client for the omp coding agent."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: "none" # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: "none" # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.2.58+2069
+version: 2.0.0+2100
 
 environment:
   sdk: ^3.11.5
@@ -82,7 +82,7 @@ dependencies:
   url_launcher: ^6.3.0
 
   # Theme — brand wordmark font (Inter, the wireframe's RP_SANS). Served at
-  # runtime + cached by google_fonts so "Remote Pi" renders identically on
+  # runtime + cached by google_fonts so "Remote OMP" renders identically on
   # iOS and Android without bundling a .ttf. See ui/core/themes/app_typography.
   google_fonts: ^6.2.1
 
@@ -95,6 +95,12 @@ dependencies:
   share_plus: ^12.0.2
   open_filex: ^5.0.0
   crypto: ^3.0.7
+
+  # Plan 68 — attach any file from the phone and upload it to the PC. The
+  # system document picker (Storage Access Framework) needs no storage
+  # permission; the plugin hands back a cached copy that is read as a stream.
+  # Kept on 8.x: file_picker 13.3.3+ needs win32 ^6, which share_plus 12 rules out.
+  file_picker: ^8.3.7
 
 dev_dependencies:
   flutter_test:

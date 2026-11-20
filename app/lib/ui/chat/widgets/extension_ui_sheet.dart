@@ -57,6 +57,12 @@ class _ExtensionUiSheetState extends State<ExtensionUiSheet> {
   // (relay drop, pi-ask gone) doesn't strand the user on a spinner forever.
   Timer? _submitTimeout;
   bool _awaitHint = false;
+  // Multi-question asks: index of the question currently shown, and the
+  // pending single-choice auto-advance.
+  int _page = 0;
+  Timer? _advanceTimer;
+  // Non-required questions the user deliberately skipped (stepper only).
+  final Set<String> _skipped = {};
 
   AskEnrichmentWire? get _ask => widget.request.ask;
 
@@ -99,6 +105,7 @@ class _ExtensionUiSheetState extends State<ExtensionUiSheet> {
 
   @override
   void dispose() {
+    _advanceTimer?.cancel();
     _submitTimeout?.cancel();
     for (final c in _custom.values) {
       c.dispose();
@@ -118,16 +125,48 @@ class _ExtensionUiSheetState extends State<ExtensionUiSheet> {
   bool _isMulti(AskQuestionWire q) =>
       (q.presentedType ?? q.type) == AskQuestionWireType.multi;
 
+  /// Multi-question asks are answered one page at a time; a single question
+  /// keeps the one-page layout.
+  bool get _isStepper => (_ask?.questions.length ?? 0) > 1;
+
+  bool get _isLastPage => _page >= (_ask?.questions.length ?? 1) - 1;
+
+  bool _isAnswered(AskQuestionWire q) =>
+      (_selected[q.id]?.isNotEmpty ?? false) ||
+      _customFor(q.id).text.trim().isNotEmpty;
+
+  /// Answered, or deliberately skipped (non-required questions only).
+  bool _isDone(AskQuestionWire q) =>
+      _isAnswered(q) || _skipped.contains(q.id);
+
+  /// Skip is offered only inside a multi-question ask, on a question the
+  /// agent did not mark `required`, while it is still unanswered.
+  bool _canSkip(AskQuestionWire q) =>
+      _isStepper && !q.required && !_isAnswered(q);
+
+  bool get _currentDone {
+    final ask = _ask;
+    return ask != null && _isDone(ask.questions[_page]);
+  }
+
+  bool get _currentAnswered {
+    final ask = _ask;
+    return ask != null && _isAnswered(ask.questions[_page]);
+  }
+
+  bool get _hasAnyAnswer =>
+      _skipped.isNotEmpty ||
+      _selected.values.any((s) => s.isNotEmpty) ||
+      _custom.values.any((c) => c.text.trim().isNotEmpty) ||
+      _notes.values.any((c) => c.text.trim().isNotEmpty);
+
   bool get _canSubmit {
     final ask = _ask;
     if (ask != null) {
-      for (final q in ask.questions) {
-        if ((_selected[q.id]?.isNotEmpty ?? false) ||
-            _customFor(q.id).text.trim().isNotEmpty) {
-          return true;
-        }
-      }
-      return false;
+      // Every question needs an answer (or a deliberate Skip on a
+      // non-required one): a partial submit silently skipped the rest on the
+      // phone.
+      return ask.questions.isNotEmpty && ask.questions.every(_isDone);
     }
     return switch (widget.request.method) {
       ExtensionUiMethod.select => _singleValue != null,
@@ -161,6 +200,35 @@ class _ExtensionUiSheetState extends State<ExtensionUiSheet> {
     await widget.onRespond(response);
     // The modal stays open until the ChatViewModel clears the pending request
     // on the `completed` dismiss notify (or surfaces an error for retry).
+  }
+
+  /// Close / Android back on the first page: with answers on hand, confirm
+  /// before throwing them away; otherwise cancel straight away.
+  Future<void> _requestCancel() async {
+    if (_submitting) return;
+    if (_ask != null && _hasAnyAnswer) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Discard answers?'),
+          content: const Text('Your answers so far will be lost.'),
+          actions: [
+            TextButton(
+              key: const ValueKey('ask-discard-cancel'),
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const ValueKey('ask-discard-confirm'),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Discard'),
+            ),
+          ],
+        ),
+      );
+      if (discard != true || !mounted) return;
+    }
+    await _cancel();
   }
 
   Future<void> _cancel() async {
@@ -240,8 +308,79 @@ class _ExtensionUiSheetState extends State<ExtensionUiSheet> {
         set
           ..clear()
           ..add(value);
+        // Single-choice: a picked option and custom text can't be combined.
+        _customFor(qid).clear();
       }
+      _skipped.remove(qid);
     });
+    // Single-choice picks move on by themselves after a short beat so the
+    // selection is visible; the last page waits for an explicit Submit and
+    // multi-choice never advances (more picks may follow).
+    if (!multi && _isStepper && !_isLastPage) {
+      final from = _page;
+      _advanceTimer?.cancel();
+      _advanceTimer = Timer(const Duration(milliseconds: 250), () {
+        if (!mounted || _submitting || _page != from || !_currentAnswered) {
+          return;
+        }
+        _goNext();
+      });
+    }
+  }
+
+  void _goNext() {
+    _advanceTimer?.cancel();
+    if (_submitting || _isLastPage || !_currentDone) return;
+    setState(() => _page++);
+  }
+
+  /// Deliberate "Skip" on a non-required question: recorded as unanswered
+  /// (absent from the response) but lets Next/Submit proceed.
+  void _skipCurrent() {
+    final ask = _ask;
+    if (ask == null || _submitting) return;
+    setState(() => _skipped.add(ask.questions[_page].id));
+    _goNext();
+  }
+
+  Widget _buildSkip(AskQuestionWire q) {
+    final colors = context.colors;
+    if (_skipped.contains(q.id)) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Row(
+          children: [
+            Text(
+              'Skipped',
+              style: TextStyle(color: colors.muted, fontSize: 13),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              key: const ValueKey('ask-unskip'),
+              onPressed: _submitting
+                  ? null
+                  : () => setState(() => _skipped.remove(q.id)),
+              child: const Text('Undo'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (!_canSkip(q)) return const SizedBox.shrink();
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton(
+        key: const ValueKey('ask-skip'),
+        onPressed: _submitting ? null : _skipCurrent,
+        child: const Text('Skip this question'),
+      ),
+    );
+  }
+
+  void _goBack() {
+    _advanceTimer?.cancel();
+    if (_submitting || _page == 0) return;
+    setState(() => _page--);
   }
 
   @override
@@ -252,10 +391,16 @@ class _ExtensionUiSheetState extends State<ExtensionUiSheet> {
 
     // System back (Android) mirrors the close button: cancel the flow instead
     // of popping the chat route underneath while the modal is still overlaid.
+    // On a later page of a multi-question ask it steps back one question.
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && !_submitting) _cancel();
+        if (didPop || _submitting) return;
+        if (_isStepper && _page > 0) {
+          _goBack();
+        } else {
+          _requestCancel();
+        }
       },
       child: Material(
         color: colors.bg,
@@ -270,7 +415,7 @@ class _ExtensionUiSheetState extends State<ExtensionUiSheet> {
               leading: IconButton(
                 icon: const Icon(Icons.close),
                 tooltip: 'Cancel',
-                onPressed: _submitting ? null : _cancel,
+                onPressed: _submitting ? null : _requestCancel,
               ),
               title: Text(title),
             ),
@@ -285,11 +430,57 @@ class _ExtensionUiSheetState extends State<ExtensionUiSheet> {
   }
 
   Widget _buildRich(BuildContext context, AskEnrichmentWire ask) {
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      itemCount: ask.questions.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 24),
-      itemBuilder: (context, i) => _buildQuestion(context, ask.questions[i]),
+    if (!_isStepper) {
+      return ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        itemCount: ask.questions.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 24),
+        itemBuilder: (context, i) => _buildQuestion(context, ask.questions[i]),
+      );
+    }
+    // One question per page; the keyed ListView resets the scroll offset on
+    // every step. Answers live in the per-question maps/controllers, so Back
+    // and Next never lose them.
+    final q = ask.questions[_page];
+    final total = ask.questions.length;
+    final colors = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '${_page + 1}/$total',
+                key: const ValueKey('ask-step'),
+                style: Theme.of(
+                  context,
+                ).textTheme.labelLarge?.copyWith(color: colors.muted),
+              ),
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                  key: const ValueKey('ask-progress'),
+                  value: (_page + 1) / total,
+                  minHeight: 3,
+                  color: colors.accent,
+                  backgroundColor: colors.border,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView(
+            key: ValueKey('ask-page-${q.id}'),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: [_buildQuestion(context, q), _buildSkip(q)],
+          ),
+        ),
+      ],
     );
   }
 
@@ -341,8 +532,14 @@ class _ExtensionUiSheetState extends State<ExtensionUiSheet> {
           controller: _customFor(q.id),
           enabled: !_submitting,
           // _canSubmit reads this text; without a rebuild per keystroke the
-          // Submit button would stay stale for text-only answers.
-          onChanged: (_) => setState(() {}),
+          // Submit button would stay stale for text-only answers. On a
+          // single-choice question typed text replaces the selection (they
+          // can't be combined), so what is shown is what is sent.
+          onChanged: (v) => setState(() {
+            if (v.trim().isEmpty) return;
+            _skipped.remove(q.id);
+            if (!multi) _selected[q.id]?.clear();
+          }),
           decoration: InputDecoration(
             hintText: 'Type your own…',
             isDense: true,
@@ -379,7 +576,7 @@ class _ExtensionUiSheetState extends State<ExtensionUiSheet> {
       child: TextField(
         controller: note,
         enabled: !_submitting,
-        autofocus: true,
+        autofocus: note.text.isEmpty,
         decoration: const InputDecoration(
           hintText: 'Note (optional)',
           isDense: true,
@@ -567,29 +764,48 @@ class _ExtensionUiSheetState extends State<ExtensionUiSheet> {
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton(
-                    onPressed: _submitting
-                        ? null
-                        : (_isConfirm ? () => _confirm(false) : _cancel),
-                    child: Text(_isConfirm ? 'No' : 'Cancel'),
-                  ),
+                  child: _isStepper && _page > 0
+                      ? OutlinedButton(
+                          key: const ValueKey('ask-back'),
+                          onPressed: _submitting ? null : _goBack,
+                          child: const Text('Back'),
+                        )
+                      : OutlinedButton(
+                          onPressed: _submitting
+                              ? null
+                              : (_isConfirm
+                                    ? () => _confirm(false)
+                                    : _requestCancel),
+                          child: Text(_isConfirm ? 'No' : 'Cancel'),
+                        ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: FilledButton(
-                    onPressed: _submitting
-                        ? null
-                        : (_isConfirm
-                              ? () => _confirm(true)
-                              : (_canSubmit ? _submit : null)),
-                    child: _submitting
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Text(_isConfirm ? 'Yes' : 'Submit'),
-                  ),
+                  child: _isStepper && !_isLastPage
+                      ? FilledButton(
+                          key: const ValueKey('ask-next'),
+                          onPressed: _submitting || !_currentDone
+                              ? null
+                              : _goNext,
+                          child: const Text('Next'),
+                        )
+                      : FilledButton(
+                          key: const ValueKey('ask-submit'),
+                          onPressed: _submitting
+                              ? null
+                              : (_isConfirm
+                                    ? () => _confirm(true)
+                                    : (_canSubmit ? _submit : null)),
+                          child: _submitting
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Text(_isConfirm ? 'Yes' : 'Submit'),
+                        ),
                 ),
               ],
             ),
