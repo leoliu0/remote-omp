@@ -12,9 +12,11 @@ class MockWS extends EventEmitter {
   static OPEN = 1;
   readyState = MockWS.OPEN;
   readonly sent: string[] = [];
+  readonly options: unknown;
 
-  constructor(_url: string) {
+  constructor(_url: string, options?: unknown) {
     super();
+    this.options = options;
     wsRef.current = this;
     // Defer 'open' so RelayClient has time to attach its handlers first.
     setTimeout(() => this.emit("open"), 0);
@@ -196,5 +198,12 @@ describe("RelayClient", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("connect configures a 15s WebSocket handshakeTimeout so stalled boots don't hang", async () => {
+    const client = new RelayClient("ws://localhost:9999", keypair);
+    await connectWithAuth(client);
+    expect(currentWs().options).toMatchObject({ handshakeTimeout: 15_000 });
+    client.close();
   });
 });

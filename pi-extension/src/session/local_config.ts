@@ -104,7 +104,11 @@ function parseLocalConfig(raw: string): LocalConfig | null {
 function directConfig(): LocalConfig | null {
   const raw = process.env[DIRECT_CONFIG_ENV];
   if (!raw || raw.trim().length === 0) return null;
-  return parseLocalConfig(raw);
+  const parsed = parseLocalConfig(raw);
+  if (!parsed) {
+    process.stderr.write("[remote-pi] ignoring malformed REMOTE_PI_DIRECT_CONFIG\n");
+  }
+  return parsed;
 }
 
 /**
@@ -124,8 +128,16 @@ export function loadLocalConfig(cwd: string): LocalConfig {
   const p = pathFor(cwd);
   if (!existsSync(p)) return {};
   try {
-    return parseLocalConfig(readFileSync(p, "utf8")) ?? {};
-  } catch {
+    const parsed = parseLocalConfig(readFileSync(p, "utf8"));
+    if (!parsed) {
+      process.stderr.write(`[remote-pi] ignoring invalid local config at ${p}\n`);
+      return {};
+    }
+    return parsed;
+  } catch (err) {
+    process.stderr.write(
+      `[remote-pi] could not read ${p}: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
     return {};
   }
 }

@@ -252,6 +252,7 @@ const {
   _getDisposedForTest,
   _tryExecuteTerminalSlashCommand,
   _tryExecuteTerminalInput,
+  parseCreateArgs,
   restartSession,
   _resetMainSessionForTest,
   _setGitStatusReaderForTest,
@@ -7583,6 +7584,162 @@ describe("terminal slash command execution from mobile", () => {
         delete process.env["REMOTE_PI_DAEMON"];
       }
     }
+  });
+
+  test("daemon and --mode rpc never let _tryExecuteTerminalInput hijack /exit, /restart, or prompts", () => {
+    const sessionStart = captureEventHandler("session_start");
+    const rpcUiCtx = {
+      ui: {
+        notify: vi.fn(),
+        getEditorText: vi.fn(() => ""),
+        setEditorText: vi.fn(),
+      },
+    };
+    sessionStart({ type: "session_start" }, rpcUiCtx as unknown as Parameters<typeof sessionStart>[1]);
+
+    const dataListener = vi.fn();
+    process.stdin.on("data", dataListener);
+    const prevDaemon = process.env["REMOTE_PI_DAEMON"];
+    const prevArgv = process.argv;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as unknown as (code?: string | number | null | undefined) => never);
+    vi.useFakeTimers();
+    try {
+      // 1. Daemon with realistic pi --mode rpc UI stubs + stdin data listener
+      process.env["REMOTE_PI_DAEMON"] = "1";
+      expect(_tryExecuteTerminalInput("/exit")).toBe(false);
+      expect(rpcUiCtx.ui.setEditorText).not.toHaveBeenCalled();
+      expect(dataListener).not.toHaveBeenCalled();
+
+      const mockSender = { send: vi.fn() };
+      _routeClientMessageFrom(
+        mockSender as unknown as Parameters<typeof _routeClientMessageFrom>[0],
+        { type: "user_message", id: "msg-exit-1", text: "/exit" },
+        {} as unknown as Parameters<typeof _routeClientMessageFrom>[2],
+      );
+      vi.advanceTimersByTime(150);
+      expect(exitSpy).toHaveBeenCalledWith(0);
+
+      exitSpy.mockClear();
+      _routeClientMessageFrom(
+        mockSender as unknown as Parameters<typeof _routeClientMessageFrom>[0],
+        { type: "user_message", id: "msg-restart-2", text: "/restart" },
+        {} as unknown as Parameters<typeof _routeClientMessageFrom>[2],
+      );
+      vi.advanceTimersByTime(150);
+      expect(exitSpy).toHaveBeenCalledWith(EXIT_DAEMON_RESTART);
+
+      // 2. Non-daemon --mode rpc argv guard
+      delete process.env["REMOTE_PI_DAEMON"];
+      process.argv = ["node", "pi", "--mode", "rpc"];
+      expect(_tryExecuteTerminalInput("hello")).toBe(false);
+      process.argv = ["node", "pi", "--mode=rpc"];
+      expect(_tryExecuteTerminalInput("hello")).toBe(false);
+      expect(dataListener).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      exitSpy.mockRestore();
+      process.stdin.removeListener("data", dataListener);
+      process.argv = prevArgv;
+      if (prevDaemon !== undefined) {
+        process.env["REMOTE_PI_DAEMON"] = prevDaemon;
+      } else {
+        delete process.env["REMOTE_PI_DAEMON"];
+      }
+    }
+  });
+});
+
+describe("always-on daemon boot retries & parseCreateArgs", () => {
+  const savedArgv = process.argv;
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    _knownPeers.length = 0;
+    _consumeCalls.length = 0;
+    relayRef.current = null;
+    relayInstances.length = 0;
+    _defaultConnectImpl = async () => undefined;
+    _setDisposedForTest(false);
+    _resetAutoInitedForTest();
+    _resetCwdLockForTest();
+    const stop = captureHandler("remote-pi stop");
+    await stop("", makeMockCtx());
+    _resetAutoInitedForTest();
+  });
+  afterEach(async () => {
+    vi.useRealTimers();
+    process.argv = savedArgv;
+    delete process.env["REMOTE_PI_DAEMON"];
+    delete process.env["REMOTE_PI_DIRECT_CONFIG"];
+    const stop = captureHandler("remote-pi stop");
+    await stop("", makeMockCtx());
+    _resetCwdLockForTest();
+  });
+
+  test("daemon session_start retries initial relay.connect() failure until relay recovers", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    process.env["REMOTE_PI_DAEMON"] = "1";
+    process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      agent_name: "BootRetry",
+      auto_start_relay: true,
+    });
+    let attempts = 0;
+    _defaultConnectImpl = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("network not ready at boot");
+    };
+
+    const onSessionStart = captureEventHandler("session_start");
+    onSessionStart({ type: "session_start" }, { ui: {}, cwd: process.cwd() } as unknown as Parameters<typeof onSessionStart>[1]);
+
+    await vi.waitFor(() => expect(_hasPendingRootRetryForTest()).toBe(true));
+    expect(_getState()).toBe("idle");
+    expect(attempts).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(_getState()).toBe("started"));
+    expect(attempts).toBe(2);
+    expect(_hasPendingRootRetryForTest()).toBe(false);
+  });
+
+  test("daemon session_start retries transient cwd-lock contention until old daemon exits", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    process.env["REMOTE_PI_DAEMON"] = "1";
+    process.env["REMOTE_PI_DIRECT_CONFIG"] = JSON.stringify({
+      agent_name: "LockRetry",
+      auto_start_relay: true,
+    });
+    const held = await acquireCwdLock(process.cwd(), "LockRetry");
+    expect(held.ok).toBe(true);
+    try {
+      const onSessionStart = captureEventHandler("session_start");
+      onSessionStart({ type: "session_start" }, { ui: {}, cwd: process.cwd() } as unknown as Parameters<typeof onSessionStart>[1]);
+
+      await vi.waitFor(() => expect(_hasPendingRootRetryForTest()).toBe(true));
+      expect(_hasMeshNodeForTest()).toBe(false);
+
+      if (held.ok) held.release();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(_hasMeshNodeForTest()).toBe(true));
+      expect(_hasPendingRootRetryForTest()).toBe(false);
+    } finally {
+      if (held.ok) held.release();
+    }
+  });
+
+  test("parseCreateArgs handles =flags, quoted cwds with spaces, flags inside --name, and errors", () => {
+    expect(parseCreateArgs('"/tmp/My Dir" --name "My --harness omp" --harness=omp')).toEqual({
+      cwdRaw: "/tmp/My Dir",
+      name: "My --harness omp",
+      harnessFlag: "omp",
+    });
+    expect(parseCreateArgs("--harness omp --name=\"Door\" ~")).toEqual({
+      cwdRaw: "~",
+      name: "Door",
+      harnessFlag: "omp",
+    });
+    expect(parseCreateArgs("/tmp/dir --harness").error).toMatch(/--harness requires a value/);
+    expect(parseCreateArgs("/tmp/dir --harnes omp").error).toMatch(/unknown option/);
+    expect(parseCreateArgs('/tmp/dir --name "unclosed').error).toMatch(/unterminated quote/);
   });
 });
 

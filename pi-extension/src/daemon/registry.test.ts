@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
@@ -16,8 +16,11 @@ import { daemonIdForCwd } from "./id.js";
 import { defaultAgentName } from "../session/local_config.js";
 
 /** Each test runs against an isolated $HOME-like directory so the registry
- *  writes never touch the developer's real `~/.pi/remote/daemons.json`. */
+ *  writes never touch the developer's real `~/.pi/remote/daemons.json`, and
+ *  every scratch folder is created under `testHome` so `afterEach` cleans it. */
 let testHome: string;
+
+const makeCwd = (prefix = "cwd-"): string => mkdtempSync(join(testHome, prefix));
 
 beforeEach(() => {
   testHome = mkdtempSync(join(tmpdir(), "pi-regtest-"));
@@ -36,19 +39,14 @@ describe("registryPath", () => {
 });
 
 describe("normalizeCwd", () => {
-  test("expands ~/ relative to HOME", () => {
-    // We can't easily test ~ expansion against the real homedir without
-    // creating an actual subdir there. Instead, simulate by creating a
-    // tmp folder and asking normalizeCwd to canonicalize it absolutely.
-    const tmp = mkdtempSync(join(tmpdir(), "pi-norm-"));
+  test("canonicalizes an existing path", () => {
+    const tmp = makeCwd("norm-");
     expect(normalizeCwd(tmp)).toBe(realpathSync(tmp));
   });
 
   test("resolves relative paths against process.cwd()", () => {
-    // `.` resolves to the test runner's cwd (project root). Just verify
-    // it's absolute and canonicalized.
     const got = normalizeCwd(".");
-    expect(isAbsolute(got)).toBe(true); // `/...` POSIX, `C:\...` win32
+    expect(isAbsolute(got)).toBe(true);
     expect(got).toBe(realpathSync("."));
   });
 
@@ -62,7 +60,7 @@ describe("normalizeCwd", () => {
   });
 
   test("symlinks resolve to canonical realpath", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-symlink-"));
+    const tmp = makeCwd("symlink-");
     const real = join(tmp, "real");
     mkdirSync(real);
     const link = join(tmp, "link");
@@ -87,24 +85,34 @@ describe("loadRegistry / saveRegistry", () => {
     expect(existsSync(registryPath())).toBe(true);
   });
 
-  test("malformed JSON tolerated (returns empty)", () => {
+  test("malformed JSON tolerated on read (returns empty)", () => {
     const path = registryPath();
     mkdirSync(join(testHome, ".pi", "remote"), { recursive: true });
-    require("node:fs").writeFileSync(path, "{not-json");
+    writeFileSync(path, "{not-json");
     expect(loadRegistry()).toEqual({ daemons: [] });
   });
 
-  test("unknown shape tolerated", () => {
+  test("unknown shape tolerated on read", () => {
     const path = registryPath();
     mkdirSync(join(testHome, ".pi", "remote"), { recursive: true });
-    require("node:fs").writeFileSync(path, JSON.stringify({ foo: "bar" }));
+    writeFileSync(path, JSON.stringify({ foo: "bar" }));
     expect(loadRegistry()).toEqual({ daemons: [] });
+  });
+
+  test("mutations refuse to overwrite a corrupted registry file", () => {
+    const path = registryPath();
+    mkdirSync(join(testHome, ".pi", "remote"), { recursive: true });
+    writeFileSync(path, "{broken-json");
+    const cwd = makeCwd("strict-");
+    expect(() => addDaemon(cwd, "door")).toThrow(/malformed/i);
+    expect(() => removeDaemon("deadbeef")).toThrow(/malformed/i);
+    expect(readFileSync(path, "utf8")).toBe("{broken-json");
   });
 });
 
 describe("addDaemon", () => {
   test("registers a fresh cwd and returns derived id", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-add-"));
+    const tmp = makeCwd("add-");
     const result = addDaemon(tmp);
     expect(result.id).toBe(daemonIdForCwd(realpathSync(tmp)));
     expect(result.cwd).toBe(realpathSync(tmp));
@@ -112,43 +120,50 @@ describe("addDaemon", () => {
   });
 
   test("rejects duplicate cwd (same normalized path)", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-dup-"));
+    const tmp = makeCwd("dup-");
     addDaemon(tmp);
     expect(() => addDaemon(tmp)).toThrow(/already registered/i);
   });
 
-  test("relative path canonicalizes to same entry as absolute", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-relabs-"));
+  test("relative path / symlink canonicalizes to same entry as absolute", () => {
+    const tmp = makeCwd("relabs-");
     addDaemon(tmp);
-    // Trying to add via a symlink → same normalized path → duplicate.
-    const link = join(tmpdir(), `pi-relabs-link-${Date.now()}`);
+    const link = join(testHome, `relabs-link-${Date.now()}`);
     symlinkSync(tmp, link);
     expect(() => addDaemon(link)).toThrow(/already registered/i);
   });
 
   test("on-disk file matches loadRegistry output", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-disk-"));
+    const tmp = makeCwd("disk-");
     addDaemon(tmp);
-    const onDisk = JSON.parse(readFileSync(registryPath(), "utf8")) as { daemons: Array<{cwd: string}> };
+    const onDisk = JSON.parse(readFileSync(registryPath(), "utf8")) as { daemons: Array<{ cwd: string }> };
     expect(onDisk.daemons).toHaveLength(1);
     expect(onDisk.daemons[0]!.cwd).toBe(realpathSync(tmp));
   });
 
   test("keeps the harness a daemon was registered with", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-harness-"));
+    const tmp = makeCwd("harness-");
     addDaemon(tmp, "door", "omp");
     expect(listDaemons()[0]).toMatchObject({ name: "door", harness: "omp" });
   });
 
-  test("entries without a (valid) harness run pi, as before the field existed", () => {
-    saveRegistry({ daemons: [{ cwd: "/tmp/a" }, { cwd: "/tmp/b", harness: "nonsense" as never }] });
-    expect(listDaemons().map((d) => d.harness)).toEqual(["pi", "pi"]);
+  test("entries without a (valid) harness run pi and whitespace-only names fall back to folder name", () => {
+    saveRegistry({
+      daemons: [
+        { cwd: "/tmp/a", name: "   " },
+        { cwd: "/tmp/b", harness: "nonsense" as never },
+      ],
+    });
+    expect(listDaemons()).toMatchObject([
+      { cwd: "/tmp/a", name: "a", harness: "pi" },
+      { cwd: "/tmp/b", name: "b", harness: "pi" },
+    ]);
   });
 });
 
 describe("removeDaemon", () => {
   test("removes by id and returns the cwd", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-rm-"));
+    const tmp = makeCwd("rm-");
     const { id } = addDaemon(tmp);
     const result = removeDaemon(id);
     expect(result.removed).toBe(true);
@@ -163,8 +178,8 @@ describe("removeDaemon", () => {
   });
 
   test("only removes the matching entry — others stay", () => {
-    const a = mkdtempSync(join(tmpdir(), "pi-multi-a-"));
-    const b = mkdtempSync(join(tmpdir(), "pi-multi-b-"));
+    const a = makeCwd("multi-a-");
+    const b = makeCwd("multi-b-");
     const { id: idA } = addDaemon(a);
     addDaemon(b);
     removeDaemon(idA);
@@ -176,8 +191,8 @@ describe("removeDaemon", () => {
 
 describe("listDaemons", () => {
   test("returns derived ids alongside cwds, in insertion order", () => {
-    const a = mkdtempSync(join(tmpdir(), "pi-list-a-"));
-    const b = mkdtempSync(join(tmpdir(), "pi-list-b-"));
+    const a = makeCwd("list-a-");
+    const b = makeCwd("list-b-");
     addDaemon(a);
     addDaemon(b);
     const out = listDaemons();
@@ -188,11 +203,20 @@ describe("listDaemons", () => {
   });
 
   test("legacy entry without a name falls back to the folder-derived name", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-legacy-"));
+    const dir = makeCwd("legacy-");
     const cwd = realpathSync(dir);
-    saveRegistry({ daemons: [{ cwd }] }); // pre-name-field shape
+    saveRegistry({ daemons: [{ cwd }] });
     const out = listDaemons();
     expect(out).toEqual([{ id: daemonIdForCwd(cwd), cwd, name: defaultAgentName(cwd), harness: "pi" }]);
+  });
+
+  test("stat cache picks up out-of-band file modifications immediately", () => {
+    const a = makeCwd("cache-a-");
+    const b = makeCwd("cache-b-");
+    addDaemon(a, "first");
+    expect(listDaemons().map((d) => d.name)).toEqual(["first"]);
+    writeFileSync(registryPath(), JSON.stringify({ daemons: [{ cwd: realpathSync(b), name: "edited", harness: "omp" }] }));
+    expect(listDaemons().map((d) => ({ name: d.name, harness: d.harness }))).toEqual([{ name: "edited", harness: "omp" }]);
   });
 
   test("empty registry yields []", () => {
@@ -202,9 +226,9 @@ describe("listDaemons", () => {
 
 describe("migrateRegistryNames", () => {
   test("backfills folder names into legacy entries and persists", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-mig-"));
+    const dir = makeCwd("mig-");
     const cwd = realpathSync(dir);
-    saveRegistry({ daemons: [{ cwd }] }); // legacy: no name
+    saveRegistry({ daemons: [{ cwd }] });
 
     const changed = migrateRegistryNames();
     expect(changed).toBe(1);
@@ -216,8 +240,8 @@ describe("migrateRegistryNames", () => {
   });
 
   test("is idempotent — a second run changes nothing", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-mig2-"));
-    addDaemon(dir); // already has a name
+    const dir = makeCwd("mig2-");
+    addDaemon(dir);
     expect(migrateRegistryNames()).toBe(0);
   });
 });

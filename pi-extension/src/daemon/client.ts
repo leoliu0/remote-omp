@@ -24,7 +24,7 @@ import { usesNamedPipe } from "../session/ipc.js";
  */
 
 const CONNECT_TIMEOUT_MS = 1000;
-const REPLY_TIMEOUT_MS = 5000;
+const REPLY_TIMEOUT_MS = 15_000;
 
 export class SupervisorOfflineError extends Error {
   constructor(public readonly sockPath: string) {

@@ -1,18 +1,15 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RpcChild, busyTransition, resolvePiBin, resolvePiSpawn, _npmShimTarget, rpcSpawnArgs, type RpcChildExitEvent } from "./rpc_child.js";
 
-/**
- * Regression for the orphaned-daemon bug: a deliberate `stop()` kills the
- * child by signal (SIGTERM/SIGKILL), which used to look like a crash and trip
- * the supervisor's auto-restart — re-spawning a daemon the operator just
- * stopped/removed. `stop()` must report a clean exit instead.
- *
- * We use a tiny executable that ignores the `--mode rpc -e <path>` args and
- * just sleeps, so the child is genuinely alive when we stop it.
- */
+function deferredExit(): { promise: Promise<RpcChildExitEvent>; resolve: (evt: RpcChildExitEvent) => void } {
+  let resolve!: (evt: RpcChildExitEvent) => void;
+  const promise = new Promise<RpcChildExitEvent>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
 describe("rpcSpawnArgs", () => {
   const ext = "/path/to/dist/index.js";
 
@@ -46,15 +43,15 @@ describe("rpcSpawnArgs", () => {
   });
 });
 
-describe("RpcChild — deliberate stop is not a crash", () => {
-  let dir: string;
+describe("RpcChild — lifecycle & stdio safety", () => {
+  let dir: string | undefined;
 
   afterEach(() => {
+    if (!dir) return;
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    dir = undefined;
   });
 
-  // POSIX-only: uses a `.sh` stub + SIGTERM/SIGKILL semantics. The RpcChild
-  // stop() logic is cross-platform; only this stub/signal harness is POSIX.
   test.skipIf(process.platform === "win32")("stop() reports a requested exit though the child dies by signal", async () => {
     dir = mkdtempSync(join(tmpdir(), "pi-rpcchild-"));
     const bin = join(dir, "staysalive.sh");
@@ -63,29 +60,105 @@ describe("RpcChild — deliberate stop is not a crash", () => {
 
     const child = new RpcChild({ piBin: bin, extensionPath: "/no/such.js", cwd: dir });
     const exited = new Promise<RpcChildExitEvent>((resolve) => child.once("exit", resolve));
+    const spawned = new Promise<void>((resolve) => child.once("spawn", () => resolve()));
     child.spawn();
-    // Let the process actually exec before we signal it.
-    await new Promise((r) => setTimeout(r, 50));
+    await spawned;
     await child.stop();
 
     const evt = await exited;
-    expect(evt.requested).toBe(true);   // ← a signal exit used to count as a crash → spurious restart
+    expect(evt.requested).toBe(true);
     expect(child.state).toBe("stopped");
   });
 
-  // Plan 67: a failed spawn left the dead handle in place, so every later
-  // spawn() returned early and the supervisor's retry never ran.
   test("a failed spawn can be retried", async () => {
     dir = mkdtempSync(join(tmpdir(), "pi-rpcchild-"));
     const child = new RpcChild({ piBin: join(dir, "no-such-harness"), extensionPath: "/no/such.js", cwd: dir });
     for (let attempt = 0; attempt < 2; attempt++) {
-      const { promise, resolve } = Promise.withResolvers<RpcChildExitEvent>();
+      const { promise, resolve } = deferredExit();
       child.once("exit", resolve);
       child.spawn();
       const evt = await promise;
       expect(evt.requested).toBe(false);
       expect(child.state).toBe("crashed");
     }
+  });
+
+  test.skipIf(process.platform === "win32")("omp harness writes set_event_filter on spawn", async () => {
+    dir = mkdtempSync(join(tmpdir(), "pi-rpc-omp-filter-"));
+    const stdinLog = join(dir, "stdin.log");
+    const stub = join(dir, "omp-stub.mjs");
+    writeFileSync(
+      stub,
+      `#!/usr/bin/env node\n` +
+      `import { appendFileSync } from "node:fs";\n` +
+      `process.stdin.setEncoding("utf8");\n` +
+      `process.stdin.on("data", (c) => appendFileSync(${JSON.stringify(stdinLog)}, c));\n` +
+      `setInterval(() => {}, 1e6);\n`,
+    );
+    chmodSync(stub, 0o755);
+
+    const child = new RpcChild({ harness: "omp", piBin: stub, extensionPath: "/x.js", cwd: dir });
+    const spawned = new Promise<void>((resolve) => child.once("spawn", () => resolve()));
+    child.spawn();
+    await spawned;
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      try {
+        const text = readFileSync(stdinLog, "utf8");
+        if (text.includes("set_event_filter")) break;
+      } catch { /* waiting for stub to write */ }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const received = readFileSync(stdinLog, "utf8");
+    expect(received).toContain('"type":"set_event_filter"');
+    expect(received).toContain('"message_start"');
+    expect(received).toContain('"message_end"');
+    await child.stop();
+  });
+
+  test("oversized stdout line is dropped cleanly without corrupting later events", () => {
+    dir = mkdtempSync(join(tmpdir(), "pi-rpc-oversize-"));
+    const child = new RpcChild({ piBin: "/usr/bin/true", extensionPath: "/x", cwd: dir });
+    // Emit a >256 KiB line without newline followed by its newline and a valid message_start.
+    child._ingestStdoutForTest("x".repeat(300 * 1024));
+    expect(child.isBusy).toBe(false);
+    child._ingestStdoutForTest('still-oversized\n{"type":"message_start"}\n');
+    expect(child.isBusy).toBe(true);
+    child._ingestStdoutForTest('{"type":"message_end"}\n');
+    expect(child.isBusy).toBe(false);
+  });
+
+  test("stderr forwards complete lines each prefixed with cwd", () => {
+    dir = mkdtempSync(join(tmpdir(), "pi-rpc-stderr-"));
+    const child = new RpcChild({ piBin: "/usr/bin/true", extensionPath: "/x", cwd: dir });
+    const chunks: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      child._ingestStderrForTest("first-half ");
+      expect(chunks).toHaveLength(0);
+      child._ingestStderrForTest("second-half\nline2\n");
+      expect(chunks).toEqual([`[${dir}] first-half second-half\n`, `[${dir}] line2\n`]);
+    } finally {
+      process.stderr.write = origWrite;
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("writing to an exited child stdin (EPIPE) does not throw uncaught", async () => {
+    dir = mkdtempSync(join(tmpdir(), "pi-rpc-epipe-"));
+    const stub = join(dir, "quick-exit.sh");
+    writeFileSync(stub, "#!/bin/sh\nexit 0\n");
+    chmodSync(stub, 0o755);
+
+    const child = new RpcChild({ piBin: stub, extensionPath: "/x", cwd: dir });
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    child.spawn();
+    await exited;
+    expect(child.sendPrompt("late")).toBe(false);
+    await child.stop();
   });
 });
 
@@ -100,24 +173,22 @@ describe("resolvePiBin (plan/40 — Windows pi.cmd)", () => {
     expect(resolvePiBin("pi.cmd", "win32")).toBe("pi.cmd");
     expect(resolvePiBin("C:/tools/pi", "win32")).toBe("C:/tools/pi");
   });
-  // The bare-`pi`-on-win32 lookup uses `where` (Windows-only); not unit-tested
-  // here (no `where` on the POSIX dev host) — covered by the real Windows smoke.
 });
 
 describe("_npmShimTarget (plan/40 — parse the .cmd shim)", () => {
-  let tmp: string;
-  afterEach(() => { if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+  let tmp: string | undefined;
+  afterEach(() => {
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
+    tmp = undefined;
+  });
 
   test("recovers the cli.js the npm shim launches (relative to the shim dir)", () => {
     tmp = mkdtempSync(join(tmpdir(), "pi-shim-"));
-    // Mimic the npm-generated shim layout: <dir>\pi.cmd + <dir>\node_modules\…\cli.js
     const rel = join("node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js");
     const target = join(tmp, rel);
-    require("node:fs").mkdirSync(join(target, ".."), { recursive: true });
+    mkdirSync(join(target, ".."), { recursive: true });
     writeFileSync(target, "// cli\n");
     const shim = join(tmp, "pi.cmd");
-    // The relevant line of a real npm cmd shim (forward-slash dp0 segment varies;
-    // the launcher always quotes "%dp0%\<relative>").
     writeFileSync(shim, `@ECHO off\r\n"%_prog%"  "%dp0%\\${rel}" %*\r\n`);
     expect(_npmShimTarget(shim)).toBe(target);
   });
@@ -127,7 +198,6 @@ describe("_npmShimTarget (plan/40 — parse the .cmd shim)", () => {
     const shim = join(tmp, "weird.cmd");
     writeFileSync(shim, "@echo off\r\necho nope\r\n");
     expect(_npmShimTarget(shim)).toBeNull();
-    // points at a non-existent target → null (don't hand spawn a bad path)
     const shim2 = join(tmp, "pi.cmd");
     writeFileSync(shim2, `"%_prog%" "%dp0%\\does-not-exist.js" %*\r\n`);
     expect(_npmShimTarget(shim2)).toBeNull();
@@ -145,7 +215,7 @@ describe("resolvePiSpawn (plan/40 — directly-spawnable target)", () => {
     try {
       const rel = join("node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js");
       const target = join(tmp, rel);
-      require("node:fs").mkdirSync(join(target, ".."), { recursive: true });
+      mkdirSync(join(target, ".."), { recursive: true });
       writeFileSync(target, "// cli\n");
       const shim = join(tmp, "pi.cmd");
       writeFileSync(shim, `"%_prog%" "%dp0%\\${rel}" %*\r\n`);
@@ -178,9 +248,11 @@ describe("busyTransition (stream markers)", () => {
 });
 
 describe("RpcChild — isBusy", () => {
-  let dir: string;
+  let dir: string | undefined;
   afterEach(() => {
+    if (!dir) return;
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    dir = undefined;
   });
 
   test("passive flag opens/closes on stream markers", () => {
@@ -193,12 +265,8 @@ describe("RpcChild — isBusy", () => {
     expect(child.isBusy).toBe(false);
   });
 
-  // POSIX-only harness: the stub is a `#!/usr/bin/env node` shebang script,
-  // which Windows can't spawn directly. refreshBusy itself is cross-platform;
-  // the get_state correlation logic is also covered by the unit pieces above.
   test.skipIf(process.platform === "win32")("refreshBusy syncs from get_state.isStreaming (authoritative)", async () => {
     dir = mkdtempSync(join(tmpdir(), "pi-busy-gs-"));
-    // Stub that answers get_state with isStreaming:true (ignores rpc args).
     const stub = join(dir, "stub.mjs");
     writeFileSync(
       stub,
@@ -211,8 +279,9 @@ describe("RpcChild — isBusy", () => {
     chmodSync(stub, 0o755);
 
     const child = new RpcChild({ piBin: stub, extensionPath: "/x", cwd: dir });
+    const spawned = new Promise<void>((resolve) => child.once("spawn", () => resolve()));
     child.spawn();
-    await new Promise((r) => setTimeout(r, 80)); // let it exec
+    await spawned;
     const busy = await child.refreshBusy(1500);
     expect(busy).toBe(true);
     expect(child.isBusy).toBe(true);
@@ -222,7 +291,6 @@ describe("RpcChild — isBusy", () => {
   test("refreshBusy returns the passive flag when the child isn't running", async () => {
     dir = mkdtempSync(join(tmpdir(), "pi-busy-off-"));
     const child = new RpcChild({ piBin: "/usr/bin/true", extensionPath: "/x", cwd: dir });
-    // never spawned → not running → returns passive _busy (false)
     expect(await child.refreshBusy(200)).toBe(false);
   });
 });

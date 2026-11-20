@@ -561,11 +561,11 @@ real name to the peer.
 | Command | Description |
 |---|---|
 | `/remote-pi create <cwd> [--name X] [--harness pi\|omp]` | Register a folder as a daemon |
-| `/remote-pi remove <id>` | Unregister a daemon (local config preserved) |
+| `/remote-pi remove <id>` | Unregister a daemon from `~/.pi/remote/daemons.json` |
 | `/remote-pi daemons` | List registered daemons + state |
-| `/remote-pi daemon start` | Start every registered daemon |
-| `/remote-pi daemon stop` | Stop every running daemon (`/remote-pi stop` stops only the local terminal) |
-| `/remote-pi daemon restart` | Stop + start all daemons |
+| `/remote-pi daemon start [<id>]` | Start all registered daemons, or one by id |
+| `/remote-pi daemon stop [<id>]` | Stop all running daemons, or one by id (`/remote-pi stop` stops only the local terminal) |
+| `/remote-pi daemon restart [<id>]` | Restart all daemons, or one by id |
 | `/remote-pi daemon status` | Detailed runtime status (pid, uptime, restart count) |
 | `/remote-pi daemon send <id> "<text>"` | Send a prompt to a specific daemon |
 | `/remote-pi cron add <id> "<expr>" "<prompt>"` | Schedule a recurring prompt (`--tz`, `--wake`, `--no-skip-busy`, `--catchup`) |
@@ -653,19 +653,17 @@ The `install` command:
 
 ### Per-folder workflow
 
-For each agent you want to keep alive 24/7:
+Once pairing has been completed on this machine, any folder can be promoted to
+a 24/7 daemon with no per-folder setup:
 
 ```bash
-# 1. Configure the agent interactively first (one time).
-cd ~/Movies
-pi                                 # /remote-pi → setup wizard, /remote-pi pair, etc
-
-# 2. Promote to a daemon. The id is derived from the cwd
-#    (sha256(realpath)[:8]), stable across machines.
+# Promote to a daemon. The id is derived from the cwd
+# (sha256(realpath)[:8]), stable across machines. If the supervisor is already
+# running, `create` starts the daemon immediately.
 remote-pi create ~/Movies --name "Video Editor"
-# → Daemon registered: id=4e39152d name="Video Editor" cwd=/Users/x/Movies
+# → Daemon registered: id=4e39152d name="Video Editor" harness=pi cwd=/Users/x/Movies
 
-# 3. Start it (supervisor spawns `pi --mode rpc` for this folder).
+# If the supervisor was offline during `create`, start it after `install`:
 remote-pi daemon start
 ```
 
@@ -685,15 +683,15 @@ stop`, `remove`, `uninstall`):
 - The supervisor is restarted by systemd/launchd whenever it exits, and starts
   at boot. On Linux run `loginctl enable-linger $USER` once so it starts
   without anyone logging in.
-- Daemons get the environment of a new terminal: at start the supervisor reads
-  it from your login shell (`$SHELL -ilc env`), so API keys and proxies
-  exported in your rc files apply.
+- On POSIX (Linux/macOS), daemons get the environment of a new terminal: at
+  start the supervisor reads it from your login shell (`$SHELL -ilc`), so API
+  keys and proxies exported in your rc files apply.
 
 One always-on agent for the whole machine:
 
 ```bash
 remote-pi install
-remote-pi create ~ --name always-on
+remote-pi create ~ --name always-on --harness omp
 ```
 
 Now you can:
@@ -714,7 +712,7 @@ via the local UDS mesh.
 ### Removing or uninstalling
 
 ```bash
-remote-pi remove <id>              # unregister one daemon (config preserved)
+remote-pi remove <id>              # unregister one daemon (folder files untouched)
 remote-pi uninstall                # remove the supervisor service (registry kept)
 ```
 
@@ -734,13 +732,13 @@ with a `[<cwd>]` prefix, so a single log stream shows every agent.
 
 ### Caveats (plan/26 trade-offs)
 
-- **Tool approval is not gated.** Daemons inherit the same Pi config
+- **Tool approval is not gated.** Daemons inherit the same Pi/omp config
   the interactive run uses — Bash, Edit, Write etc. all execute without
-  prompting. Configure Pi's tool permissions to taste before promoting
+  prompting. Configure tool permissions to taste before promoting
   a folder to daemon.
 - **Pairing still happens interactively.** Daemons don't show a QR
-  themselves; the keypair + paired devices come from the prior `pi`
-  session in the same folder.
+  themselves; the keypair + paired devices in `~/.pi/remote/` come from any
+  prior interactive `/remote-pi` session on the same machine.
 - **Single supervisor.** If `pi-supervisord` crashes all daemons go
   down with it. systemd/launchd restarts it within seconds; daemons
   come back automatically.
@@ -753,7 +751,8 @@ with a `[<cwd>]` prefix, so a single log stream shows every agent.
 
 | Path | Scope | What's in it |
 |---|---|---|
-| `<cwd>/.pi/remote-pi/config.json` | Per-directory | `agent_name`, `session_name`, `auto_start_relay` |
+| `<cwd>/.pi/remote-pi/config.json` | Per-directory (interactive) | `agent_name`, `auto_start_relay` |
+| `~/.pi/remote/daemons.json` | Per-machine | Registered daemons (`cwd`, `name`, `harness`) |
 | `~/.pi/remote/config.json` | Per-user | `relay` URL |
 | `~/.pi/remote/peers.json` | Per-machine | Paired mobile devices |
 | `~/.pi/remote/sessions/<name>/` | Per-session | Broker socket + `audit.jsonl` |

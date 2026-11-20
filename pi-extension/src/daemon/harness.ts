@@ -3,7 +3,8 @@
  * the same RPC wire protocol but take different command-line flags — see
  * `rpcSpawnArgs` — so a daemon records which one it runs.
  */
-export type Harness = "pi" | "omp";
+export const HARNESSES = ["pi", "omp"] as const;
+export type Harness = (typeof HARNESSES)[number];
 
 export function isHarness(v: unknown): v is Harness {
   return v === "pi" || v === "omp";
@@ -29,7 +30,8 @@ export function harnessFromArgv(argv1: string | undefined): Harness | undefined 
  * Which harness a new daemon runs: the explicit `--harness` flag, else
  * `REMOTE_PI_HARNESS` (the supervisor exports it to every daemon, so a daemon
  * creating another one keeps its own harness), else the harness running the
- * command, else `pi`. An unknown flag throws; an unknown env value is ignored.
+ * command, else `pi`. An unknown flag throws; an unknown env value warns and
+ * falls back.
  */
 export function resolveHarness(o: { flag?: string; env?: string; argv1?: string }): Harness {
   if (o.flag !== undefined) {
@@ -37,5 +39,10 @@ export function resolveHarness(o: { flag?: string; env?: string; argv1?: string 
     return o.flag;
   }
   if (isHarness(o.env)) return o.env;
+  if (o.env !== undefined && o.env.trim().length > 0) {
+    process.stderr.write(
+      `[remote-pi] ignoring unknown REMOTE_PI_HARNESS="${o.env}" (expected pi or omp)\n`,
+    );
+  }
   return harnessFromArgv(o.argv1) ?? "pi";
 }

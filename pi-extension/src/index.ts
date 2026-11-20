@@ -2077,13 +2077,17 @@ function _isCurrentRootLifecycle(generation: number): boolean {
 let _rootRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let _rootRetryAttempt = 0;
 
+interface RootRunOptions {
+  autoRetry?: boolean;
+}
+
 /** Fire-and-forget `_cmdRoot` with rejection capture + backoff retry. Use in
  *  place of bare `void _cmdRoot(...)` anywhere the caller cannot await. */
 function _launchRoot(
   ctx: Pick<ExtensionContext, "ui" | "cwd">,
   restartAuthority?: RootRestartAuthority,
 ): void {
-  _cmdRoot(ctx, restartAuthority).catch((err: unknown) => {
+  _cmdRoot(ctx, restartAuthority, { autoRetry: true }).catch((err: unknown) => {
     const generation =
       restartAuthority?.rootLifecycleGeneration ?? _rootLifecycleGeneration;
     try {
@@ -3052,15 +3056,30 @@ const _noopCtx = { ui: { notify: () => undefined }, abort: () => undefined };
 // fact without adding a foreign property to the API object and lets each `pi`
 // be GC'd when its session ends (no leak).
 const _APPLIED_REGISTRY_KEY = Symbol.for("remote-pi.extension.appliedRegistry");
+const _APPLIED_PATHS_KEY = Symbol.for("remote-pi.extension.appliedPaths");
 function _appliedRegistry(): WeakSet<object> {
   const g = globalThis as typeof globalThis & { [_APPLIED_REGISTRY_KEY]?: WeakSet<object> };
   return (g[_APPLIED_REGISTRY_KEY] ??= new WeakSet<object>());
 }
+function _appliedPaths(): WeakMap<object, string> {
+  const g = globalThis as typeof globalThis & { [_APPLIED_PATHS_KEY]?: WeakMap<object, string> };
+  return (g[_APPLIED_PATHS_KEY] ??= new WeakMap<object, string>());
+}
 
 const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
   const applied = _appliedRegistry();
-  if (applied.has(pi)) return;  // this session's pi was already wired
+  const appliedPaths = _appliedPaths();
+  if (applied.has(pi)) {
+    const prevPath = appliedPaths.get(pi);
+    if (prevPath && prevPath !== import.meta.url) {
+      console.warn(
+        `[remote-pi] duplicate extension load ignored (${import.meta.url}); already loaded from ${prevPath}`,
+      );
+    }
+    return; // this session's pi was already wired
+  }
   applied.add(pi);
+  appliedPaths.set(pi, import.meta.url);
 
   // While a main session is live, a new `pi` is an in-process subagent (omp
   // `task`): it must not take over the module-level `pi` (phone prompts would
@@ -3709,6 +3728,10 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
           ? ({ ui: _headlessUi(), cwd: process.cwd() } as Pick<ExtensionContext, "ui" | "cwd">)
           : ctx;
         _launchRoot(initCtx);
+      } else if (isDaemon && !isPrintMode && cwd && !localConfigExists(cwd)) {
+        process.stderr.write(
+          "[remote-pi] daemon started without local config or REMOTE_PI_DIRECT_CONFIG; relay not started\n",
+        );
       }
     }
   });
@@ -4092,6 +4115,7 @@ async function _cmdPeers(ctx: Pick<ExtensionContext, "ui">): Promise<void> {
 async function _cmdRoot(
   ctx: Pick<ExtensionContext, "ui" | "cwd">,
   restartAuthority?: RootRestartAuthority,
+  opts?: RootRunOptions,
 ): Promise<void> {
   const rootLifecycleGeneration = restartAuthority?.rootLifecycleGeneration
     ?? _rootLifecycleGeneration;
@@ -4115,7 +4139,7 @@ async function _cmdRoot(
 
   if (!_isCurrentRootLifecycle(rootLifecycleGeneration)) return;
 
-  const run = _cmdRootInner(ctx, rootLifecycleGeneration);
+  const run = _cmdRootInner(ctx, rootLifecycleGeneration, restartAuthority, opts);
   _cmdRootInFlight = run;
   try {
     await run;
@@ -4127,6 +4151,8 @@ async function _cmdRoot(
 async function _cmdRootInner(
   ctx: Pick<ExtensionContext, "ui" | "cwd">,
   rootLifecycleGeneration: number,
+  restartAuthority?: RootRestartAuthority,
+  opts?: RootRunOptions,
 ): Promise<void> {
   // A root retains its startup epoch through every pre-candidate await. This is
   // stronger than `_disposed`, which a same-module session_start intentionally
@@ -4159,12 +4185,16 @@ async function _cmdRootInner(
     }
     if (_cwdLock === null) {
       if (!_isCurrentRootLifecycle(rootLifecycleGeneration)) return;
+      const isDaemon = process.env["REMOTE_PI_DAEMON"] === "1";
       ctx.ui.notify(
-        process.env["REMOTE_PI_DAEMON"] === "1"
+        isDaemon
           ? `[remote-pi] Daemon not started: another live agent already owns "${requestedName}" in this folder. Stop the old Pi process, then restart the daemon.`
           : `[remote-pi] Could not start: too many agents named "${requestedName}" already running in this folder.`,
         "warning",
       );
+      if (isDaemon && opts?.autoRetry) {
+        _scheduleRootRetry(rootLifecycleGeneration, ctx, restartAuthority);
+      }
       return;
     }
   }
@@ -4211,7 +4241,13 @@ async function _cmdRootInner(
   // `_cmdJoin` returns void on a canceled/failed join, so recheck both the
   // root lifecycle and publication before bringing the Relay up.
   if (!_isCurrentRootLifecycle(rootLifecycleGeneration) || !_meshNode) return;
-  if (effectiveAutoStartRelay(config) && _state === "idle") await _cmdStart(ctx);
+  if (effectiveAutoStartRelay(config) && _state === "idle") {
+    await _cmdStart(ctx, {
+      autoRetry: opts?.autoRetry,
+      rootLifecycleGeneration,
+      restartAuthority,
+    });
+  }
   if (!_isCurrentRootLifecycle(rootLifecycleGeneration) || !_meshNode) return;
   _cmdStatus(ctx);
 }
@@ -4285,7 +4321,13 @@ export function _detectGoalStatus(ctx?: unknown): "active" | "paused" | "idle" |
   return undefined;
 }
 
-async function _cmdStart(ctx: Pick<ExtensionContext, "ui" | "cwd">): Promise<void> {
+async function _cmdStart(
+  ctx: Pick<ExtensionContext, "ui" | "cwd">,
+  startOpts?: RootRunOptions & {
+    rootLifecycleGeneration?: number;
+    restartAuthority?: RootRestartAuthority;
+  },
+): Promise<void> {
   if (_state !== "idle") {
     ctx.ui.notify("[remote-pi] Already started.", "warning");
     return;
@@ -4424,6 +4466,13 @@ async function _cmdStart(ctx: Pick<ExtensionContext, "ui" | "cwd">): Promise<voi
       return;
     }
     ctx.ui.notify(`[remote-pi] relay connect failed: ${String(err)}`, "error");
+    if (startOpts?.autoRetry) {
+      _scheduleRootRetry(
+        startOpts.rootLifecycleGeneration ?? _rootLifecycleGeneration,
+        ctx,
+        startOpts.restartAuthority,
+      );
+    }
     return;
   }
 
@@ -4440,6 +4489,7 @@ async function _cmdStart(ctx: Pick<ExtensionContext, "ui" | "cwd">): Promise<voi
   _peerShort = myShort;
   _myRoomId = roomId;
   _state = "started";
+  _rootRetryAttempt = 0;
   _startModelPollTimer();
   // Set _sessionStartedAt ONLY on first /remote-pi start since process boot.
   // Subsequent start cycles (after stop) preserve the original epoch so the
@@ -4991,6 +5041,81 @@ async function _cmdWeb(arg: string, ctx: Pick<ExtensionContext, "ui">): Promise<
 
 // ── Daemon registry commands (plan/26 Wave 1) ─────────────────────────────────
 
+export interface ParsedCreateArgs {
+  cwdRaw?: string;
+  name?: string;
+  harnessFlag?: string;
+  error?: string;
+}
+
+function _unquoteToken(tok: string): string {
+  return tok.startsWith('"') && tok.endsWith('"') && tok.length >= 2
+    ? tok.slice(1, -1)
+    : tok;
+}
+
+/**
+ * Pure parser for `/remote-pi create <cwd> [--name <name>] [--harness pi|omp]`.
+ * Supports quoted args, `--flag=value`, and arbitrary flag ordering, while
+ * rejecting unknown `--*` flags and missing flag values.
+ */
+export function parseCreateArgs(arg: string): ParsedCreateArgs {
+  const quoteCount = (arg.match(/"/g) ?? []).length;
+  if (quoteCount % 2 !== 0) {
+    return { error: "unterminated quote in arguments" };
+  }
+  const tokens: string[] = [];
+  const re = /(?:[^\s"]+|"[^"]*")+/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(arg)) !== null) {
+    tokens.push(m[0]);
+  }
+
+  let cwdRaw: string | undefined;
+  let name: string | undefined;
+  let harnessFlag: string | undefined;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const raw = tokens[i]!;
+    if (raw === "--name") {
+      if (i + 1 >= tokens.length) return { error: "--name requires a value" };
+      name = _unquoteToken(tokens[++i]!);
+      continue;
+    }
+    if (raw.startsWith("--name=")) {
+      const val = _unquoteToken(raw.slice("--name=".length));
+      if (!val) return { error: "--name requires a value" };
+      name = val;
+      continue;
+    }
+    if (raw === "--harness") {
+      if (i + 1 >= tokens.length) return { error: "--harness requires a value (pi or omp)" };
+      harnessFlag = _unquoteToken(tokens[++i]!);
+      continue;
+    }
+    if (raw.startsWith("--harness=")) {
+      const val = _unquoteToken(raw.slice("--harness=".length));
+      if (!val) return { error: "--harness requires a value (pi or omp)" };
+      harnessFlag = val;
+      continue;
+    }
+    if (raw.startsWith("--")) {
+      return { error: `unknown option "${raw}"` };
+    }
+    const pos = _unquoteToken(raw);
+    if (cwdRaw !== undefined) {
+      return { error: `unexpected argument "${pos}"` };
+    }
+    cwdRaw = pos;
+  }
+
+  return {
+    ...(cwdRaw !== undefined ? { cwdRaw } : {}),
+    ...(name !== undefined ? { name } : {}),
+    ...(harnessFlag !== undefined ? { harnessFlag } : {}),
+  };
+}
+
 /**
  * `/remote-pi create [<cwd>] [--name <name>] [--harness pi|omp]`
  *
@@ -5005,17 +5130,19 @@ async function _cmdWeb(arg: string, ctx: Pick<ExtensionContext, "ui">): Promise<
  * running inside, else pi.
  */
 async function _cmdCreate(arg: string, ctx: Pick<ExtensionContext, "ui">): Promise<void> {
-  // Parse `[cwd] [--name "value with spaces" | --name word] [--harness word]`
-  // in any order. The first non-flag token is the cwd; the rest of the line
-  // after `--name` (quoted or unquoted) is the display name.
-  const nameMatch = arg.match(/--name\s+"([^"]+)"|--name\s+(\S+)/);
-  const name = nameMatch ? (nameMatch[1] ?? nameMatch[2]) : undefined;
-  const harnessFlag = arg.match(/--harness\s+(\S+)/)?.[1];
-  const cwdRaw = arg
-    .replace(/--name\s+"[^"]+"|--name\s+\S+/, "")
-    .replace(/--harness\s+\S+/, "")
-    .trim();
-  if (!cwdRaw) {
+  if (!arg.trim()) {
+    ctx.ui.notify(
+      "[remote-pi] Usage: /remote-pi create <absolute-or-relative-cwd> [--name \"Display name\"] [--harness pi|omp]",
+      "warning",
+    );
+    return;
+  }
+  const parsed = parseCreateArgs(arg);
+  if (parsed.error) {
+    ctx.ui.notify(`[remote-pi] create failed: ${parsed.error}`, "error");
+    return;
+  }
+  if (!parsed.cwdRaw) {
     ctx.ui.notify(
       "[remote-pi] Usage: /remote-pi create <absolute-or-relative-cwd> [--name \"Display name\"] [--harness pi|omp]",
       "warning",
@@ -5026,20 +5153,20 @@ async function _cmdCreate(arg: string, ctx: Pick<ExtensionContext, "ui">): Promi
   let result: DaemonRecord;
   try {
     const harness = resolveHarness({
-      flag: harnessFlag,
+      flag: parsed.harnessFlag,
       env: process.env["REMOTE_PI_HARNESS"],
       argv1: process.argv[1],
     });
-    result = addDaemon(cwdRaw, name, harness);
+    result = addDaemon(parsed.cwdRaw, parsed.name, harness);
   } catch (err) {
     ctx.ui.notify(`[remote-pi] create failed: ${String(err)}`, "error");
     return;
   }
 
-  // No local `.pi/remote-pi/config.json` is written anymore — the name lives
-  // in the registry and the supervisor injects the full config (agent_name,
-  // auto_start_relay true) via REMOTE_PI_DIRECT_CONFIG when it spawns the
-  // daemon. The cwd needs no init folder.
+  // No local `.pi/remote-pi/config.json` is written anymore — the name and
+  // harness live in the registry and the supervisor injects the full config
+  // (agent_name, auto_start_relay true) via REMOTE_PI_DIRECT_CONFIG when it
+  // spawns the daemon. The cwd needs no init folder.
 
   ctx.ui.notify(
     `[remote-pi] Daemon registered: id=${result.id} name="${result.name}" harness=${result.harness} cwd=${result.cwd}`,
@@ -5050,8 +5177,7 @@ async function _cmdCreate(arg: string, ctx: Pick<ExtensionContext, "ui">): Promi
   // supervisor restart (the reported bug — `create` didn't run anything). Ask
   // the supervisor to spawn THIS daemon now; it reads the name from the
   // registry and injects the config via env. When the supervisor is offline we
-  // keep the
-  // registration and tell the user it'll boot on the next supervisor start.
+  // keep the registration and tell the user it'll boot on the next supervisor start.
   try {
     await callSupervisor({ op: "start", id: result.id });
     ctx.ui.notify(`[remote-pi] Daemon started: id=${result.id}`, "info");
@@ -5072,9 +5198,8 @@ async function _cmdCreate(arg: string, ctx: Pick<ExtensionContext, "ui">): Promi
  * `/remote-pi remove <id>`
  *
  * Unregisters a daemon by its 8-hex-char id (the same id printed by
- * `/remote-pi create` and `/remote-pi daemons`). The cwd's local config
- * stays on disk — re-creating later with the same cwd is a no-op
- * because the existing config wins.
+ * `/remote-pi create` and `/remote-pi daemons`). Stops any supervised process
+ * first and leaves all files inside `cwd` untouched.
  */
 async function _cmdRemove(arg: string, ctx: Pick<ExtensionContext, "ui">): Promise<void> {
   const id = arg.trim();
@@ -5099,8 +5224,7 @@ async function _cmdRemove(arg: string, ctx: Pick<ExtensionContext, "ui">): Promi
       return;
     }
     ctx.ui.notify(
-      `[remote-pi] Daemon removed + process stopped: id=${id} cwd=${data.cwd}. ` +
-      `Local config at ${data.cwd}/.pi/remote-pi/config.json was kept.`,
+      `[remote-pi] Daemon removed + process stopped: id=${id} cwd=${data.cwd}. Folder files untouched.`,
       "info",
     );
     return;
@@ -5128,7 +5252,7 @@ async function _cmdRemove(arg: string, ctx: Pick<ExtensionContext, "ui">): Promi
 
   ctx.ui.notify(
     `[remote-pi] Daemon removed from registry: id=${id} cwd=${result.cwd}. ` +
-    `Supervisor was offline, so any running process was NOT stopped. Local config kept.`,
+    `Supervisor was offline, so any running process was NOT stopped. Folder files untouched.`,
     "warning",
   );
 }
@@ -5149,16 +5273,16 @@ function _formatDaemonTable(daemons: DaemonInfo[]): string {
     const uptime = d.uptime_s !== undefined ? `${d.uptime_s}s` : "—";
     const pid = d.pid !== undefined ? String(d.pid) : "—";
     const restarts = d.restart_count ?? 0;
-    return `  ${d.id}  ${d.state.padEnd(8)}  pid=${pid}  up=${uptime}  restarts=${restarts}  ${d.name}  ${d.cwd}`;
+    const harness = d.harness ? `  ${d.harness.padEnd(3)}` : "";
+    return `  ${d.id}  ${d.state.padEnd(8)}  pid=${pid}  up=${uptime}  restarts=${restarts}${harness}  ${d.name}  ${d.cwd}`;
   });
   return rows.join("\n");
 }
 
 /**
  * `/remote-pi daemons` — registry + runtime state in one view. When the
- * supervisor is offline we still show registry-only output (state =
- * "stopped" everywhere), so the user can see what's configured even
- * before `install`.
+ * supervisor is offline we still show the registry entries (marked
+ * `(supervisor offline)`) so the user can see what's configured before `install`.
  */
 async function _cmdDaemonsList(ctx: Pick<ExtensionContext, "ui">): Promise<void> {
   if (!(await supervisorOnline())) {
@@ -5167,11 +5291,9 @@ async function _cmdDaemonsList(ctx: Pick<ExtensionContext, "ui">): Promise<void>
       ctx.ui.notify("[remote-pi] No daemons registered. Run /remote-pi create <cwd>.", "info");
       return;
     }
-    const rows = registry.map((d) => {
-      const cfg = loadLocalConfig(d.cwd);
-      const name = cfg.agent_name ?? defaultAgentName(d.cwd);
-      return `  ${d.id}  ${name}  ${d.cwd}  (supervisor offline)`;
-    }).join("\n");
+    const rows = registry
+      .map((d) => `  ${d.id}  ${d.name}  [${d.harness}]  ${d.cwd}  (supervisor offline)`)
+      .join("\n");
     ctx.ui.notify(`[remote-pi] Daemons (registry only — run install to bring supervisor up):\n${rows}`, "info");
     return;
   }
@@ -5574,6 +5696,16 @@ function _deployAgentNetworkSkill(): void {
     }
   } catch { /* best-effort */ }
 }
+function _isRpcModeArgv(): boolean {
+  const argv = process.argv;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--mode=rpc") return true;
+    if (a === "--mode" && argv[i + 1] === "rpc") return true;
+  }
+  return false;
+}
+
 /**
  * Attempt to execute a message directly via the terminal's interactive
  * input pipeline (TUI). When an interactive terminal is active, incoming
@@ -5583,6 +5715,12 @@ function _deployAgentNetworkSkill(): void {
  * interactive command dispatcher.
  */
 export function _tryExecuteTerminalInput(text: string): boolean {
+  // Supervised daemons and `--mode rpc` processes have no interactive TUI:
+  // `pi --mode rpc` attaches a `process.stdin` JSONL listener and stub
+  // `setEditorText`/`getEditorText` UI methods, which must never intercept
+  // mobile prompts or daemon `/exit` / `/restart`.
+  if (process.env["REMOTE_PI_DAEMON"] === "1" || _isRpcModeArgv()) return false;
+
   const trimmed = text.trim();
   if (!trimmed) return false;
 
@@ -7187,6 +7325,23 @@ export async function probeListPeers(
   });
 }
 
+function _cliUiCtx(): Pick<ExtensionContext, "ui"> {
+  return {
+    ui: {
+      notify: (msg: string, type?: "info" | "warning" | "error") => {
+        if (type === "error") {
+          console.error(msg);
+          process.exitCode = 1;
+        } else if (type === "warning") {
+          console.error(msg);
+        } else {
+          console.log(msg);
+        }
+      },
+    } as unknown as ExtensionContext["ui"],
+  };
+}
+
 if (_isDirectRun()) {
   const [, , subcmd, ...cliArgs] = process.argv;
   if (subcmd === "devices" || subcmd === "list") {
@@ -7230,32 +7385,24 @@ if (_isDirectRun()) {
       console.log(`Relay set to ${raw}`);
     }
   } else if (subcmd === "create") {
-    // Standalone: `remote-pi create <cwd> [--name "X"]`. The shell already
-    // split the args and stripped the outer quotes, so an arg like
-    // `Tmp Agent` arrives as a single element with embedded space. Re-add
-    // quotes around any arg containing whitespace so the regex-based
-    // parser (shared with the slash-command path) sees the same shape
-    // as it would from a Pi interactive prompt.
+    // Standalone: `remote-pi create <cwd> [--name "X"] [--harness pi|omp]`.
+    // Re-add quotes around any arg containing whitespace so `parseCreateArgs`
+    // sees the same shape as it would from a Pi interactive prompt.
     const joined = cliArgs.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ");
-    await _cmdCreate(joined, {
-      ui: { notify: (msg: string) => console.log(msg) } as unknown as ExtensionContext["ui"],
-    });
+    await _cmdCreate(joined, _cliUiCtx());
   } else if (subcmd === "remove") {
     const id = (cliArgs[0] ?? "").trim();
-    await _cmdRemove(id, {
-      ui: { notify: (msg: string) => console.log(msg) } as unknown as ExtensionContext["ui"],
-    });
+    await _cmdRemove(id, _cliUiCtx());
   } else if (subcmd === "daemons") {
     // Mirror the slash handler: ask the supervisor when reachable,
     // fall back to registry-only when not.
-    const stubCtx = { ui: { notify: (msg: string) => console.log(msg) } as unknown as ExtensionContext["ui"] };
-    await _cmdDaemonsList(stubCtx);
+    await _cmdDaemonsList(_cliUiCtx());
   } else if (subcmd === "daemon") {
     // `remote-pi daemon <op> [args]`. Reuse the fleet-ops handlers — they
     // already accept a minimal ctx with `notify`.
     const op = cliArgs[0] ?? "";
     const rest = cliArgs.slice(1).map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ");
-    const stubCtx = { ui: { notify: (msg: string) => console.log(msg) } as unknown as ExtensionContext["ui"] };
+    const stubCtx = _cliUiCtx();
     if      (op === "start")   { await _cmdDaemonStart(stubCtx, cliArgs[1]); }
     else if (op === "stop")    { await _cmdDaemonStop(stubCtx, cliArgs[1]); }
     else if (op === "restart") { await _cmdDaemonRestart(stubCtx, cliArgs[1]); }
@@ -7268,8 +7415,7 @@ if (_isDirectRun()) {
     // `remote-pi cron <op> [args]`. Re-quote args with spaces so the shared
     // parser sees the same shape as a Pi slash prompt.
     const joined = cliArgs.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ");
-    const stubCtx = { ui: { notify: (msg: string) => console.log(msg) } as unknown as ExtensionContext["ui"] };
-    await _cmdCron(joined, stubCtx);
+    await _cmdCron(joined, _cliUiCtx());
   } else if (subcmd === "peers") {
     // Read-only roster of the local + cross-PC mesh. Unlike `devices` (which
     // reads paired phones from peers.json), the mesh roster lives only in the
@@ -7283,8 +7429,7 @@ if (_isDirectRun()) {
       console.log(`[remote-pi] peers:\n${formatPeerInventory(peers)}`);
     }
   } else if (subcmd === "web") {
-    const stubCtx = { ui: { notify: (msg: string) => console.log(msg) } as unknown as ExtensionContext["ui"] };
-    await _cmdWeb(cliArgs.join(" "), stubCtx);
+    await _cmdWeb(cliArgs.join(" "), _cliUiCtx());
   } else if (subcmd === "claude") {
     await _cmdClaudeCli(cliArgs);
   } else if (subcmd === "install") {
@@ -7292,12 +7437,12 @@ if (_isDirectRun()) {
     // `remote-pi` / `pi-supervisord` bins are already on $PATH via npm's
     // global prefix. Explicit `linkCli: false` so we never stomp those
     // with symlinks pointing at a parallel Pi-extension install.
-    const stubCtx = { ui: { notify: (msg: string) => console.log(msg) } as unknown as ExtensionContext["ui"] };
+    const stubCtx = _cliUiCtx();
     // Propagate failure as a non-zero exit so callers (Cockpit / CI) detect it
     // — installService throws on a failed schtasks/launchctl/systemctl step.
     if (!_cmdInstall(stubCtx, { linkCli: false })) process.exit(1);
   } else if (subcmd === "uninstall") {
-    const stubCtx = { ui: { notify: (msg: string) => console.log(msg) } as unknown as ExtensionContext["ui"] };
+    const stubCtx = _cliUiCtx();
     // `linkCli: true` even from the CLI: unlinking is ALWAYS safe and must run
     // regardless of how install ran. `unlinkCliBinaries` only removes OUR
     // reserved symlinks (`remote-pi` / `pi-supervisord`) under `~/.local/bin`;
@@ -7313,9 +7458,9 @@ if (_isDirectRun()) {
       "Usage: remote-pi <command>",
       "",
       "Daemon registry:",
-      "  create <cwd> [--name \"Name\"]   Register a folder as a daemon",
-      "  remove <id>                     Unregister a daemon",
-      "  daemons                         List registered daemons",
+      "  create <cwd> [--name \"Name\"] [--harness pi|omp]  Register a folder as a daemon",
+      "  remove <id>                                      Unregister a daemon",
+      "  daemons                                          List registered daemons",
       "",
       "Fleet control:",
       "  daemon start [<id>]             Start all daemons, or one by id",

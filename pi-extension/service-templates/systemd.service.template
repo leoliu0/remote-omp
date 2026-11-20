@@ -1,20 +1,24 @@
 [Unit]
 Description=Remote Pi daemon supervisor (plan/26)
 Documentation=https://remote-pi.jacobmoura.work
-After=default.target
+After=basic.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart={NODE} {SUPERVISOR}
+ExecStart="{NODE}" "{SUPERVISOR}"
 # always, not on-failure: a supervisor that exits cleanly (a stray SIGTERM, or
 # another supervisor holding the control socket) must come back too — it is
 # what keeps the machine reachable (plan/67). `systemctl --user stop` still stops it.
 Restart=always
 RestartSec=5s
+KillMode=mixed
+TimeoutStopSec=15s
+OOMPolicy=continue
 StandardOutput=journal
 StandardError=journal
-# Inherit the user's shell PATH so `pi --mode rpc` resolves to the same
-# binary it would in an interactive shell (npm-global / Homebrew / etc.).
+# Baseline PATH/HOME before supervisord overlays the login-shell environment
+# at start (so `pi`/`omp` and user API keys/proxies resolve as in a terminal).
 Environment="PATH={PATH}"
 Environment="HOME={HOME}"
 

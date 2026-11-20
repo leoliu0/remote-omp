@@ -27,6 +27,8 @@ import {
 let testHome: string;
 let supervisor: Supervisor | null = null;
 
+const makeCwd = (prefix = "cwd-"): string => mkdtempSync(join(testHome, prefix));
+
 async function ask<R = ControlReply<unknown>>(req: ControlRequest): Promise<R> {
   return new Promise((resolve, reject) => {
     const sock = createConnection({ path: getSupervisorSockPath() });
@@ -80,18 +82,24 @@ describe("Supervisor — control UDS surface", () => {
     expect(r).toMatchObject({ ok: true, data: { daemons: [] } });
   });
 
-  test("register adds an entry and returns the derived id", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-sv-cwd-"));
-    const r = await ask({ op: "register", cwd: tmp }) as ControlReply<{ id: string; cwd: string }>;
+  test("register adds an entry with optional name and harness and rejects unknown harness", async () => {
+    const tmp = makeCwd("sv-cwd-");
+    const r = await ask({ op: "register", cwd: tmp, name: "door", harness: "omp" }) as ControlReply<{ id: string; cwd: string; name: string; harness: string }>;
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.data!.id).toMatch(/^[0-9a-f]{8}$/);
-      expect(r.data!.cwd.length).toBeGreaterThan(0);
+      expect(r.data!.name).toBe("door");
+      expect(r.data!.harness).toBe("omp");
     }
+    const list = await ask({ op: "list" }) as ControlReply<{ daemons: Array<{ id: string; harness?: string }> }>;
+    expect(list.ok && list.data!.daemons[0]?.harness).toBe("omp");
+
+    const bad = await ask({ op: "register", cwd: makeCwd("sv-bad-"), harness: "claude" as never });
+    expect(bad.ok).toBe(false);
   });
 
   test("register twice rejects with `already registered`", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-sv-dup-"));
+    const tmp = makeCwd("sv-dup-");
     await ask({ op: "register", cwd: tmp });
     const r = await ask({ op: "register", cwd: tmp });
     expect(r).toMatchObject({ ok: false });
@@ -99,7 +107,7 @@ describe("Supervisor — control UDS surface", () => {
   });
 
   test("start spawns a single registered daemon by id", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-sv-start-"));
+    const tmp = makeCwd("sv-start-");
     const reg = await ask({ op: "register", cwd: tmp }) as ControlReply<{ id: string }>;
     expect(reg.ok).toBe(true);
     const id = reg.ok ? reg.data!.id : "";
@@ -130,7 +138,7 @@ describe("Supervisor — control UDS surface", () => {
   });
 
   test("stop of a registered-but-not-running daemon → ok:true, stopped:false", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-sv-stop-"));
+    const tmp = makeCwd("sv-stop-");
     const reg = await ask({ op: "register", cwd: tmp }) as ControlReply<{ id: string }>;
     const id = reg.ok ? reg.data!.id : "";
     const r = await ask({ op: "stop", id }) as ControlReply<{ id: string; stopped: boolean }>;
@@ -142,7 +150,7 @@ describe("Supervisor — control UDS surface", () => {
   });
 
   test("restart spawns a single registered daemon by id", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-sv-restart-"));
+    const tmp = makeCwd("sv-restart-");
     const reg = await ask({ op: "register", cwd: tmp }) as ControlReply<{ id: string }>;
     const id = reg.ok ? reg.data!.id : "";
     const r = await ask({ op: "restart", id }) as ControlReply<{ id: string; restarted: boolean }>;
@@ -204,7 +212,7 @@ describe("Supervisor — control UDS surface", () => {
   });
 
   test("list reflects a daemon added directly via registry (not just register op)", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-sv-direct-"));
+    const tmp = makeCwd("sv-direct-");
     addDaemon(tmp);
     const r = await ask({ op: "list" }) as ControlReply<{ daemons: Array<{ cwd: string; state: string }> }>;
     expect(r.ok).toBe(true);
@@ -218,7 +226,7 @@ describe("Supervisor — control UDS surface", () => {
   });
 });
 
-describe("decideFireAction (cron — 4 ramos)", () => {
+describe("decideFireAction (cron — 4 branches)", () => {
   test("running + idle → send", () => {
     expect(decideFireAction({ running: true, busy: false, wake: false, skipIfBusy: true })).toBe("send");
   });
@@ -238,7 +246,7 @@ describe("decideFireAction (cron — 4 ramos)", () => {
 
 describe("Supervisor — cron ops", () => {
   async function registerDaemon(): Promise<string> {
-    const tmp = mkdtempSync(join(tmpdir(), "pi-cron-d-"));
+    const tmp = makeCwd("cron-d-");
     const r = await ask({ op: "register", cwd: tmp }) as ControlReply<{ id: string }>;
     return r.ok ? r.data!.id : "";
   }

@@ -54,13 +54,19 @@ describe("findSupervisorScript", () => {
 });
 
 describe("findTemplate", () => {
-  test("systemd template file exists on disk", () => {
+  test("systemd template file exists on disk with always-on hardening", () => {
     const p = findTemplate("systemd");
     expect(p.endsWith("systemd.service.template")).toBe(true);
-    // The file should be readable from this project's checkout (tests
-    // run from pi-extension/, and templates live next to dist/).
     const content = readFileSync(p, "utf8");
     expect(content).toContain("[Service]");
+    expect(content).toContain('ExecStart="{NODE}" "{SUPERVISOR}"');
+    expect(content).toContain("Restart=always");
+    expect(content).toContain("StartLimitIntervalSec=0");
+    expect(content).toContain("KillMode=mixed");
+    expect(content).toContain("TimeoutStopSec=15s");
+    expect(content).toContain("OOMPolicy=continue");
+    expect(content).toContain("After=basic.target");
+    expect(content).not.toContain("After=default.target");
     expect(content).toContain("{NODE}");
     expect(content).toContain("{SUPERVISOR}");
   });

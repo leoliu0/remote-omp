@@ -72,10 +72,12 @@ tail -100 ~/.pi/remote/supervisord.log
 
 ### Common failures
 
-- **`pi: command not found`** in the log — Pi's binary isn't on the
-  PATH that the unit inherited. `remote-pi install` captures
-  `process.env.PATH` at install time; if you installed Pi *after*
-  running install, re-run `remote-pi install` to refresh.
+- **`pi: command not found` / `omp: command not found`** in the log — the
+  harness binary isn't on the PATH the supervisor resolved. On POSIX the
+  supervisor overlays your login-shell environment at start, and the unit
+  captures `process.env.PATH` at `remote-pi install` time; if you installed Pi
+  or omp *after* installing the service, run `remote-pi restart-supervisor` (or
+  `remote-pi install`).
 - **`Cannot find module …`** — the path baked into the unit doesn't
   match where `dist/bin/supervisord.js` actually lives. Happens if you
   uninstalled then reinstalled the package to a different location.
@@ -94,8 +96,9 @@ pi-supervisord
 # or: node /path/to/remote-pi/dist/bin/supervisord.js
 ```
 
-Ctrl-C to stop. If that works but the service doesn't, the problem is
-in the unit/plist environment (PATH, HOME) — re-run `remote-pi install`.
+Ctrl-C to stop. If that works but the service doesn't, check what
+`systemctl --user show-environment` / `$SHELL -ilc` exports and re-run
+`remote-pi install`.
 
 ---
 
@@ -125,21 +128,27 @@ Reproduce the failure with full visibility:
 
 ```bash
 cd /Users/x/Movies
-REMOTE_PI_DAEMON=1 pi --mode rpc -e $(npm root -g)/remote-pi/dist/index.js
+# Pi daemon:
+REMOTE_PI_DAEMON=1 REMOTE_PI_DIRECT_CONFIG='{"agent_name":"Movies","auto_start_relay":true}' \
+  pi --mode rpc --approve -e $(npm root -g)/remote-pi/dist/index.js
+# omp daemon:
+REMOTE_PI_DAEMON=1 REMOTE_PI_DIRECT_CONFIG='{"agent_name":"Movies","auto_start_relay":true}' \
+  omp --mode rpc --allow-home -e $(npm root -g)/remote-pi/dist/index.js
 ```
 
 Common reasons a daemon won't start:
 
-- **Local config missing.** `cd` into the daemon's folder and check
-  `.pi/remote-pi/config.json` exists with `auto_start_relay: true`.
-  Recreate via `remote-pi create <cwd>` (it provisions a default config
-  when missing).
-- **Pi extension config drift.** Pi's own settings (model, API keys)
-  reset → daemon fails to authenticate to the provider. Run
-  `cd <cwd> && pi` interactively to fix.
-- **Port/UDS collision.** Another Pi process is already running in
-  that cwd. The cwd-lock should reject the second one, but stale UDS
-  sockets sometimes linger; check `lsof ~/.pi/remote/locks/<roomId>.sock`.
+- **Registry entry missing or corrupt.** Run `remote-pi daemons` or inspect
+  `~/.pi/remote/daemons.json` (`name`, `harness`, `cwd`). The supervisor
+  injects `REMOTE_PI_DIRECT_CONFIG` from the registry; no per-cwd config file
+  is needed.
+- **Pi/omp auth or config drift.** Harness settings (model, API keys)
+  failed → daemon fails to authenticate to the provider. Run
+  `cd <cwd> && pi` (or `omp`) interactively to fix, or check your shell rc
+  exports if keys come from env vars.
+- **Port/UDS collision.** Another Pi/omp process is already running with the
+  same `(cwd, name)`. Stop the other process, then restart the daemon; check
+  `ls ~/.pi/remote/locks/` or `lsof ~/.pi/remote/locks/<roomId>.sock`.
 
 ### Step 3 — force a re-spawn
 
@@ -154,8 +163,8 @@ remote-pi daemon restart      # bounces every daemon
 ## 4. `daemon send` says "daemon not running"
 
 The supervisor has the registry entry but no live child for that id.
-Most common cause: the daemon never started OR it crashed past the
-retry budget.
+Most common cause: the daemon is stopped or currently waiting between
+crash-backoff retries.
 
 ```bash
 remote-pi daemon status       # is state running?
@@ -167,7 +176,7 @@ If `daemon start` shows `started=0, already_running=N`, the supervisor
 isn't actually spawning. Possible reasons:
 - Registry empty: `remote-pi daemons` to verify.
 - Child crashes faster than the status check: `daemon status` immediately
-  after start may still show `running` for a few seconds before the
+  after start may still show `starting`/`running` for a moment before the
   exit event marks it crashed. Re-check 2-3 seconds later.
 
 ---
@@ -176,10 +185,11 @@ isn't actually spawning. Possible reasons:
 
 The daemon is up but the app doesn't see it.
 
-### Confirm the daemon is paired
+### Confirm the machine is paired
 
 `pair_request` must have happened **before** the folder became a daemon
-(daemons don't show QRs themselves):
+(daemons don't show QRs themselves; pairings in `~/.pi/remote/peers.json`
+are machine-wide):
 
 ```bash
 cd <daemon-cwd>
@@ -191,13 +201,12 @@ remote-pi daemon restart
 
 ### Confirm the relay URL matches
 
-The daemon uses the cwd's local config (`<cwd>/.pi/remote-pi/config.json`
-agent_name + `~/.pi/remote/config.json` relay). Verify with:
+The daemon uses `agent_name` from `~/.pi/remote/daemons.json` (injected via
+`REMOTE_PI_DIRECT_CONFIG`) and the relay URL from `~/.pi/remote/config.json`
+(or `REMOTE_PI_RELAY`). Verify with:
 
 ```bash
-cd <daemon-cwd>
-pi
-> /remote-pi status
+remote-pi config
 ```
 
 The relay line should match what the mobile app is connecting to. If
@@ -212,8 +221,8 @@ remote-pi daemon restart
 
 ## 6. Registry corrupted / partial
 
-Symptom: `remote-pi daemons` errors out or shows nothing despite
-having created entries.
+Symptom: `remote-pi daemons` shows nothing or `remote-pi create` / `remove`
+fails with a parse error despite having registered daemons.
 
 ```bash
 cat ~/.pi/remote/daemons.json    # inspect
@@ -224,19 +233,18 @@ The file should be:
 ```json
 {
   "daemons": [
-    { "cwd": "/Users/x/Movies" },
-    { "cwd": "/Users/x/Projects/backend" }
+    { "cwd": "/Users/x/Movies", "name": "Video Editor", "harness": "pi" },
+    { "cwd": "/Users/x/Projects/backend", "name": "Backend", "harness": "omp" }
   ]
 }
 ```
 
-Fix manually if needed (it's a JSON list of `{cwd}` entries), or wipe
-and re-create:
+Fix the JSON manually if needed (or wipe and re-create):
 
 ```bash
 rm ~/.pi/remote/daemons.json
-remote-pi create ~/Movies --name "Video Editor"
-remote-pi create ~/Projects/backend --name "Backend"
+remote-pi create ~/Movies --name "Video Editor" --harness pi
+remote-pi create ~/Projects/backend --name "Backend" --harness omp
 remote-pi daemon restart
 ```
 
@@ -252,12 +260,12 @@ rm -rf ~/.pi/remote               # nukes registry + paired devices + keys
 npm uninstall -g remote-pi
 npm install -g remote-pi
 remote-pi install
-# Then re-pair + re-create daemons from scratch.
+# Then re-pair once on this machine + re-create daemons.
 ```
 
-This is the "nuke everything" path. After this, the only state left is
-each cwd's `<cwd>/.pi/remote-pi/config.json` — which you can either
-keep (re-create restores the daemon) or delete (full reset).
+This is the "nuke everything" path. After this, `~/.pi/remote` is clean;
+any interactive `<cwd>/.pi/remote-pi/config.json` files you created earlier
+are untouched.
 
 ---
 
@@ -270,8 +278,8 @@ ls -la ~/.pi/remote/supervisor.sock
 # Talk to the supervisor manually (raw JSONL):
 echo '{"op":"list"}' | nc -U ~/.pi/remote/supervisor.sock
 
-# Where are the daemon configs?
-find ~/Projects -name "config.json" -path "*/.pi/remote-pi/*" 2>/dev/null
+# Where is the daemon registry?
+cat ~/.pi/remote/daemons.json
 
 # Where are the cwd locks?
 ls ~/.pi/remote/locks/
@@ -279,8 +287,8 @@ ls ~/.pi/remote/locks/
 # Where are the paired devices?
 cat ~/.pi/remote/peers.json
 
-# What Pi binary is the supervisor about to spawn?
-remote-pi install --dry-run      # (not implemented; check ~/Library/LaunchAgents or systemd unit manually)
+# What unit / binary path is installed?
+cat ~/.config/systemd/user/remote-pi-supervisord.service 2>/dev/null || cat ~/Library/LaunchAgents/dev.remotepi.supervisord.plist 2>/dev/null
 
 # Quick liveness check
 remote-pi daemon status

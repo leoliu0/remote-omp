@@ -6,14 +6,15 @@
  * both close the connection. No multiplexing, no streaming — each command
  * is a short round-trip.
  *
- * Plan/26 W2. The Pi RPC protocol (`pi --mode rpc`) used by the daemon
- * children themselves is a separate contract — see
+ * Plan/26 W2. The `<harness> --mode rpc` (`pi` / `omp`) protocol used by the
+ * daemon children themselves is a separate contract — see
  * `node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-types.d.ts`.
  * This file is strictly the supervisor's own control plane.
  */
 
 import type { CronJob } from "./cron_registry.js";
 import type { CronLogEntry } from "./cron_log.js";
+import type { Harness } from "./harness.js";
 
 /** Per-daemon runtime state observable through the supervisor. */
 export type DaemonState = "running" | "stopped" | "starting" | "crashed";
@@ -21,7 +22,8 @@ export type DaemonState = "running" | "stopped" | "starting" | "crashed";
 export interface DaemonInfo {
   id: string;            // sha256(cwd)[0..8] — see daemon/id.ts
   cwd: string;           // absolute realpath
-  name: string;          // from <cwd>/.pi/remote-pi/config.json agent_name
+  name: string;          // from ~/.pi/remote/daemons.json (fallback: defaultAgentName(cwd))
+  harness?: Harness;     // pi | omp (optional for backward compat with older supervisors)
   state: DaemonState;
   pid?: number;          // current process pid, when running
   uptime_s?: number;     // since last successful spawn, when running
@@ -39,7 +41,7 @@ export type ControlRequest =
   | { op: "restart_all" }
   | { op: "restart"; id: string }
   | { op: "send"; id: string; text: string }
-  | { op: "register"; cwd: string }
+  | { op: "register"; cwd: string; name?: string; harness?: Harness }
   | { op: "unregister"; id: string }
   // ── cron (plan/39) ──
   | { op: "cron_add"; daemon_id: string; schedule: string; prompt: string; tz?: string; skip_if_busy?: boolean; wake?: boolean; catchup?: boolean }
@@ -68,7 +70,7 @@ export interface ControlReplyShapes {
   restart_all: { restarted: string[] };
   restart: { id: string; state: DaemonState; restarted: boolean };
   send: { id: string; delivered: boolean };
-  register: { id: string; cwd: string };
+  register: { id: string; cwd: string; name: string; harness: Harness };
   unregister: { removed: boolean; cwd?: string };
   // ── cron (plan/39) ──
   cron_add: { job: CronJobView };
@@ -114,8 +116,7 @@ export function parseRequest(line: string): ControlRequest {
   if (typeof op !== "string") {
     throw new Error("control request missing string `op` field");
   }
-  // We don't validate every field shape here — supervisor handlers do it
-  // per-op since the error messages are more specific that way.
+  // Field validation is handled in the supervisor per-op where specific errors apply.
   return obj as ControlRequest;
 }
 
