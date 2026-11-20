@@ -1,5 +1,5 @@
 // Plan 68 - upload frames. Field names are the wire contract shared with
-// pi-extension/src/protocol/types.ts (snake_case, exactly as in the plan).
+// omp-extension/src/protocol/types.ts (snake_case, exactly as in the plan).
 
 import 'dart:convert';
 import 'dart:typed_data';

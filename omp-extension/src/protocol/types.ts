@@ -568,9 +568,9 @@ export type ServerMessage =
        * Plan/27 Wave A: identifies the host coding agent driving this
        * omp-extension instance. `name` is hardcoded to "omp coding agent"
        * today; future harnesses (Claude Code, OpenCode) populate their own
-       * here. `version` is the pi-extension `package.json` version.
+       * here. `version` is the omp-extension `package.json` version.
        * Optional in the wire schema so app-side parsing tolerates older
-       * Pi builds that predate this field — every new pairing emits both.
+       * extension builds that predate this field — every new pairing emits both.
        */
       harness?: { name: string; version: string };
       /**
