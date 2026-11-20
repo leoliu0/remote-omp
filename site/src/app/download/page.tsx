@@ -25,7 +25,7 @@ import { loadAppManifest } from "@/lib/app-release";
 export const metadata: Metadata = {
   title: "Download",
   description:
-    "Download Remote Pi — the desktop Cockpit (signed macOS, Windows, Linux) and the Android app (direct APK, no Play Store).",
+    "Download Remote OMP — the desktop Cockpit (signed macOS, Windows, Linux) and the Android app (direct APK, no Play Store).",
 };
 
 const GETTING_STARTED = "/tutorials/getting-started";
@@ -147,7 +147,7 @@ const OS_GROUPS: OsGroup[] = [
             Open the downloaded <code>.dmg</code>.
           </li>
           <li>
-            Drag <strong>Remote Pi Cockpit</strong> into your{" "}
+            Drag <strong>Remote OMP Cockpit</strong> into your{" "}
             <strong>Applications</strong> folder.
           </li>
           <li>Launch it from Applications or Spotlight.</li>
@@ -190,11 +190,11 @@ const OS_GROUPS: OsGroup[] = [
         <p>Download the package for your architecture, then install it:</p>
         <CodeBlock
           label="Debian / Ubuntu — .deb"
-          code={`sudo dpkg -i remote-pi-cockpit_${m.version}_amd64.deb\nsudo apt-get install -f   # pull in any missing dependencies`}
+          code={`sudo dpkg -i remote-omp-cockpit_${m.version}_amd64.deb\nsudo apt-get install -f   # pull in any missing dependencies`}
         />
         <CodeBlock
           label="Fedora / RHEL — .rpm"
-          code={`sudo dnf install ./remote-pi-cockpit-${m.version}.x86_64.rpm`}
+          code={`sudo dnf install ./remote-omp-cockpit-${m.version}.x86_64.rpm`}
         />
         <p className="dl-note-foot">
           Swap <code>amd64</code>/<code>x86_64</code> for <code>arm64</code>/
@@ -219,10 +219,10 @@ export default async function DownloadPage() {
         <div className="wrap">
           <header className="page-head reveal" style={{ maxWidth: 760 }}>
             <span className="eyebrow">Download</span>
-            <h1>Download Remote Pi</h1>
+            <h1>Download Remote OMP</h1>
             <p className="lede">
               The desktop Cockpit and the phone app, built straight from CI. Grab
-              the Cockpit to drive your Pi coding agents from your computer, and
+              the Cockpit to drive your omp coding agents from your computer, and
               the Android app to carry them in your pocket.
             </p>
           </header>
@@ -231,7 +231,7 @@ export default async function DownloadPage() {
           <section className="dl-product reveal" id="cockpit">
             <div className="section-head">
               <span className="eyebrow">Desktop · Cockpit</span>
-              <h2>Remote Pi Cockpit</h2>
+              <h2>Remote OMP Cockpit</h2>
               <p>
                 Pair from your Mac, Windows, or Linux machine, watch live
                 sessions, and manage your 24/7 daemons and schedules from one
@@ -281,9 +281,9 @@ export default async function DownloadPage() {
 
             <div className="dl-foot">
               <p>
-                Cockpit drives a local Pi install — it doesn&apos;t bundle one.
-                The app&apos;s onboarding checks for <code>pi</code>, the Remote
-                Pi plugin, and the supervisor, and walks you through anything
+                Cockpit drives a local omp install — it doesn&apos;t bundle one.
+                The app&apos;s onboarding checks for <code>omp</code>, the Remote
+                OMP plugin, and the supervisor, and walks you through anything
                 missing. New here?{" "}
                 <Link href={GETTING_STARTED}>Start with the setup guide</Link>.
               </p>
@@ -294,7 +294,7 @@ export default async function DownloadPage() {
           <section className="dl-product reveal" id="android">
             <div className="section-head">
               <span className="eyebrow">Mobile · Android</span>
-              <h2>Remote Pi — App (Android)</h2>
+              <h2>Remote OMP — App (Android)</h2>
               <p>
                 The phone app — pair once with a QR, then drive your agents from
                 anywhere. Installed straight from an APK, no Play Store needed.
@@ -328,14 +328,14 @@ export default async function DownloadPage() {
                     artifact={apk}
                     live={app.live}
                     archLabel="Universal APK"
-                    downloadLabel="Download RemotePi.apk"
+                    downloadLabel="Download RemoteOMP.apk"
                   />
                 </div>
                 <div className="dl-os-help">
                   <div className="dl-note">
                     <ol>
                       <li>
-                        Download <code>RemotePi.apk</code> to your phone.
+                        Download <code>RemoteOMP.apk</code> to your phone.
                       </li>
                       <li>Tap the file to start installing.</li>
                       <li>
@@ -349,9 +349,9 @@ export default async function DownloadPage() {
                       </li>
                     </ol>
                     <p className="dl-note-foot">
-                      Prefer a store? Remote Pi is also on{" "}
+                      Prefer a store? Remote OMP is also on{" "}
                       <a
-                        href="https://play.google.com/store/apps/details?id=work.jacobmoura.remotepi"
+                        href="https://play.google.com/store/apps/details?id=work.jacobmoura.remoteomp"
                         target="_blank"
                         rel="noopener noreferrer"
                       >

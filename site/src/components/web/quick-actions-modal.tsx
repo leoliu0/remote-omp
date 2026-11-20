@@ -116,7 +116,7 @@ export function QuickActionsModal({
           <button
             type="button"
             onClick={() => {
-              if (confirm("Start a new session?\n\nThis clears the Pi-side conversation history. The current thread cannot be resumed.")) {
+              if (confirm("Start a new session?\n\nThis clears the omp-side conversation history. The current thread cannot be resumed.")) {
                 onAction({ action: "new_session" });
                 onClose();
               }
@@ -134,7 +134,7 @@ export function QuickActionsModal({
                   New session
                 </div>
                 <div className="text-[#888] text-[11px]">
-                  Clears the conversation on the Pi.
+                  Clears the conversation on omp.
                 </div>
               </div>
             </div>
@@ -176,7 +176,7 @@ export function QuickActionsModal({
               <div className="grid grid-cols-1 gap-1.5 max-h-44 overflow-y-auto pr-1 animate-in fade-in">
                 {modelsError && <div className="p-2 text-red-300">Couldn&apos;t load models: {modelsError}</div>}
                 {!modelsError && !catalogue && <div className="p-2 text-[#888]">Loading models…</div>}
-                {catalogue && catalogue.models.length === 0 && <div className="p-2 text-[#888]">The Pi reported no models.</div>}
+                {catalogue && catalogue.models.length === 0 && <div className="p-2 text-[#888]">omp reported no models.</div>}
                 {catalogue?.models.map((m) => {
                   const isSelected = selectedModel !== null && modelKey(selectedModel) === modelKey(m);
                   return (

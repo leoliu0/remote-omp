@@ -1,4 +1,4 @@
-// omp plan mode as the web shows it. Wire contract: pi-extension
+// omp plan mode as the web shows it. Wire contract: omp-extension
 // src/protocol/types.ts `{type:"plan_state"}` (PlanStatus) and the
 // `{type:"plan_mode"}` typed action. Room meta never carries the plan (the
 // relay drops it), so `plan_state` frames are the only source.

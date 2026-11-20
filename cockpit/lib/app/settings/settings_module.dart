@@ -19,10 +19,10 @@ import 'package:flutter_modular/flutter_modular.dart';
 ///
 /// O [SupervisorClientImpl] é **uma instância** sob dois contratos
 /// ([DaemonSupervisor] + [CronGateway]) — mesmo control-plane UDS do
-/// `pi-supervisord`. Os ViewModels são page-scoped (`provide`): nascem ao abrir a
-/// tela e morrem (`dispose`) ao fechar. Pareamento/revoke sobem um `pi --mode rpc`
+/// `remote-omp-supervisord`. Os ViewModels são page-scoped (`provide`): nascem ao abrir a
+/// tela e morrem (`dispose`) ao fechar. Pareamento/revoke sobem um `omp --mode rpc`
 /// efêmero via `PairingGatewayFactory`/`RevokeGatewayFactory`, registradas no
-/// **core** (root-owned — dependem do `PiSpawnConfig`, também do core) e injetadas
+/// **core** (root-owned — dependem do `OmpSpawnConfig`, também do core) e injetadas
 /// no `ConnectivityViewModel`.
 Module buildSettingsModule() => createModule(
   path: '/settings',

@@ -1,4 +1,4 @@
-# Branding — Remote Pi
+# Branding — Remote OMP
 
 Official visual identity assets. Source of truth: SVG vector files.
 

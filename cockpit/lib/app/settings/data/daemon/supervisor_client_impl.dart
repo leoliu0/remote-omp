@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:cockpit/app/settings/data/daemon/win_named_pipe.dart';
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:cockpit/app/settings/domain/contracts/cron_gateway.dart';
 import 'package:cockpit/app/settings/domain/contracts/daemon_supervisor.dart';
 import 'package:cockpit/app/settings/domain/entities/cron_job.dart';
@@ -13,9 +13,9 @@ import 'package:cockpit/app/core/domain/result.dart';
 
 /// Implementação do [DaemonSupervisor] + [CronGateway] (mesmo control-plane).
 ///
-/// **Controle** via o UDS `~/.pi/remote/supervisor.sock` (JSON-por-linha, 1 req
-/// → 1 reply → close; espelha `pi-extension/src/daemon/client.ts`). **Criação**
-/// via shell-out `remote-pi create` (faz o write do config local + registra +
+/// **Controle** via o UDS `~/.omp/remote/supervisor.sock` (JSON-por-linha, 1 req
+/// → 1 reply → close; espelha `omp-extension/src/daemon/client.ts`). **Criação**
+/// via shell-out `remote-omp create` (faz o write do config local + registra +
 /// sobe — o op `register` do UDS não escreve config). Cron (plan/39) usa as ops
 /// `cron_*` no mesmo socket.
 class SupervisorClientImpl implements DaemonSupervisor, CronGateway {
@@ -29,7 +29,7 @@ class SupervisorClientImpl implements DaemonSupervisor, CronGateway {
 
   String? _sockPath() {
     final home = _home;
-    return home == null ? null : '$home/.pi/remote/supervisor.sock';
+    return home == null ? null : '$home/.omp/remote/supervisor.sock';
   }
 
   @override
@@ -97,7 +97,7 @@ class SupervisorClientImpl implements DaemonSupervisor, CronGateway {
       ]);
       if (result == null) {
         return const Failure(
-          DaemonError('Could not find remote-pi (install the extension).'),
+          DaemonError('Could not find remote-omp (install the extension).'),
         );
       }
       if (result.exitCode != 0) {
@@ -125,8 +125,8 @@ class SupervisorClientImpl implements DaemonSupervisor, CronGateway {
     String cwd,
     String name,
   ) async {
-    // O nome é a fonte da verdade no registry global `~/.pi/remote/daemons.json`
-    // (`{cwd, name}`) — o supervisor o injeta no spawn via REMOTE_PI_DIRECT_CONFIG.
+    // O nome é a fonte da verdade no registry global `~/.omp/remote/daemons.json`
+    // (`{cwd, name}`) — o supervisor o injeta no spawn via REMOTE_OMP_DIRECT_CONFIG.
     // Não há config local por-pasta nem op/CLI de rename, então editamos o
     // registry direto; o `restart{id}` (no VM) respawna com o nome novo.
     final home = _home;
@@ -134,7 +134,7 @@ class SupervisorClientImpl implements DaemonSupervisor, CronGateway {
       return const Failure(DaemonError('HOME not found in the environment.'));
     }
     try {
-      final file = File('$home/.pi/remote/daemons.json');
+      final file = File('$home/.omp/remote/daemons.json');
       if (!await file.exists()) {
         return const Failure(DaemonError('Daemon registry not found.'));
       }
@@ -153,7 +153,7 @@ class SupervisorClientImpl implements DaemonSupervisor, CronGateway {
       if (!found) {
         return const Failure(DaemonError('Daemon not found in the registry.'));
       }
-      // Mesmo formato do saveRegistry do pi-extension (2 espaços + LF final).
+      // Mesmo formato do saveRegistry do omp-extension (2 espaços + LF final).
       await file.writeAsString(
         '${const JsonEncoder.withIndent('  ').convert(decoded)}\n',
       );
@@ -171,25 +171,25 @@ class SupervisorClientImpl implements DaemonSupervisor, CronGateway {
 
   @override
   Future<Result<void, DaemonError>> restartSupervisor() async {
-    // Delega ao CLI `remote-pi restart-supervisor` — ele cuida do detalhe por
+    // Delega ao CLI `remote-omp restart-supervisor` — ele cuida do detalhe por
     // plataforma (launchctl no macOS, systemctl no Linux, serviço no Windows).
-    // Centraliza a lógica de SO no remote-pi em vez de duplicá-la aqui.
+    // Centraliza a lógica de SO no remote-omp em vez de duplicá-la aqui.
     try {
       final result = await _runCli(const ['restart-supervisor']);
       if (result == null) {
         return const Failure(
-          DaemonError('Could not find remote-pi (install the extension).'),
+          DaemonError('Could not find remote-omp (install the extension).'),
         );
       }
       final out = (result.stdout as String? ?? '');
       final err = (result.stderr as String? ?? '');
       // O CLI imprime o help e sai 0 quando o comando não existe — não dá pra
       // confiar só no exitCode. Detecta o banner de uso e trata como indisponível.
-      if ('$out\n$err'.contains('Usage: remote-pi')) {
+      if ('$out\n$err'.contains('Usage: remote-omp')) {
         return const Failure(
           DaemonError(
-            'This remote-pi does not have the `restart-supervisor` command yet. '
-            'Update remote-pi.',
+            'This remote-omp does not have the `restart-supervisor` command yet. '
+            'Update remote-omp.',
           ),
         );
       }
@@ -435,11 +435,11 @@ class SupervisorClientImpl implements DaemonSupervisor, CronGateway {
 
   // ---- CLI resolution -------------------------------------------------------
 
-  /// Como invocar o `remote-pi`: binário no POSIX, `node <index.js>` no Windows.
+  /// Como invocar o `remote-omp`: binário no POSIX, `node <index.js>` no Windows.
   Future<({String exe, List<String> prefixArgs})?> _cli() =>
-      _resolvedCli ??= resolveRemotePiCommand();
+      _resolvedCli ??= resolveRemoteOmpCommand();
 
-  /// Roda o `remote-pi <args>` resolvido por plataforma, com o `node` na PATH
+  /// Roda o `remote-omp <args>` resolvido por plataforma, com o `node` na PATH
   /// (shim usa `#!/usr/bin/env node`) e `runInShell` no Windows.
   Future<ProcessResult?> _runCli(List<String> args) async {
     final cmd = await _cli();

@@ -1,7 +1,7 @@
 import 'dart:io';
 
 /// Monta o relatório de erro que o usuário revisa antes de reportar, e a URL de
-/// issue já preenchida no repositório do Remote Pi.
+/// issue já preenchida no repositório do Remote OMP.
 ///
 /// Não há envio automático nem telemetria: o relatório só sai da máquina se o
 /// usuário clicar. É o que mantém o Cockpit local-only — ele enxerga caminhos de
@@ -17,7 +17,7 @@ class IssueReport {
   });
 
   /// Repositório de destino das issues.
-  static const String repoUrl = 'https://github.com/jacobaraujo7/remote_pi';
+  static const String repoUrl = 'https://github.com/leoliu0/remote-omp';
 
   /// Teto prático da URL de issue do GitHub. Acima disso o servidor recusa, então
   /// o corpo é truncado e o usuário é instruído a colar o resto (que já vai

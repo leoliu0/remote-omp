@@ -1,4 +1,4 @@
-import 'package:cockpit/app/cockpit/domain/entities/pi_model.dart';
+import 'package:cockpit/app/cockpit/domain/entities/omp_model.dart';
 import 'package:cockpit/app/cockpit/domain/entities/thinking_level.dart';
 
 /// Recorte do estado do agente vivo — de `get_state`. O Cockpit usa para
@@ -10,7 +10,7 @@ class AgentSnapshot {
     required this.isStreaming,
   });
 
-  final PiModel? model;
+  final OmpModel? model;
   final ThinkingLevel thinkingLevel;
   final bool isStreaming;
 }

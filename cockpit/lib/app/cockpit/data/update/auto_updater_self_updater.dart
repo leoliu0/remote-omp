@@ -134,8 +134,8 @@ class AutoUpdaterSelfUpdater with UpdaterListener implements SelfUpdater {
   void onUpdaterBeforeQuitForUpdate(AppcastItem? item) {
     // Reinício silencioso (decisão C): a fachada NÃO aguarda este callback —
     // não dá pra bloquear o quit nem matar agentes graciosamente aqui. Os
-    // agentes `pi` filhos viram órfãos e são reapeados no próximo boot por
-    // `PiProcessRegistry.cleanOrphans` (SIGKILL dos PIDs do registry); o
+    // agentes `omp` filhos viram órfãos e são reapeados no próximo boot por
+    // `OmpProcessRegistry.cleanOrphans` (SIGKILL dos PIDs do registry); o
     // workspace (panes/abas) reabre pelo estado no Hive.
     debugPrint(
       '[self-update] before quit for update — agents reaped on next boot',

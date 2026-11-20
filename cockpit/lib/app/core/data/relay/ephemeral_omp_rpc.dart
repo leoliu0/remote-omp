@@ -5,21 +5,21 @@ import 'dart:math';
 
 import 'package:cockpit/app/core/env.dart';
 import 'package:cockpit/app/core/data/rpc/jsonl_line_splitter.dart';
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 
-/// Sessão **efêmera e dedicada** de `pi --mode rpc --no-session` para comandos
-/// pontuais do remote-pi (pareamento, revoke). Roda numa pasta temporária única
-/// (evita colisão de cwd-lock) com `REMOTE_PI_DIRECT_CONFIG` de pareamento — o
-/// que faz `localConfigExists` virar true e o `/remote-pi <cmd>` auto-ligar o
-/// relay. Carrega a extensão remote-pi (SEM `--no-extensions`).
+/// Sessão **efêmera e dedicada** de `omp --mode rpc --no-session` para comandos
+/// pontuais do remote-omp (pareamento, revoke). Roda numa pasta temporária única
+/// (evita colisão de cwd-lock) com `REMOTE_OMP_DIRECT_CONFIG` de pareamento — o
+/// que faz `localConfigExists` virar true e o `/remote-omp <cmd>` auto-ligar o
+/// relay. Carrega a extensão remote-omp (SEM `--no-extensions`).
 ///
 /// Não interpreta o protocolo: entrega cada objeto JSON do stdout via [onLine];
 /// quem usa decide o que é resposta/evento. [dispose] mata o processo (sem
 /// órfão) e remove a pasta temp — idempotente.
-class EphemeralPiRpc {
-  EphemeralPiRpc(this._config);
+class EphemeralOmpRpc {
+  EphemeralOmpRpc(this._config);
 
-  final PiSpawnConfig _config;
+  final OmpSpawnConfig _config;
 
   Process? _process;
   Directory? _tempDir;
@@ -35,13 +35,13 @@ class EphemeralPiRpc {
     required void Function(Map<String, dynamic> json) onLine,
     void Function(int code)? onExit,
   }) async {
-    final dir = await Directory.systemTemp.createTemp('remote-pi-rpc-');
+    final dir = await Directory.systemTemp.createTemp('remote-omp-rpc-');
     _tempDir = dir;
 
     final env = <String, String>{
-      // bin do `node` na PATH (shim `pi` usa `#!/usr/bin/env node`).
+      // bin do `bun`/`node` na PATH (shim `omp` usa `#!/usr/bin/env bun`).
       ...await envWithNodeOnPath(),
-      'REMOTE_PI_DIRECT_CONFIG': jsonEncode(<String, dynamic>{
+      'REMOTE_OMP_DIRECT_CONFIG': jsonEncode(<String, dynamic>{
         'agent_name': _randomName(),
         'workspace': 'pareamento',
       }),
@@ -52,7 +52,7 @@ class EphemeralPiRpc {
       _args(),
       workingDirectory: dir.path,
       environment: env,
-      // Windows: o `pi` é shim `.cmd`/`.bat` do npm — só executa via shell.
+      // Windows: o `omp` é shim `.cmd`/`.bat` — só executa via shell.
       runInShell: Platform.isWindows,
     );
     _process = process;
@@ -105,7 +105,7 @@ class EphemeralPiRpc {
   }
 
   /// `--mode rpc --no-session` (sem persistir sessão), SEM `--no-extensions`
-  /// (precisamos da extensão remote-pi pros slash commands).
+  /// (precisamos da extensão remote-omp pros slash commands).
   List<String> _args() => <String>[
     '--mode',
     'rpc',

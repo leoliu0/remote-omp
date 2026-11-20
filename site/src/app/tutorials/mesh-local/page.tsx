@@ -9,7 +9,7 @@ import { RevealController } from "@/components/landing/reveal-controller";
 export const metadata: Metadata = {
   title: "Local mesh",
   description:
-    "Run two Pi agents on the same machine and have them discover each other and exchange messages over the local broker with list_peers, agent_send, and get_messages.",
+    "Run two omp agents on the same machine and have them discover each other and exchange messages over the local broker with list_peers, agent_send, and get_messages.",
 };
 
 export default function MeshLocalTutorial() {
@@ -32,17 +32,17 @@ export default function MeshLocalTutorial() {
             <article className="prose">
               <DocsSection id="how" title="How local discovery works">
           <p>
-            Every agent that runs <InlineCode>/remote-pi</InlineCode> on a
+            Every agent that runs <InlineCode>/remote-omp</InlineCode> on a
             machine joins the same local session, named{" "}
             <InlineCode>local</InlineCode>. They meet through a Unix domain
             socket — a local broker at{" "}
-            <InlineCode>~/.pi/remote/sessions/local/broker.sock</InlineCode> —
+            <InlineCode>~/.omp/remote/sessions/local/broker.sock</InlineCode> —
             so messages never leave the box. The first agent to start hosts the
             broker; the rest connect to it. If the host exits, another agent
             takes over automatically.
           </p>
           <Callout variant="note" title="One agent per folder">
-            A lock allows exactly one Pi agent per directory. To run two agents
+            A lock allows exactly one omp agent per directory. To run two agents
             at once, put them in <strong className="text-fg">two different
             folders</strong> — each gets its own workspace, both meet in the{" "}
             <InlineCode>local</InlineCode> session.
@@ -57,11 +57,11 @@ export default function MeshLocalTutorial() {
             </Link>{" "}
             guide. Open a second terminal in a{" "}
             <strong className="text-fg">different</strong> folder and start
-            Remote Pi there too:
+            Remote OMP there too:
           </p>
           <CodeBlock
             code={`cd ~/code/service-b
-pi            # then run /remote-pi and answer the wizard`}
+omp           # then run /remote-omp and answer the wizard`}
             label="Second terminal"
             language="bash"
           />

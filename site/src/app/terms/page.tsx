@@ -4,7 +4,7 @@ import { LegalShell, LegalSection } from "@/components/legal-shell";
 export const metadata: Metadata = {
   title: "Terms of Service",
   description:
-    "Terms of Service for Remote Pi — provided by Flutterando Desenvolvimento de Programas de Computador LTDA.",
+    "Terms of Service for Remote OMP — provided by Flutterando Desenvolvimento de Programas de Computador LTDA.",
 };
 
 const CONTACT_EMAIL = "jacob@flutterando.com.br";
@@ -24,9 +24,9 @@ export default function TermsPage() {
     >
       <LegalSection id="acceptance" number={1} title="Acceptance of Terms">
         <p>
-          By installing, accessing, or using the Remote Pi mobile application,
-          the Remote Pi Pi-side extension, the Remote Pi relay service, or any
-          other software or service provided under the Remote Pi name
+          By installing, accessing, or using the Remote OMP mobile application,
+          the Remote OMP omp-side extension, the Remote OMP relay service, or any
+          other software or service provided under the Remote OMP name
           (collectively, the &quot;Service&quot;), you agree to be bound by
           these Terms of Service (&quot;Terms&quot;). If you do not agree to
           these Terms, you must not use the Service.
@@ -40,10 +40,10 @@ export default function TermsPage() {
 
       <LegalSection id="account-pairing" number={2} title="Account & Pairing">
         <p>
-          Remote Pi does not require you to create an account, register an email
+          Remote OMP does not require you to create an account, register an email
           address, or provide personally identifiable information to use the
           Service. Instead, the Service uses an ephemeral, on-demand pairing
-          flow: a QR code generated locally on the Pi-side extension is scanned
+          flow: a QR code generated locally on the omp-side extension is scanned
           by the mobile app, establishing a mutually authenticated channel
           between the two devices (Ed25519 challenge-response). See the
           Privacy Policy, section 9, for the full trust model — application-
@@ -52,7 +52,7 @@ export default function TermsPage() {
         </p>
         <p>
           Each pairing produces a cryptographic key pair stored locally on the
-          phone and the Pi. Pairings can be revoked at any time from either
+          phone and the omp host. Pairings can be revoked at any time from either
           device. You are responsible for keeping your devices secure; anyone
           with physical or remote access to a paired device can use that
           pairing.
@@ -67,11 +67,11 @@ export default function TermsPage() {
         <p>The Service currently provides the following features:</p>
         <ul className="ml-6 list-disc space-y-2">
           <li>
-            Remote control of a Pi-based coding agent (such as Claude Code,
+            Remote control of an omp-based coding agent (such as Claude Code,
             Codex, or similar) from a paired mobile device.
           </li>
           <li>
-            A local multi-agent messaging mesh on the Pi (UDS broker) that lets
+            A local multi-agent messaging mesh on the omp host (UDS broker) that lets
             multiple agents and the mobile peer exchange messages.
           </li>
           <li>
@@ -90,7 +90,7 @@ export default function TermsPage() {
 
       <LegalSection id="user-content" number={4} title="User-Generated Content">
         <p>
-          The prompts you send to your Pi-side agent and the responses produced
+          The prompts you send to your omp-side agent and the responses produced
           by that agent (&quot;User Content&quot;) belong to you. Flutterando
           does not log, persist, or inspect User Content.
         </p>
@@ -110,7 +110,7 @@ export default function TermsPage() {
           You are solely responsible for the User Content you send through the
           Service and for ensuring that you have the right to send and receive
           that content under applicable law and any third-party agreements
-          (including the terms of any AI provider whose model the Pi-side agent
+          (including the terms of any AI provider whose model the omp-side agent
           uses).
         </p>
       </LegalSection>
@@ -147,7 +147,7 @@ export default function TermsPage() {
         title="Reporting and Security Issues"
       >
         <p>
-          Remote Pi does not host or moderate user-to-user content (the relay is
+          Remote OMP does not host or moderate user-to-user content (the relay is
           oblivious to message contents), so there is no general content
           moderation process. However, if you discover a security vulnerability
           in the Service or believe the Service is being abused to attack
@@ -166,13 +166,13 @@ export default function TermsPage() {
         title="Platform Intellectual Property"
       >
         <p>
-          The source code for Remote Pi components is released under the MIT
+          The source code for Remote OMP components is released under the MIT
           license and can be found in the project&apos;s public repository.
           Subject to that license, you may use, copy, modify, and distribute the
           source code.
         </p>
         <p>
-          The Remote Pi name, logo, and visual identity (including the π symbol
+          The Remote OMP name, logo, and visual identity (including the π symbol
           mark, the color palette, and the wordmark) are trademarks and trade
           dress of Flutterando and are not granted to you by the MIT license.
           You may not use them in a way that suggests endorsement of, or
@@ -235,11 +235,11 @@ export default function TermsPage() {
       <LegalSection id="termination" number={11} title="Termination">
         <p>
           You may stop using the Service at any time. To terminate a specific
-          pairing, revoke it from the mobile app or, on the Pi side, run{" "}
+          pairing, revoke it from the mobile app or, on the omp side, run{" "}
           <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-xs text-fg">
-            /remote-pi revoke &lt;id&gt;
+            /remote-omp revoke &lt;id&gt;
           </code>
-          . You may also uninstall the mobile application and the Pi-side
+          . You may also uninstall the mobile application and the omp-side
           extension to fully stop using the Service.
         </p>
         <p>

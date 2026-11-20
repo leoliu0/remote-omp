@@ -1,4 +1,4 @@
-// Manual headless smoke for PiRpcProcess (the real Dart gateway — no Flutter
+// Manual headless smoke for OmpRpcProcess (the real Dart gateway — no Flutter
 // engine needed). Drives spawn → sendPrompt → stream → kill and prints what
 // flows; handy to re-validate the RPC path without the GUI. NOT run by
 // `flutter test`. Requires a working provider/model (edit below).
@@ -10,7 +10,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cockpit/app/core/env.dart';
-import 'package:cockpit/app/cockpit/data/rpc/pi_rpc_process.dart';
+import 'package:cockpit/app/cockpit/data/rpc/omp_rpc_process.dart';
 import 'package:cockpit/app/cockpit/domain/entities/rpc_event.dart';
 import 'package:cockpit/app/cockpit/domain/entities/thinking_level.dart';
 
@@ -19,8 +19,8 @@ Future<void> main(List<String> args) async {
   // Sem args → default do pi (settings.json).
   final provider = args.isNotEmpty ? args[0] : null;
   final model = args.length > 1 ? args[1] : null;
-  final gateway = PiRpcProcess(
-    PiSpawnConfig(
+  final gateway = OmpRpcProcess(
+    OmpSpawnConfig(
       executable: '/opt/homebrew/bin/pi',
       provider: provider,
       model: model,

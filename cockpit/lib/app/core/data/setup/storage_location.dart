@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -47,7 +47,7 @@ class StorageLocation {
 
   /// Ponteiro fixo: aponta pra raiz escolhida. Fora de qualquer pasta relocável.
   static String? get _pointerPath {
-    final home = remotePiHome();
+    final home = remoteOmpHome();
     if (home == null) return null;
     return p.join(home, '.cockpit', 'storage_root');
   }

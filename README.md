@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="branding/logo-full.svg" width="140" alt="Remote Pi logo" />
+  <img src="branding/logo-full.svg" width="140" alt="Remote OMP logo" />
 </p>
 
-<h1 align="center">Remote Pi</h1>
+<h1 align="center">Remote OMP</h1>
 
 <p align="center">
-  Control your <a href="https://github.com/earendil-works/pi">Pi coding agent</a> from your phone.
+  Control your <a href="https://github.com/can1357/oh-my-pi">omp (oh-my-pi) coding agent</a> from your phone.
   Pair with a one-time QR code and chat with your local agent — even when you're away from your computer.
 </p>
 
@@ -13,52 +13,49 @@
 
 ## Links
 
-- **Official site** — <https://remote-pi.jacobmoura.work>
-- **Package documentation** — <https://pi.dev/packages/remote-pi?name=remote-pi>
-- **GitHub** — <https://github.com/jacobaraujo7/remote_pi>
+- **GitHub** — <https://github.com/leoliu0/remote-omp>
+- **Upstream** — Remote OMP is a fork of [jacobaraujo7/remote_pi](https://github.com/jacobaraujo7/remote_pi) by Jacob Moura, reworked to target omp only
 
 ### Downloads
 
 | Platform | Status |
 |---|---|
-| Google Play (Android) | [Get it on Google Play](https://play.google.com/store/apps/details?id=work.jacobmoura.remotepi) |
-| App Store (iOS) | [Download on the App Store](https://apps.apple.com/app/remote-pi-coding-agent/id6773499691) |
-| APK (sideload, Android) | [GitHub Releases](https://github.com/jacobaraujo7/remote_pi/releases) |
+| APK (sideload, Android) | `RemoteOMP.apk` from [GitHub Releases](https://github.com/leoliu0/remote-omp/releases) |
 
 ## What's in this repo
 
 | Package | Stack | Role |
 |---|---|---|
 | [`app/`](./app) | Flutter (iOS / Android) | Mobile client |
-| [`pi-extension/`](./pi-extension) | Node + TypeScript | Pi extension exposing `/remote-pi` |
+| [`omp-extension/`](./omp-extension) | Node + TypeScript | omp plugin exposing `/remote-omp` |
 | [`relay/`](./relay) | Rust + Tokio | WebSocket routing + signed mesh membership storage |
 | [`site/`](./site) | NextJS | Landing page + legal pages |
 
 ## Architecture
 
 ```
-Flutter app ──wss──► Relay (Rust) ◄──wss── Pi extension (Node)
+Flutter app ──wss──► Relay (Rust) ◄──wss── omp extension (Node)
                                                   │
-                                           Local Pi process
+                                           Local omp process
                                                   │
                                            UDS broker (local mesh)
                                                   │
                                            Other agents on the same machine
 ```
 
-- **Pairing** via short-lived QR code; peers persisted in Keychain (mobile) and `~/.pi/remote/` (desktop)
-- **Ed25519 authentication** — the Relay handshake proves possession of the connection key; App↔Pi pairing is enforced by the endpoints. For Pi↔Pi routing, the current Relay permits a route when a correctly signed Owner blob lists both Pi keys; that check does not prove the Owner paired with or controls either Pi
+- **Pairing** via short-lived QR code; peers persisted in Keychain (mobile) and `~/.omp/remote/` (desktop)
+- **Ed25519 authentication** — the Relay handshake proves possession of the connection key; App↔PC pairing is enforced by the endpoints. For PC↔PC routing, the current Relay permits a route when a correctly signed Owner blob lists both PC keys; that check does not prove the Owner paired with or controls either PC
 - **TLS protects traffic in transit**, but current payloads are not E2E; see [`relay/README.md`](./relay/README.md) for the exact trust boundary
 
 ## Local agent mesh
 
-When multiple Pi agents run on the same machine, they discover each other through
+When multiple omp agents run on the same machine, they discover each other through
 a **Unix Domain Socket broker** managed by the extension. One agent wins the
 leader election and binds the socket; the others connect as clients. For targets
 on that same machine, agents use the opaque addresses returned by `list_peers` —
 no relay, no network, no extra config.
 
-Three LLM-facing tools are exposed in the Pi chat:
+Three LLM-facing tools are exposed in the omp chat:
 
 - `list_peers` — lists local and cross-PC addresses available to the agent
 - `agent_send` — sends a unicast message and waits for a delivery ACK. Compatible ACK values are `received`, `busy`, `denied`, and `timeout`; current brokers return `received`, `denied`, or `timeout`, while `busy` only indicates a dropped message from an old broker leader that must be restarted before resending. Broadcast is `sent` with no ACK. Asynchronous content replies use `re`
@@ -86,32 +83,36 @@ Full security trade-offs and the self-hosting guide live in
 
 ## Getting started
 
-Install the Pi extension in any project where Pi runs:
+Install omp (see the [oh-my-pi README](https://github.com/can1357/oh-my-pi#readme)):
 
 ```bash
-pi install npm:remote-pi
+bun install -g @oh-my-pi/pi-coding-agent
 ```
 
-Then in the Pi chat, run:
+Install the Remote OMP extension as an omp plugin:
+
+```bash
+omp plugin install remote-omp
+```
+
+Or, from a clone of this repo, link the extension directory:
+
+```bash
+omp plugin link ./omp-extension
+```
+
+Then in the omp chat, run:
 
 ```
-/remote-pi
+/remote-omp
 ```
 
 The setup wizard walks you through agent name, session name, and relay choice,
-then prints a QR code. Scan it with the Remote Pi mobile app and you're paired.
+then prints a QR code. Scan it with the Remote OMP mobile app and you're paired.
 
-### Recommended companion: `@eko24ive/pi-ask`
-
-```bash
-pi install npm:@eko24ive/pi-ask
-```
-
-With pi-ask installed, the agent's `ask_user` clarification prompts (structured
-questions with options, multi-select, and previews) render natively in the
-mobile app — answer from your phone and the flow resolves on the desktop.
-Without it, the agent simply asks in plain chat text (also answerable from the
-phone, just unstructured). Remote Pi works either way; pi-ask is optional.
+The agent's `ask_user` clarification prompts (structured questions with
+options, multi-select, and previews) render natively in the mobile app — answer
+from your phone and the flow resolves on the desktop.
 
 ## Status
 
@@ -119,5 +120,6 @@ The MVP is functional. Planning notes and roadmap live in [`plan/`](./plan).
 
 ## License
 
-License is per-package — see each subproject's `LICENSE` file (the `pi-extension`
-is MIT). A repository-wide license decision is pending.
+License is per-package — see each subproject's `LICENSE` file (the `omp-extension`
+is MIT). A repository-wide license decision is pending. Copyright remains with
+Jacob Moura, the author of the upstream project.

@@ -157,10 +157,10 @@ export function SignInScreen({ relayUrl, onRelayChange, onSignedIn }: SignInScre
       <div className="w-full max-w-sm flex flex-col gap-6">
         <div className="text-center">
           <div className="text-3xl font-bold text-white">
-            <span className="text-[#4fc3f7]">π</span> Remote Pi
+            <span className="text-[#4fc3f7]">π</span> Remote OMP
           </div>
           <div className="mt-6 text-sm text-white leading-relaxed">
-            Open Remote Pi on your phone → <span className="text-[#4fc3f7]">Settings</span> →{" "}
+            Open Remote OMP on your phone → <span className="text-[#4fc3f7]">Settings</span> →{" "}
             <span className="text-[#4fc3f7]">Sign in on web</span> → scan this code
           </div>
         </div>

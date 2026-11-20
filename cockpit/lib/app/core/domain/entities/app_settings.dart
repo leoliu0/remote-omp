@@ -152,7 +152,7 @@ class AppSettings {
   /// Altura (px) da área de lista do subpane de Tasks (redimensionável).
   final double tasksPanelHeight;
 
-  /// Habilita o suporte a **agentes** (abas de `pi`). Desligado por padrão em
+  /// Habilita o suporte a **agentes** (abas de `omp`). Desligado por padrão em
   /// instalações novas (experiência terminal-first); ligado por migração para
   /// quem já usava agentes numa versão anterior (ver `HiveSettingsStore.load`).
   /// Com ela desligada, o app não oferece criar aba de agente (só terminal).
@@ -538,7 +538,7 @@ const Map<String, HarnessKind> _legacyHarnessNames = {
   'copilot': HarnessKind.gitHubCopilot,
   'opencode': HarnessKind.openCode,
   'codex': HarnessKind.codex,
-  'pi': HarnessKind.pi,
+  'pi': HarnessKind.omp,
 };
 
 HarnessKind? _harnessByStoredName(Object? raw) {

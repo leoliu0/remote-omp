@@ -1,14 +1,22 @@
 import Link from "next/link";
 
-const GITHUB_URL = "https://github.com/jacobaraujo7/remote_pi";
+const GITHUB_URL = "https://github.com/leoliu0/remote-omp";
 
 export function SiteFooter() {
   return (
     <footer className="footer">
       <div className="wrap footer-inner">
         <div className="copy">
-          © {new Date().getFullYear()} <b>Flutterando</b>. Remote Pi is open
-          source under the MIT license.
+          © {new Date().getFullYear()} <b>Flutterando</b>. Remote OMP is open
+          source under the MIT license — a fork of{" "}
+          <a
+            href="https://github.com/jacobaraujo7/remote_pi"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            jacobaraujo7/remote_pi
+          </a>
+          .
         </div>
         <nav className="footer-links">
           <Link href="/cockpit">Cockpit</Link>

@@ -3,10 +3,10 @@ import 'package:cockpit/app/core/utils/user_home.dart';
 
 /// Registro persistente de PIDs dos language servers (LSP) ativos.
 ///
-/// Mesmo problema do [PiProcessRegistry]: hot restart / crash do app não mata os
+/// Mesmo problema do [OmpProcessRegistry]: hot restart / crash do app não mata os
 /// child processes do `Process.start`, deixando `dart language-server`,
 /// `jdtls`, `node`… órfãos. A diferença é que aqui os servers são **vários
-/// binários distintos**, então o `pgrep -x <nome>` do pi (que assume um único
+/// binários distintos**, então o `pgrep -x <nome>` do omp (que assume um único
 /// nome) não serve — usamos **só o registry-file**: cada PID spawnado é gravado
 /// e, no boot, os remanescentes são mortos e o arquivo zerado.
 class LspProcessRegistry {

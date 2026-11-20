@@ -10,7 +10,7 @@ import { RevealController } from "@/components/landing/reveal-controller";
 export const metadata: Metadata = {
   title: "Getting started",
   description:
-    "Install Remote Pi on Pi, pair your phone, and send your first command to an agent from the app — from install to first prompt.",
+    "Install Remote OMP on omp, pair your phone, and send your first command to an agent from the app — from install to first prompt.",
 };
 
 export default function GettingStartedTutorial() {
@@ -23,7 +23,7 @@ export default function GettingStartedTutorial() {
               <span className="eyebrow">Tutorial · 1 of 4</span>
               <h1>Getting started</h1>
               <p className="lede">
-                By the end of this guide you&apos;ll have Remote Pi running on
+                By the end of this guide you&apos;ll have Remote OMP running on
                 one machine, your phone paired to it, and your first command
                 sent from the app — the agent runs it and the result streams
                 back to your pocket. Plan on about five minutes.
@@ -35,11 +35,11 @@ export default function GettingStartedTutorial() {
           <p>You need two things:</p>
           <ul className="ml-6 list-disc space-y-2">
             <li>
-              A machine with <strong className="text-fg">Pi</strong> (the coding
-              agent) and <strong className="text-fg">Node 20+</strong> installed.
+              A machine with <strong className="text-fg">omp</strong> (the
+              oh-my-pi coding agent) and <strong className="text-fg">Node 20+</strong> installed.
             </li>
             <li>
-              The <strong className="text-fg">Remote Pi</strong> app on your
+              The <strong className="text-fg">Remote OMP</strong> app on your
               phone — from the{" "}
               <a
                 className="text-accent underline"
@@ -52,7 +52,7 @@ export default function GettingStartedTutorial() {
               ,{" "}
               <a
                 className="text-accent underline"
-                href="https://play.google.com/store/apps/details?id=work.jacobmoura.remotepi"
+                href="https://play.google.com/store/apps/details?id=work.jacobmoura.remoteomp"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -66,28 +66,39 @@ export default function GettingStartedTutorial() {
             </li>
           </ul>
           <p className="text-sm">
-            No Pi yet? The <strong className="text-fg">No Pi yet</strong> tab
+            No omp yet? The <strong className="text-fg">No omp yet</strong> tab
             below runs a one-command <InlineCode>curl</InlineCode> installer that
-            sets up Pi, the plugin, and the supervisor for you. Already have Pi?
-            Use the <strong className="text-fg">Already have Pi</strong> path.
+            sets up omp, the plugin, and the supervisor for you. To install omp
+            yourself, follow the{" "}
+            <a
+              className="text-accent underline"
+              href="https://github.com/can1357/oh-my-pi#install"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              oh-my-pi install guide
+            </a>{" "}
+            (for example <InlineCode>bun install -g @oh-my-pi/pi-coding-agent</InlineCode>).
+            Already have omp? Use the{" "}
+            <strong className="text-fg">Already have omp</strong> path.
           </p>
         </DocsSection>
 
         <DocsSection id="install" title="1. Install the plugin">
           <p>
-            Remote Pi is a Pi plugin. Add it, run the setup wizard, then show a
+            Remote OMP is an omp plugin. Add it, run the setup wizard, then show a
             pairing QR:
           </p>
           <InstallTabs />
           <p>Walking through the three commands:</p>
-          <DocsSubsection title="pi install npm:remote-pi">
+          <DocsSubsection title="omp plugin install remote-omp">
             <p>
-              Installs the plugin into Pi. This registers the{" "}
-              <InlineCode>/remote-pi</InlineCode> slash command and deploys the
+              Installs the plugin into omp. This registers the{" "}
+              <InlineCode>/remote-omp</InlineCode> slash command and deploys the
               agent-network skill that teaches the LLM the mesh tools.
             </p>
           </DocsSubsection>
-          <DocsSubsection title="/remote-pi">
+          <DocsSubsection title="/remote-omp">
             <p>
               The first run opens a short wizard that{" "}
               <strong className="text-fg">creates the config for this folder</strong>.
@@ -109,33 +120,38 @@ export default function GettingStartedTutorial() {
               relay is connected.
             </p>
           </DocsSubsection>
-          <DocsSubsection title="/remote-pi pair">
+          <DocsSubsection title="/remote-omp pair">
             <p>
               Prints a QR code (and a copy-paste pairing URI). Leave it on
               screen for the next step. Pairing is{" "}
               <strong className="text-fg">per machine</strong>: once a phone is
-              paired, every Pi agent on this machine accepts it.
+              paired, every omp agent on this machine accepts it.
             </p>
           </DocsSubsection>
           <Callout variant="note" title="Order matters">
-            Run <InlineCode>/remote-pi</InlineCode> before{" "}
-            <InlineCode>/remote-pi pair</InlineCode>. On a brand-new folder with
+            Run <InlineCode>/remote-omp</InlineCode> before{" "}
+            <InlineCode>/remote-omp pair</InlineCode>. On a brand-new folder with
             no config, <InlineCode>pair</InlineCode> will tell you to run the
             wizard first — that&apos;s the config step doing its job.
           </Callout>
+          <p className="text-sm">
+            Working from a clone instead of npm? Run{" "}
+            <InlineCode>omp plugin link &lt;path to omp-extension&gt;</InlineCode>{" "}
+            in place of the install command.
+          </p>
         </DocsSection>
 
         <DocsSection id="pair" title="2. Pair your phone">
           <p>With the QR on screen:</p>
           <ol className="ml-6 list-decimal space-y-2">
-            <li>Open the Remote Pi app on your phone.</li>
+            <li>Open the Remote OMP app on your phone.</li>
             <li>
               Tap <strong className="text-fg">Pair a device</strong> (or the
               scan button) and point the camera at the QR.
             </li>
             <li>
               The app confirms the pairing and the agent shows up in your
-              device list. The Pi terminal footer flips to{" "}
+              device list. The omp terminal footer flips to{" "}
               <InlineCode>🟢 relay</InlineCode> and shows{" "}
               <InlineCode>📱 &lt;shortid&gt;</InlineCode> while the phone is
               connected.
@@ -158,10 +174,10 @@ export default function GettingStartedTutorial() {
             language="text"
           />
           <p>
-            The prompt lands in the Pi session on your machine exactly as if you
+            The prompt lands in the omp session on your machine exactly as if you
             had typed it there. The agent runs, and its response streams back to
             your phone live. That round trip — phone to agent and back — is the
-            whole point of Remote Pi.
+            whole point of Remote OMP.
           </p>
           <p>
             Beyond chatting, the app can drive the session with a few typed

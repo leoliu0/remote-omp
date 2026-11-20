@@ -247,7 +247,7 @@ export function buildRoomCommand(cmd: RoomCommand): InnerFrame {
 
 // ── typed actions (quick actions sheet; the app's ActionsRepository) ────────
 
-/** One `models_list` row (pi-extension protocol/types.ts `WireModel`). */
+/** One `models_list` row (omp-extension protocol/types.ts `WireModel`). */
 export interface WireModel {
   id: string;
   name: string;
@@ -408,7 +408,7 @@ export interface ChatClientEvents {
   onTodoState?: (phases: TodoPhase[]) => void;
 }
 
-export class RemotePiRelayClient {
+export class RemoteOmpRelayClient {
   private readonly conn: RelayConnection;
   private readonly session: PairedSession;
   private readonly peer: string;

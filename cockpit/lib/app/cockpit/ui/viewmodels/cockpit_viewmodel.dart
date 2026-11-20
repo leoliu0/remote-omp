@@ -4,7 +4,7 @@ import 'dart:io'
     show Directory, File, FileSystemEntity, FileSystemException, Platform;
 import 'dart:math' show max;
 
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
@@ -4940,7 +4940,7 @@ class CockpitViewModel extends ChangeNotifier {
   /// Cria e boota um agente. [restoreSessionPath] (restauração) faz reanexar a
   /// conversa salva via `switch_session`; senão, a VM captura o arquivo de
   /// sessão que o pi criar (no 1º fim de turno) pra poder restaurar depois.
-  /// O nome final é atribuído pelo broker via evento `remote-pi:name-assigned`
+  /// O nome final é atribuído pelo broker via evento `remote-omp:name-assigned`
   /// quando houver colisão de mesh — [AgentSession] trata o evento e persiste.
   AgentSession _buildAgent(
     String id,
@@ -4987,15 +4987,15 @@ class CockpitViewModel extends ChangeNotifier {
   }
 
   /// Serializa `agent_name`, `auto_start_relay` e `workspace` em
-  /// `REMOTE_PI_DIRECT_CONFIG` para o processo filho.
+  /// `REMOTE_OMP_DIRECT_CONFIG` para o processo filho.
   Map<String, String> _buildDirectConfig(AgentSession s, Project project) {
     return {
-      'REMOTE_PI_DIRECT_CONFIG': jsonEncode(<String, dynamic>{
+      'REMOTE_OMP_DIRECT_CONFIG': jsonEncode(<String, dynamic>{
         'agent_name': s.title,
         'workspace': project.name,
         'auto_start_relay': s.autoStartRelay,
       }),
-      'REMOTE_PI_DAEMON': '1',
+      'REMOTE_OMP_DAEMON': '1',
     };
   }
 

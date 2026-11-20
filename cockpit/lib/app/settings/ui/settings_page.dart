@@ -90,7 +90,7 @@ enum _Category {
 }
 
 extension on _Category {
-  /// Abas que dependem do ambiente remote-pi (extensão + supervisor).
+  /// Abas que dependem do ambiente remote-omp (extensão + supervisor).
   bool get isRemote =>
       this == _Category.connectivity ||
       this == _Category.daemons ||
@@ -265,7 +265,7 @@ class _CategoryNav extends StatelessWidget {
   });
   final _Category selected;
 
-  /// Extensão remote-pi + supervisor instalados → mostra as abas remotas.
+  /// Extensão remote-omp + supervisor instalados → mostra as abas remotas.
   final bool remoteReady;
   final ValueChanged<_Category> onSelect;
 
@@ -330,14 +330,14 @@ class _CategoryNav extends StatelessWidget {
             onTap: () => onSelect(_Category.notifications),
           ),
           // Hosts remotos (plano 58, SSH) — sempre disponível, não depende do
-          // ambiente remote-pi (extensão/supervisor).
+          // ambiente remote-omp (extensão/supervisor).
           _NavItem(
             icon: Icons.cloud_outlined,
             label: context.t.settings.page.nav.remoteHosts,
             selected: selected == _Category.remoteHosts,
             onTap: () => onSelect(_Category.remoteHosts),
           ),
-          // Abas que dependem do ambiente remote-pi — ocultas até instalá-lo
+          // Abas que dependem do ambiente remote-omp — ocultas até instalá-lo
           // (via checklist da aba de agente).
           if (remoteReady) ...[
             Padding(
@@ -3318,7 +3318,7 @@ class _ConnectivityPanelState extends State<_ConnectivityPanel> {
   void initState() {
     super.initState();
     // Carrega relay + aparelhos quando a aba abre (lazy — não roda o shell-out
-    // do `remote-pi` se o usuário só visita Aparência).
+    // do `remote-omp` se o usuário só visita Aparência).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) context.read<ConnectivityViewModel>().load();
     });
@@ -5357,7 +5357,7 @@ class _DaemonEditorDialogState extends State<_DaemonEditorDialog> {
     );
     if (picked == null || !mounted) return;
     // A checagem de pasta-duplicada aqui é best-effort (compara o caminho
-    // escolhido com os já registrados). O `remote-pi create` normaliza pra
+    // escolhido com os já registrados). O `remote-omp create` normaliza pra
     // realpath e rejeita duplicata (inclusive via symlink) como backstop.
     setState(() {
       _cwd = picked;

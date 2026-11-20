@@ -35,7 +35,7 @@ import 'package:cockpit/app/cockpit/data/repositories/json_project_repository.da
 import 'package:cockpit/app/cockpit/data/repositories/json_realm_repository.dart';
 import 'package:cockpit/app/cockpit/data/repositories/json_workspace_layout_store.dart';
 import 'package:cockpit/app/cockpit/data/repositories/project_schema_migrator.dart';
-import 'package:cockpit/app/cockpit/data/rpc/pi_rpc_process_factory.dart';
+import 'package:cockpit/app/cockpit/data/rpc/omp_rpc_process_factory.dart';
 import 'package:cockpit/app/cockpit/data/setup/environment_installer_impl.dart';
 import 'package:cockpit/app/cockpit/data/hooks/terminal_status_server_impl.dart';
 import 'package:cockpit/app/cockpit/data/tasks/pty_task_runner.dart';
@@ -119,7 +119,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 /// retornado (dedup é por identidade).
 ///
 /// **Resolução cross-module (flutter_modular >= 7.1.0):** os binds que dependem
-/// do `PiSpawnConfig` usam `.new` e resolvem o config **upward** do core
+/// do `OmpSpawnConfig` usam `.new` e resolvem o config **upward** do core
 /// (root-owned) — por isso o builder não recebe mais `config`. Os stores JSON,
 /// porém, continuam exigindo o bootstrap async acima (não há async bind).
 ///
@@ -180,8 +180,8 @@ Future<Module> buildCockpitModule({
         ..addInstance<DismissedUpdateStore>(
           JsonDismissedUpdateStore(settingsStore),
         )
-        // Dependem do PiSpawnConfig → `.new` resolve upward do core (>= 7.1.0).
-        ..addLazySingleton<RpcGatewayFactory>(PiRpcProcessFactory.new)
+        // Dependem do OmpSpawnConfig → `.new` resolve upward do core (>= 7.1.0).
+        ..addLazySingleton<RpcGatewayFactory>(OmpRpcProcessFactory.new)
         ..addLazySingleton<EnvironmentInstaller>(EnvironmentInstallerImpl.new)
         ..addInstance<FolderLister>(const FolderListerImpl())
         ..addInstance<FileSystemReader>(const FileSystemReaderImpl())

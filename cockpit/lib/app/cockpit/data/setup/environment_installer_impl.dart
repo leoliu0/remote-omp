@@ -1,39 +1,39 @@
 import 'dart:io';
 
 import 'package:cockpit/app/core/env.dart';
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:cockpit/app/cockpit/domain/contracts/environment_installer.dart';
 import 'package:cockpit/app/cockpit/domain/entities/install_result.dart';
 
-/// Instala extensão e supervisor rodando processos (`pi` / `node`). Best-effort:
+/// Instala extensão e supervisor rodando processos (`omp` / `node`). Best-effort:
 /// qualquer falha de IO vira [InstallResult.failure] com mensagem legível.
 class EnvironmentInstallerImpl implements EnvironmentInstaller {
   EnvironmentInstallerImpl(this._config);
 
-  final PiSpawnConfig _config;
+  final OmpSpawnConfig _config;
 
   @override
   Future<InstallResult> installExtension() async {
     try {
       final result = await Process.run(
         _config.executable,
-        const ['install', 'npm:remote-pi'],
+        const ['plugin', 'install', 'remote-omp'],
         runInShell: Platform.isWindows,
         environment: await envWithNodeOnPath(),
       );
       if (result.exitCode == 0) return const InstallResult.success();
       return InstallResult.failure(_output(result));
     } catch (e) {
-      return InstallResult.failure('Failed to run "pi install": $e');
+      return InstallResult.failure('Failed to run "omp plugin install": $e');
     }
   }
 
   @override
   Future<InstallResult> installSupervisor() async {
-    final indexJs = await resolveRemotePiIndexJs();
+    final indexJs = await resolveRemoteOmpIndexJs();
     if (indexJs == null) {
       return const InstallResult.failure(
-        'Could not find the remote-pi extension\'s index.js. '
+        'Could not find the remote-omp extension\'s index.js. '
         'Install the extension before installing the supervisor.',
       );
     }

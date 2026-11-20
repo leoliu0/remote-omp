@@ -249,8 +249,8 @@ jobs:
           STAGE=$(mktemp -d)
           cp -R "$APP" "$STAGE/"
           ln -s /Applications "$STAGE/Applications"
-          DMG="dist/RemotePiCockpit-${VERSION}-macos-universal.dmg"
-          hdiutil create -volname "Remote Pi Cockpit" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          DMG="dist/RemoteOMPCockpit-${VERSION}-macos-universal.dmg"
+          hdiutil create -volname "Remote OMP Cockpit" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
           rm -rf "$STAGE"
           codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
           notarize "$DMG"
@@ -318,7 +318,7 @@ jobs:
           EXE=$(find dist -name "*.exe" | head -1)
           test -n "$EXE"
           mkdir -p out
-          mv "$EXE" "out/RemotePiCockpit-Setup-${VERSION}-windows-x64.exe"
+          mv "$EXE" "out/RemoteOMPCockpit-Setup-${VERSION}-windows-x64.exe"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -420,8 +420,8 @@ jobs:
           DEB=$(find dist -name "*.deb" | head -1); test -n "$DEB"
           RPM=$(find dist -name "*.rpm" | head -1); test -n "$RPM"
           mkdir -p out
-          mv "$DEB" "out/remote-pi-cockpit_${VERSION}_${{ matrix.deb_arch }}.deb"
-          mv "$RPM" "out/remote-pi-cockpit-${VERSION}.${{ matrix.rpm_arch }}.rpm"
+          mv "$DEB" "out/remote-omp-cockpit_${VERSION}_${{ matrix.deb_arch }}.deb"
+          mv "$RPM" "out/remote-omp-cockpit-${VERSION}.${{ matrix.rpm_arch }}.rpm"
 
       - name: Smoke test .deb (install on runner)
         # Smoke test installs deb on the runner.
@@ -429,11 +429,11 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E apt-get install -y "./out/remote-pi-cockpit_${VERSION}_${{ matrix.deb_arch }}.deb"
-          dpkg -L remote-pi-cockpit | grep -m1 "\.desktop$"
-          dpkg -L remote-pi-cockpit | grep -q "cockpit-server-bundle/bin/cockpit-server$" || {
+          sudo -E apt-get install -y "./out/remote-omp-cockpit_${VERSION}_${{ matrix.deb_arch }}.deb"
+          dpkg -L remote-omp-cockpit | grep -m1 "\.desktop$"
+          dpkg -L remote-omp-cockpit | grep -q "cockpit-server-bundle/bin/cockpit-server$" || {
             echo "::error::.deb missing cockpit-server bundle"; exit 1; }
-          INSTALLED=$(dpkg -L remote-pi-cockpit | grep -m1 "cockpit-server-bundle/bin/cockpit-server$")
+          INSTALLED=$(dpkg -L remote-omp-cockpit | grep -m1 "cockpit-server-bundle/bin/cockpit-server$")
           SOCK="$RUNNER_TEMP/cockpit-server-deb.sock"
           "$INSTALLED" --socket "$SOCK" --exit-on-idle 1 \
             >"$RUNNER_TEMP/deb-smoke.log" 2>&1 &
@@ -450,8 +450,8 @@ jobs:
         run: |
           # Query file with rpm -qpl
           docker run --rm -v "$PWD/out:/out:ro" fedora:40 bash -c \
-            "dnf install -y /out/remote-pi-cockpit-${VERSION}.${{ matrix.rpm_arch }}.rpm \
-             && rpm -qpl /out/remote-pi-cockpit-${VERSION}.${{ matrix.rpm_arch }}.rpm | grep -m1 '\.desktop$'"
+            "dnf install -y /out/remote-omp-cockpit-${VERSION}.${{ matrix.rpm_arch }}.rpm \
+             && rpm -qpl /out/remote-omp-cockpit-${VERSION}.${{ matrix.rpm_arch }}.rpm | grep -m1 '\.desktop$'"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -517,7 +517,7 @@ jobs:
             > "$RUNNER_TEMP/notes.md"
           NOTES=$(sed '/^$/d' "$RUNNER_TEMP/notes.md" | head -20)
           if [ -z "$NOTES" ]; then
-            NOTES="Remote Pi Cockpit ${VERSION}"
+            NOTES="Remote OMP Cockpit ${VERSION}"
             printf '%s\n' "$NOTES" > "$RUNNER_TEMP/notes.md"
           fi
           jq -n --arg version "$VERSION" --arg date "$(date -u +%F)" \
@@ -546,7 +546,7 @@ jobs:
           cd release
           BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
           ZIP="Cockpit-${VERSION}-macos.zip"
-          EXE="RemotePiCockpit-Setup-${VERSION}-windows-x64.exe"
+          EXE="RemoteOMPCockpit-Setup-${VERSION}-windows-x64.exe"
           test -f "$ZIP"; test -f "$EXE"
           MAC_SIG=$(sign "$ZIP"); MAC_LEN=$(stat -c%s "$ZIP")
           WIN_SIG=$(sign "$EXE"); WIN_LEN=$(stat -c%s "$EXE")
@@ -560,7 +560,7 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
             <channel>
-              <title>Remote Pi Cockpit</title>
+              <title>Remote OMP Cockpit</title>
               <item>
                 <title>${VERSION}</title>
                 <pubDate>${PUBDATE}</pubDate>
@@ -579,7 +579,7 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
             <channel>
-              <title>Remote Pi Cockpit</title>
+              <title>Remote OMP Cockpit</title>
               <item>
                 <title>${VERSION}</title>
                 <pubDate>${PUBDATE}</pubDate>
@@ -623,7 +623,7 @@ jobs:
             gh release upload "$RELEASE_TAG" release/* --clobber
           else
             gh release create "$RELEASE_TAG" release/* \
-              --title "Remote Pi Cockpit ${VERSION}" \
+              --title "Remote OMP Cockpit ${VERSION}" \
               --notes-file "$NOTES_FILE" \
               --latest
           fi

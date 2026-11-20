@@ -415,7 +415,7 @@ class _Translations$cockpit$agentEditDialog$es extends Translations$cockpit$agen
 	// Translations
 	@override String get title => 'Editar agente';
 	@override String get agentName => 'Nombre del agente';
-	@override String get relaySection => 'Relay (remote-pi)';
+	@override String get relaySection => 'Relay (remote-omp)';
 	@override String get autoConnect => 'Conectar automáticamente al iniciar';
 	@override String get informationSection => 'Información';
 	@override String get folder => 'Carpeta';
@@ -437,15 +437,15 @@ class _Translations$cockpit$agentSetupChecklist$es extends Translations$cockpit$
 
 	// Translations
 	@override String get title => 'Configurar el entorno del agente';
-	@override String get intro => 'Ejecutar un agente requiere tener Pi instalado. Completa los pasos siguientes — las terminales y los archivos funcionan sin nada de esto.';
-	@override String get step1Title => 'Pi Code instalado';
-	@override String get step1Description => 'El binario `pi` debe estar accesible.';
-	@override String get step2Title => 'Extensión remote-pi en Pi';
-	@override String get step2Description => 'Registrada en ~/.pi/agent/settings.json.';
+	@override String get intro => 'Ejecutar un agente requiere tener omp (oh-my-pi) instalado. Completa los pasos siguientes — las terminales y los archivos funcionan sin nada de esto.';
+	@override String get step1Title => 'omp instalado';
+	@override String get step1Description => 'El binario `omp` debe estar accesible.';
+	@override String get step2Title => 'Extensión remote-omp en omp';
+	@override String get step2Description => 'Instalada como plugin de omp (omp plugin install remote-omp).';
 	@override String get step3Title => 'Supervisor instalado';
-	@override String get step3Description => 'Servicio pi-supervisord (remote-pi install).';
+	@override String get step3Description => 'Servicio remote-omp-supervisord (remote-omp install).';
 	@override String get install => 'Instalar';
-	@override String get installExtensionTitle => 'Instalar extensión remote-pi';
+	@override String get installExtensionTitle => 'Instalar extensión remote-omp';
 	@override String get installSupervisorTitle => 'Instalar supervisor';
 	@override String get createAgent => 'Crear agente';
 	@override String get back => 'Atrás';
@@ -1061,7 +1061,7 @@ class _Translations$cockpit$emptyPane$es extends Translations$cockpit$emptyPane$
 
 	// Translations
 	@override String get newAgent => 'Nuevo agente';
-	@override String get newAgentDescription => 'Ejecuta un pi en la carpeta que elijas';
+	@override String get newAgentDescription => 'Ejecuta un omp en la carpeta que elijas';
 	@override String get newTerminal => 'Nueva terminal';
 	@override String get newTerminalDescription => 'Abre un shell en la carpeta que elijas';
 }
@@ -1239,7 +1239,7 @@ class _Translations$settings$pairingDialog$es extends Translations$settings$pair
 	// Translations
 	@override String get title => 'Vincular dispositivo';
 	@override String get connectingToRelay => 'Conectando al relay…';
-	@override String get step1 => 'Abre la app Remote Pi en tu teléfono.';
+	@override String get step1 => 'Abre la app Remote OMP en tu teléfono.';
 	@override String get step2 => 'Toca en añadir / vincular dispositivo.';
 	@override String get step3 => 'Apunta la cámara al QR de abajo.';
 	@override String get qrGenerationFailed => 'No se pudo generar el QR.';
@@ -1449,7 +1449,7 @@ class _Translations$settings$page$general$es extends Translations$settings$page$
 	// Translations
 	@override String get sectionAgent => 'Agente';
 	@override String get enableAgentsTitle => 'Activar agentes';
-	@override String get enableAgentsDesc => 'Muestra la opción de abrir pestañas de agente (pi). Cuando está desactivado, Cockpit funciona solo como workspace de terminal.';
+	@override String get enableAgentsDesc => 'Muestra la opción de abrir pestañas de agente (omp). Cuando está desactivado, Cockpit funciona solo como workspace de terminal.';
 	@override String get showCockpitTitle => 'Mostrar terminal de Cockpit';
 	@override String get showCockpitDesc => 'Mantiene un workspace sin carpeta, solo de terminal, fijado en la parte superior de la barra lateral. Desactivarlo cierra sus terminales.';
 	@override String get launchAtStartupTitle => 'Iniciar al arrancar';
@@ -1687,7 +1687,7 @@ class _Translations$settings$page$schedules$es extends Translations$settings$pag
 	@override String get sectionScheduledPrompts => 'Prompts programados';
 	@override String get createSchedule => 'Crear programación';
 	@override String get createDaemonFirst => 'Crea primero un Agente Daemon.';
-	@override String get supervisorOffline => 'Supervisor sin conexión. Las programaciones necesitan que pi-supervisord esté en ejecución (`remote-pi install`).';
+	@override String get supervisorOffline => 'Supervisor sin conexión. Las programaciones necesitan que remote-omp-supervisord esté en ejecución (`remote-omp install`).';
 	@override String get failedToListSchedules => 'No se pudieron listar las programaciones.';
 	@override String get noSchedules => 'Sin programaciones. Crea un prompt recurrente para un daemon.';
 	@override String get runNow => 'Ejecutar ahora';
@@ -1744,7 +1744,7 @@ class _Translations$settings$page$daemons$es extends Translations$settings$page$
 	@override String get removeDaemonDialogTitle => '¿Quitar daemon?';
 	@override String removeDaemonDialogContent({required Object name}) => '"${name}" deja de ejecutarse y sale del registro. La carpeta y su configuración local se conservan — puedes recrearlo después.';
 	@override String get supervisorOfflineTitle => 'Supervisor sin conexión';
-	@override String get supervisorOfflineDesc => 'pi-supervisord no se está ejecutando. Instálalo con `remote-pi install` para gestionar agentes 24/7.';
+	@override String get supervisorOfflineDesc => 'remote-omp-supervisord no se está ejecutando. Instálalo con `remote-omp install` para gestionar agentes 24/7.';
 	@override String get failedToListDaemons => 'No se pudieron listar los daemons.';
 	@override String get noRegisteredAgents => 'Sin agentes registrados. Crea uno a partir de una carpeta.';
 	@override String get start => 'Iniciar';
@@ -1959,7 +1959,7 @@ extension on TranslationsEs {
 			'cockpit.commitMessageDialog.cancelGeneration' => 'Cancelar generación',
 			'cockpit.agentEditDialog.title' => 'Editar agente',
 			'cockpit.agentEditDialog.agentName' => 'Nombre del agente',
-			'cockpit.agentEditDialog.relaySection' => 'Relay (remote-pi)',
+			'cockpit.agentEditDialog.relaySection' => 'Relay (remote-omp)',
 			'cockpit.agentEditDialog.autoConnect' => 'Conectar automáticamente al iniciar',
 			'cockpit.agentEditDialog.informationSection' => 'Información',
 			'cockpit.agentEditDialog.folder' => 'Carpeta',
@@ -1972,15 +1972,15 @@ extension on TranslationsEs {
 			'cockpit.agentEditDialog.statusStreaming' => 'transmitiendo',
 			'cockpit.agentEditDialog.statusEnded' => 'finalizado',
 			'cockpit.agentSetupChecklist.title' => 'Configurar el entorno del agente',
-			'cockpit.agentSetupChecklist.intro' => 'Ejecutar un agente requiere tener Pi instalado. Completa los pasos siguientes — las terminales y los archivos funcionan sin nada de esto.',
-			'cockpit.agentSetupChecklist.step1Title' => 'Pi Code instalado',
-			'cockpit.agentSetupChecklist.step1Description' => 'El binario `pi` debe estar accesible.',
-			'cockpit.agentSetupChecklist.step2Title' => 'Extensión remote-pi en Pi',
-			'cockpit.agentSetupChecklist.step2Description' => 'Registrada en ~/.pi/agent/settings.json.',
+			'cockpit.agentSetupChecklist.intro' => 'Ejecutar un agente requiere tener omp (oh-my-pi) instalado. Completa los pasos siguientes — las terminales y los archivos funcionan sin nada de esto.',
+			'cockpit.agentSetupChecklist.step1Title' => 'omp instalado',
+			'cockpit.agentSetupChecklist.step1Description' => 'El binario `omp` debe estar accesible.',
+			'cockpit.agentSetupChecklist.step2Title' => 'Extensión remote-omp en omp',
+			'cockpit.agentSetupChecklist.step2Description' => 'Instalada como plugin de omp (omp plugin install remote-omp).',
 			'cockpit.agentSetupChecklist.step3Title' => 'Supervisor instalado',
-			'cockpit.agentSetupChecklist.step3Description' => 'Servicio pi-supervisord (remote-pi install).',
+			'cockpit.agentSetupChecklist.step3Description' => 'Servicio remote-omp-supervisord (remote-omp install).',
 			'cockpit.agentSetupChecklist.install' => 'Instalar',
-			'cockpit.agentSetupChecklist.installExtensionTitle' => 'Instalar extensión remote-pi',
+			'cockpit.agentSetupChecklist.installExtensionTitle' => 'Instalar extensión remote-omp',
 			'cockpit.agentSetupChecklist.installSupervisorTitle' => 'Instalar supervisor',
 			'cockpit.agentSetupChecklist.createAgent' => 'Crear agente',
 			'cockpit.agentSetupChecklist.back' => 'Atrás',
@@ -2389,7 +2389,7 @@ extension on TranslationsEs {
 			'cockpit.contentSearch.searching' => 'Buscando…',
 			'cockpit.contentSearch.noResults' => 'Sin resultados.',
 			'cockpit.emptyPane.newAgent' => 'Nuevo agente',
-			'cockpit.emptyPane.newAgentDescription' => 'Ejecuta un pi en la carpeta que elijas',
+			'cockpit.emptyPane.newAgentDescription' => 'Ejecuta un omp en la carpeta que elijas',
 			'cockpit.emptyPane.newTerminal' => 'Nueva terminal',
 			'cockpit.emptyPane.newTerminalDescription' => 'Abre un shell en la carpeta que elijas',
 			'cockpit.topbar.collapseSidebar' => 'Contraer barra lateral',
@@ -2477,7 +2477,7 @@ extension on TranslationsEs {
 			'settings.revokeDialog.ok' => 'Ok',
 			'settings.pairingDialog.title' => 'Vincular dispositivo',
 			'settings.pairingDialog.connectingToRelay' => 'Conectando al relay…',
-			'settings.pairingDialog.step1' => 'Abre la app Remote Pi en tu teléfono.',
+			'settings.pairingDialog.step1' => 'Abre la app Remote OMP en tu teléfono.',
 			'settings.pairingDialog.step2' => 'Toca en añadir / vincular dispositivo.',
 			'settings.pairingDialog.step3' => 'Apunta la cámara al QR de abajo.',
 			'settings.pairingDialog.qrGenerationFailed' => 'No se pudo generar el QR.',
@@ -2501,7 +2501,7 @@ extension on TranslationsEs {
 			'settings.page.nav.remoteHosts' => 'Hosts remotos',
 			'settings.page.general.sectionAgent' => 'Agente',
 			'settings.page.general.enableAgentsTitle' => 'Activar agentes',
-			'settings.page.general.enableAgentsDesc' => 'Muestra la opción de abrir pestañas de agente (pi). Cuando está desactivado, Cockpit funciona solo como workspace de terminal.',
+			'settings.page.general.enableAgentsDesc' => 'Muestra la opción de abrir pestañas de agente (omp). Cuando está desactivado, Cockpit funciona solo como workspace de terminal.',
 			'settings.page.general.showCockpitTitle' => 'Mostrar terminal de Cockpit',
 			'settings.page.general.showCockpitDesc' => 'Mantiene un workspace sin carpeta, solo de terminal, fijado en la parte superior de la barra lateral. Desactivarlo cierra sus terminales.',
 			'settings.page.general.launchAtStartupTitle' => 'Iniciar al arrancar',
@@ -2661,7 +2661,7 @@ extension on TranslationsEs {
 			'settings.page.schedules.sectionScheduledPrompts' => 'Prompts programados',
 			'settings.page.schedules.createSchedule' => 'Crear programación',
 			'settings.page.schedules.createDaemonFirst' => 'Crea primero un Agente Daemon.',
-			'settings.page.schedules.supervisorOffline' => 'Supervisor sin conexión. Las programaciones necesitan que pi-supervisord esté en ejecución (`remote-pi install`).',
+			'settings.page.schedules.supervisorOffline' => 'Supervisor sin conexión. Las programaciones necesitan que remote-omp-supervisord esté en ejecución (`remote-omp install`).',
 			'settings.page.schedules.failedToListSchedules' => 'No se pudieron listar las programaciones.',
 			'settings.page.schedules.noSchedules' => 'Sin programaciones. Crea un prompt recurrente para un daemon.',
 			'settings.page.schedules.runNow' => 'Ejecutar ahora',
@@ -2709,7 +2709,7 @@ extension on TranslationsEs {
 			'settings.page.daemons.removeDaemonDialogTitle' => '¿Quitar daemon?',
 			'settings.page.daemons.removeDaemonDialogContent' => ({required Object name}) => '"${name}" deja de ejecutarse y sale del registro. La carpeta y su configuración local se conservan — puedes recrearlo después.',
 			'settings.page.daemons.supervisorOfflineTitle' => 'Supervisor sin conexión',
-			'settings.page.daemons.supervisorOfflineDesc' => 'pi-supervisord no se está ejecutando. Instálalo con `remote-pi install` para gestionar agentes 24/7.',
+			'settings.page.daemons.supervisorOfflineDesc' => 'remote-omp-supervisord no se está ejecutando. Instálalo con `remote-omp install` para gestionar agentes 24/7.',
 			'settings.page.daemons.failedToListDaemons' => 'No se pudieron listar los daemons.',
 			'settings.page.daemons.noRegisteredAgents' => 'Sin agentes registrados. Crea uno a partir de una carpeta.',
 			'settings.page.daemons.start' => 'Iniciar',

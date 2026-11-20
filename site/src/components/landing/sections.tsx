@@ -18,7 +18,7 @@ import {
 } from "@/components/landing/icons";
 import type { ReactNode } from "react";
 
-const GITHUB_URL = "https://github.com/jacobaraujo7/remote_pi";
+const GITHUB_URL = "https://github.com/leoliu0/remote-omp";
 const PROTOCOL_URL = `${GITHUB_URL}/blob/main/PROTOCOL.md`;
 
 /* ---------------- Pillars ---------------- */
@@ -137,7 +137,7 @@ const STORES: Store[] = [
     top: "Get it on",
     name: "Google Play",
     sub: "Android",
-    href: "https://play.google.com/store/apps/details?id=work.jacobmoura.remotepi",
+    href: "https://play.google.com/store/apps/details?id=work.jacobmoura.remoteomp",
     external: true,
   },
   {

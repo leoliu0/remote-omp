@@ -10,7 +10,7 @@ import {
   IconStop,
 } from "@/components/landing/icons";
 
-const GITHUB_URL = "https://github.com/jacobaraujo7/remote_pi";
+const GITHUB_URL = "https://github.com/leoliu0/remote-omp";
 
 /* ---------- living mesh background ---------- */
 function HeroMesh() {
@@ -74,11 +74,11 @@ type ChatItem =
 
 const CHAT_ITEMS: ChatItem[] = [
   { type: "user", text: "hello" },
-  { type: "tool", kind: "READ", cmd: "$ path=~/.pi/skills/agent-network/SKILL.md" },
-  { type: "tool", kind: "BASH", cmd: '$ find ~/.pi -name "pair*" -o -name "join*" | head -20' },
+  { type: "tool", kind: "READ", cmd: "$ path=~/.omp/remote/skills/agent-network/SKILL.md" },
+  { type: "tool", kind: "BASH", cmd: '$ find ~/.omp -name "pair*" -o -name "join*" | head -20' },
   {
     type: "md",
-    text: "This is a Pi Agent Network pairing code. `Frontend` is asking to connect to this machine — processing the link now.",
+    text: "This is a Remote OMP Agent Network pairing code. `Frontend` is asking to connect to this machine — processing the link now.",
   },
 ];
 

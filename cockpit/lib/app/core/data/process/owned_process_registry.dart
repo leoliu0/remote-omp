@@ -8,7 +8,7 @@ import 'package:cockpit/app/core/utils/user_home.dart';
 /// Cada categoria grava um arquivo por PID proprietário:
 ///
 /// ```text
-/// ~/.pi/cockpit/process-pids/<category>/<ownerPid>.pids
+/// ~/.omp/cockpit/process-pids/<category>/<ownerPid>.pids
 /// ```
 ///
 /// No boot, a instância limpa o próprio arquivo (hot restart) e arquivos de
@@ -149,7 +149,7 @@ class OwnedProcessRegistry {
 
   static String _defaultRootPath() {
     final home = userHome() ?? '';
-    return '$home${Platform.pathSeparator}.pi${Platform.pathSeparator}'
+    return '$home${Platform.pathSeparator}.omp${Platform.pathSeparator}'
         'cockpit${Platform.pathSeparator}process-pids';
   }
 

@@ -1,6 +1,6 @@
 // Pure helpers behind the chat's tool cards. The live `tool_result` frame and
 // the replayed history event carry the same fields (`result` on success,
-// `error` on failure — pi-extension `_stringifyToolResult`), so both paths
+// `error` on failure — omp-extension `_stringifyToolResult`), so both paths
 // normalise through `toolOutcome` and the card renders one `output` string.
 //
 // The bash card mirrors the terminal's Full mode and the phone's card (same

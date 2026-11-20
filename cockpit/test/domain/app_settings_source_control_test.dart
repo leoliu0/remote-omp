@@ -95,8 +95,8 @@ void main() {
       expect(controller.settings.selectedAutomationModelId, isNull);
       expect(controller.settings.automationModelId, '');
 
-      controller.setAutomationHarness(HarnessKind.pi);
-      expect(controller.settings.automationHarnessId, HarnessKind.pi);
+      controller.setAutomationHarness(HarnessKind.omp);
+      expect(controller.settings.automationHarnessId, HarnessKind.omp);
       expect(controller.settings.selectedAutomationModelId, isNull);
 
       controller.setAutomationModel('anthropic/claude-sonnet-4');

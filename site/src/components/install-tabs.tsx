@@ -4,9 +4,9 @@ import { useState } from "react";
 import { CodeBlock } from "./code-block";
 
 const CURL = "curl -fsSL https://remote-pi.jacobmoura.work/install.sh | bash";
-const HAVE_PI = `pi install npm:remote-pi
-/remote-pi
-/remote-pi pair`;
+const HAVE_OMP = `omp plugin install remote-omp
+/remote-omp
+/remote-omp pair`;
 
 type Tab = {
   label: string;
@@ -18,7 +18,7 @@ type Tab = {
 
 type InstallTabsProps = {
   /**
-   * Controls the "No Pi yet" curl tab. Defaults to `true` now that the
+   * Controls the "No omp yet" curl tab. Defaults to `true` now that the
    * installer ships and the site serves install.sh at the canonical domain.
    * Pass `false` to disable it with a "Coming soon" hint.
    */
@@ -27,21 +27,21 @@ type InstallTabsProps = {
 
 /**
  * Two-tab install block for the Getting started tutorial, styled to match the
- * home install terminal. "No Pi yet" runs the curl installer; "Already have
- * Pi" adds the plugin to an existing Pi.
+ * home install terminal. "No omp yet" runs the curl installer; "Already have
+ * omp" adds the plugin to an existing omp.
  */
 export function InstallTabs({ curlReady = true }: InstallTabsProps) {
   const tabs: Record<string, Tab> = {
-    "No Pi yet": {
+    "No omp yet": {
       label: "bash — one command",
       code: CURL,
       prompt: true,
       disabled: !curlReady,
-      note: "Installs Pi, the Remote Pi plugin, and the always-on supervisor, then prints the pairing step. No sudo — everything lands in your home directory.",
+      note: "Installs omp, the Remote OMP plugin, and the always-on supervisor, then prints the pairing step. No sudo — everything lands in your home directory.",
     },
-    "Already have Pi": {
-      label: "pi — three commands",
-      code: HAVE_PI,
+    "Already have omp": {
+      label: "omp — three commands",
+      code: HAVE_OMP,
       prompt: false,
       note: "Run them in order: install the plugin, run the setup wizard, then show the pairing QR. Each is explained below.",
     },
@@ -54,7 +54,7 @@ export function InstallTabs({ curlReady = true }: InstallTabsProps) {
 
   return (
     <div className="install-card" style={{ marginTop: 22 }}>
-      <div className="tabs" role="tablist" aria-label="Install Remote Pi">
+      <div className="tabs" role="tablist" aria-label="Install Remote OMP">
         {keys.map((t) => (
           <button
             key={t}

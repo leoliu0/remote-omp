@@ -92,12 +92,12 @@ fn explicit_tab_id_overrides_env() {
 #[test]
 fn list_tabs_uses_wire_command_and_formats() {
     let resp = r#"{"ok":true,"data":[
-        {"id":"t1","kind":"terminal","title":"zsh","workspacePath":"/x/remote_pi","working":true}
+        {"id":"t1","kind":"terminal","title":"zsh","workspacePath":"/x/remote_omp","working":true}
     ]}"#;
     let (req, stdout, _, code) = run_against_fake_app(&["list-tabs"], resp);
     assert_eq!(req["cmd"], "list-panes", "wire command remains list-panes");
     assert!(stdout.starts_with("● t1"), "{stdout}");
-    assert!(stdout.contains("remote_pi"), "{stdout}");
+    assert!(stdout.contains("remote_omp"), "{stdout}");
     assert_eq!(code, 0);
 }
 

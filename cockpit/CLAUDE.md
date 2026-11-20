@@ -1,6 +1,6 @@
-# Remote Pi — Cockpit (Flutter Desktop)
+# Remote OMP — Cockpit (Flutter Desktop)
 
-Desktop client (macOS, Windows, Linux) for Remote Pi. Multi-pane GUI over the Pi engine: projects on the left, agent terminals in the center, file tree on the right.
+Desktop client (macOS, Windows, Linux) for Remote OMP. Multi-pane GUI over the omp (oh-my-pi) engine: projects on the left, agent terminals in the center, file tree on the right.
 
 ## Stack
 

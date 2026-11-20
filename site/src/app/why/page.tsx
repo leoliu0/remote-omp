@@ -5,12 +5,12 @@ import { IconDownload, IconGithub } from "@/components/landing/icons";
 import { RevealController } from "@/components/landing/reveal-controller";
 
 export const metadata: Metadata = {
-  title: "Why Pi",
+  title: "Why Remote OMP",
   description:
-    "Deciding how to run an always-on coding agent? remote-pi keeps Pi alive 24/7 and puts it in your pocket. Here's when that's the right shape — and when an all-in-one platform isn't.",
+    "Deciding how to run an always-on coding agent? Remote OMP keeps omp alive 24/7 and puts it in your pocket. Here's when that's the right shape — and when an all-in-one platform isn't.",
 };
 
-const GITHUB_URL = "https://github.com/jacobaraujo7/remote_pi";
+const GITHUB_URL = "https://github.com/leoliu0/remote-omp";
 
 const highlights = [
   {
@@ -19,14 +19,14 @@ const highlights = [
       "A per-machine supervisor (launchd on macOS, systemd on Linux) keeps every paired folder running as a background agent — survives logout, restarts on crash, answers at 3am.",
   },
   {
-    title: "Lightweight",
+    title: "A full agent underneath",
     description:
-      "Pi is a small coding agent, not a platform. It boots fast and runs only what you add to it — nothing you didn't ask for.",
+      "omp is a coding agent with the IDE wired in — LSP, a real debugger, subagents, 60+ providers. Remote OMP doesn't replace any of it; it keeps that agent running and reachable.",
   },
   {
-    title: "You assemble it",
+    title: "Yours to extend",
     description:
-      "Extend Pi with the skills, plugins, and per-folder agents you actually need. The agent is yours to shape until it fits your work exactly.",
+      "Add the skills, plugins, and per-folder agents you actually need through omp's own extension points. The agent is yours to shape until it fits your work exactly.",
   },
   {
     title: "Driven from your phone",
@@ -51,19 +51,19 @@ export default function WhyPage() {
       <div className="page-body">
         <div className="wrap">
           <header className="page-head reveal" style={{ maxWidth: 760 }}>
-            <span className="eyebrow">Why Pi</span>
-            <h1>An always-on agent you assemble yourself.</h1>
+            <span className="eyebrow">Why Remote OMP</span>
+            <h1>An always-on omp agent, in your pocket.</h1>
             <p className="lede">
-              remote-pi turns Pi into a background agent that never logs off —
+              Remote OMP turns omp into a background agent that never logs off —
               and a phone in your pocket that drives it. This page is about that
-              choice: keeping a coding agent alive 24/7, and whether building it
-              up from something small is the shape you want.
+              choice: keeping a coding agent alive 24/7, and whether adding an
+              always-on layer to omp is the shape you want.
             </p>
           </header>
 
           <div className="section-head reveal" style={{ marginTop: 64 }}>
             <span className="eyebrow">What you get</span>
-            <h2>Pi, kept alive and put in your pocket.</h2>
+            <h2>omp, kept alive and put in your pocket.</h2>
           </div>
           <div
             className="reveal"
@@ -98,21 +98,21 @@ export default function WhyPage() {
               won&apos;t pretend otherwise.
             </p>
             <p>
-              remote-pi makes a different bet. It starts from Pi — a lightweight
-              coding agent — and adds just the always-on layer: a supervisor
-              that keeps it running and a phone that drives it. Everything else,
-              you assemble. The trade is real: less out of the box, more
-              that&apos;s exactly yours.
+              Remote OMP makes a different bet. It starts from omp — a coding
+              agent you already run in the terminal — and adds just the
+              always-on layer: a supervisor that keeps it running and a phone
+              that drives it. The trade is real: you bring your own omp setup
+              and providers, and in return it&apos;s exactly yours.
             </p>
             <Callout title="The choice">
               Want a complete, all-in-one platform, ready out of the box?
-              OpenClaw and Hermes Agent are great places to start. Want a
-              lightweight coding agent you assemble, keep alive 24/7, and
-              control from your phone? That&apos;s Pi with remote-pi.
+              OpenClaw and Hermes Agent are great places to start. Want the omp
+              coding agent, kept alive 24/7 and controlled from your phone?
+              That&apos;s omp with Remote OMP.
             </Callout>
             <p style={{ fontSize: 14 }}>
               One note on scope: this comparison is about the{" "}
-              <em>always-on layer</em> — remote-pi&apos;s daemon mode — not
+              <em>always-on layer</em> — Remote OMP&apos;s daemon mode — not
               coding agents in general. It&apos;s the part where keeping an agent
               alive and reachable is the whole job, and where OpenClaw and Hermes
               Agent shine too.
@@ -150,7 +150,7 @@ export default function WhyPage() {
                 maxWidth: 520,
               }}
             >
-              Add the plugin to Pi, pair your phone, and promote a folder to a
+              Add the plugin to omp, pair your phone, and promote a folder to a
               24/7 daemon. The how-to walks every step.
             </p>
             <div

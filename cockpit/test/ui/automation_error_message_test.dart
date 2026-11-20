@@ -60,18 +60,18 @@ void main() {
       tester,
       const AutomationError(
         AutomationErrorKind.process,
-        harness: 'Pi',
+        harness: 'OMP',
         detail: 'boom',
       ),
     );
     final withoutDetail = await _messageFor(
       tester,
-      const AutomationError(AutomationErrorKind.process, harness: 'Pi'),
+      const AutomationError(AutomationErrorKind.process, harness: 'OMP'),
     );
 
     expect(withDetail, contains('boom'));
     expect(withoutDetail, isNot(contains('boom')));
-    expect(withoutDetail, contains('Pi'));
+    expect(withoutDetail, contains('OMP'));
   });
 
   testWidgets('todo kind tem tradução em todos os locales', (tester) async {
@@ -79,7 +79,7 @@ void main() {
       for (final kind in AutomationErrorKind.values) {
         final message = await _messageFor(
           tester,
-          AutomationError(kind, harness: 'Pi', detail: 'd', timeoutSeconds: 60),
+          AutomationError(kind, harness: 'OMP', detail: 'd', timeoutSeconds: 60),
           locale: locale,
         );
         expect(

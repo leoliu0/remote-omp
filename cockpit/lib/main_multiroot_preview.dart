@@ -114,7 +114,7 @@ class _ProjectsColumn extends StatelessWidget {
           ),
           // Monorepo: chip de branch único, como hoje (âmbar quando sujo).
           _projectRow(
-            'Remote Pi',
+            'Remote OMP',
             const Color(0xFF8B5CF6),
             badge: _branchChip('feat/testunique', dirty: 2),
           ),

@@ -22,7 +22,7 @@ abstract class TerminalHarnessNormalizer {
   };
 
   static const Map<String, String> _scriptPackageAlias = {
-    'pi-coding-agent': 'pi',
+    'pi-coding-agent': 'omp',
     'claude-code': 'claude',
     'cursor-agent': 'cursor-agent',
   };

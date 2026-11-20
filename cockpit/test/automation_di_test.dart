@@ -19,7 +19,7 @@ void main() {
     tester,
   ) async {
     final core = buildCoreModule(
-      config: const PiSpawnConfig(executable: 'pi'),
+      config: const OmpSpawnConfig(executable: 'omp'),
       terminalProfiles: TerminalProfileResolverImpl(),
     );
     final feature = createModule(

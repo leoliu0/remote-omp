@@ -6,33 +6,33 @@ import 'package:cockpit/app/core/env.dart';
 import 'package:cockpit/app/cockpit/data/adapters/rpc_data_mapper.dart';
 import 'package:cockpit/app/cockpit/data/adapters/rpc_event_mapper.dart';
 import 'package:cockpit/app/core/data/rpc/jsonl_line_splitter.dart';
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:cockpit/app/cockpit/domain/contracts/rpc_process_gateway.dart';
 import 'package:cockpit/app/cockpit/domain/entities/agent_snapshot.dart';
 import 'package:cockpit/app/cockpit/domain/entities/context_usage.dart';
-import 'package:cockpit/app/cockpit/domain/entities/pi_command.dart';
-import 'package:cockpit/app/cockpit/domain/entities/pi_model.dart';
+import 'package:cockpit/app/cockpit/domain/entities/omp_command.dart';
+import 'package:cockpit/app/cockpit/domain/entities/omp_model.dart';
 import 'package:cockpit/app/cockpit/domain/entities/prompt_image.dart';
 import 'package:cockpit/app/cockpit/domain/entities/rpc_event.dart';
 import 'package:cockpit/app/cockpit/domain/entities/thinking_level.dart';
 import 'package:cockpit/app/cockpit/domain/entities/transcript_message.dart';
-import 'package:cockpit/app/cockpit/data/rpc/pi_process_registry.dart';
+import 'package:cockpit/app/cockpit/data/rpc/omp_process_registry.dart';
 import 'package:cockpit/app/cockpit/domain/exceptions/rpc_error.dart';
 import 'package:cockpit/app/core/domain/result.dart';
 import 'package:flutter/foundation.dart';
 
 /// Implementação do [RpcProcessGateway] sobre `dart:io` `Process`.
 ///
-/// Dono do ciclo de vida do child `pi --mode rpc`: spawn, escrita no stdin,
+/// Dono do ciclo de vida do child `omp --mode rpc`: spawn, escrita no stdin,
 /// parse do stdout (via [JsonlLineSplitter] + [RpcEventMapper]), detecção de
 /// saída e kill limpo. **Mata o child no `dispose` (sem órfão).**
 ///
 /// MVP single-pane: um processo por instância. Validado empiricamente no spike
 /// do plano 37 — ver `docs/rpc-protocol.md`.
-class PiRpcProcess implements RpcProcessGateway {
-  PiRpcProcess(this._config);
+class OmpRpcProcess implements RpcProcessGateway {
+  OmpRpcProcess(this._config);
 
-  final PiSpawnConfig _config;
+  final OmpSpawnConfig _config;
   final RpcEventMapper _mapper = const RpcEventMapper();
   final RpcDataMapper _dataMapper = const RpcDataMapper();
   final StreamController<RpcEvent> _events =
@@ -75,8 +75,8 @@ class PiRpcProcess implements RpcProcessGateway {
       );
     }
     try {
-      // Base = ambiente do pai com o bin do `node` na PATH (shim `pi` usa
-      // `#!/usr/bin/env node`; em nvm/Homebrew o node não está na PATH do GUI).
+      // Base = ambiente do pai com o bin do `bun`/`node` na PATH (shim `omp` usa
+      // `#!/usr/bin/env bun`; fora do shell o `~/.bun/bin` não está na PATH do GUI).
       final base = await envWithNodeOnPath();
       final env = environment != null ? {...base, ...environment} : base;
       final process = await Process.start(
@@ -84,12 +84,12 @@ class PiRpcProcess implements RpcProcessGateway {
         _config.spawnArgs(sessionId: sessionId),
         workingDirectory: workingDirectory,
         environment: env,
-        // Windows: o `pi` é shim `.cmd`/`.bat` do npm — só executa via shell.
+        // Windows: o `omp` é shim `.cmd`/`.bat` — só executa via shell.
         runInShell: Platform.isWindows,
       );
       _process = process;
       _cwd = workingDirectory;
-      unawaited(PiProcessRegistry.register(process.pid));
+      unawaited(OmpProcessRegistry.register(process.pid));
 
       _stdoutSub = process.stdout
           .transform(const JsonlLineSplitter())
@@ -182,7 +182,7 @@ class PiRpcProcess implements RpcProcessGateway {
     final process = _process;
     if (process == null) return;
 
-    // Caminho gracioso (provado no spike): fechar o stdin já faz o pi sair 0.
+    // Caminho gracioso (provado no spike): fechar o stdin já faz o omp sair 0.
     try {
       await process.stdin.close();
     } catch (_) {
@@ -316,13 +316,13 @@ class PiRpcProcess implements RpcProcessGateway {
   }
 
   @override
-  Future<Result<List<PiModel>, RpcError>> availableModels() => _guard(() async {
+  Future<Result<List<OmpModel>, RpcError>> availableModels() => _guard(() async {
     final response = await _request({'type': 'get_available_models'});
     return _dataMapper.models(response['data']);
   });
 
   @override
-  Future<Result<List<PiCommand>, RpcError>> commands() => _guard(() async {
+  Future<Result<List<OmpCommand>, RpcError>> commands() => _guard(() async {
     final response = await _request({'type': 'get_commands'});
     return _dataMapper.commands(response['data']);
   });
@@ -334,7 +334,7 @@ class PiRpcProcess implements RpcProcessGateway {
   });
 
   @override
-  Future<Result<PiModel, RpcError>> setModel(PiModel model) => _guard(() async {
+  Future<Result<OmpModel, RpcError>> setModel(OmpModel model) => _guard(() async {
     final response = await _request({
       'type': 'set_model',
       'provider': model.provider,
@@ -383,7 +383,7 @@ class PiRpcProcess implements RpcProcessGateway {
         return _dataMapper.transcriptMessages(response['data']);
       });
 
-  static const _ctrlPrefix = '\x00remote-pi-ctrl:';
+  static const _ctrlPrefix = '\x00remote-omp-ctrl:';
 
   @override
   Future<Result<void, RpcError>> sendControl(String verb) async {
@@ -423,7 +423,7 @@ class PiRpcProcess implements RpcProcessGateway {
     final pid = _process?.pid;
     _process = null;
     _cwd = null;
-    if (pid != null) unawaited(PiProcessRegistry.unregister(pid));
+    if (pid != null) unawaited(OmpProcessRegistry.unregister(pid));
     // Não deixe requests pendentes pendurados quando o processo morre.
     for (final completer in _pending.values) {
       if (!completer.isCompleted) {

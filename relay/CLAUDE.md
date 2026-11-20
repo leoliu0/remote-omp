@@ -1,4 +1,4 @@
-# Remote Pi — Relay (Rust)
+# Remote OMP — Relay (Rust)
 
 WebSocket relay server that authenticates connections by `peer_id`, routes App↔Pi traffic,
 authorizes and forwards Pi→Pi envelopes, and stores Owner-signed membership metadata in SQLite.

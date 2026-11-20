@@ -54,8 +54,8 @@ abstract class TerminalHarnessClassifier {
         return _checkGitHubCopilot(args);
       case HarnessKind.openCode:
         return _checkOpenCode(args);
-      case HarnessKind.pi:
-        return _checkPi(args);
+      case HarnessKind.omp:
+        return _checkOmp(args);
     }
   }
 
@@ -157,28 +157,38 @@ abstract class TerminalHarnessClassifier {
     return true;
   }
 
-  static bool _checkPi(List<String> args) {
+  static bool _checkOmp(List<String> args) {
+    // Subcomandos do omp que não abrem a TUI de agente (administração,
+    // ferramentas avulsas, servidores).
     const adminSubcommands = {
-      'export',
+      'acp',
+      'agents',
       'auth',
+      'commit',
+      'completions',
       'config',
-      'models',
-      'version',
       'help',
-      'doctor',
+      'install',
+      'login',
+      'models',
+      'plugin',
+      'ps',
+      'setup',
+      'update',
+      'version',
     };
+    const nonInteractiveModes = {'text', 'json', 'rpc', 'rpc-ui'};
     for (int i = 0; i < args.length; i++) {
       final arg = args[i];
       if (arg == '-p' || arg == '--print') return false;
+      if (arg == '--export' || arg.startsWith('--export=')) return false;
       if (arg.startsWith('--mode=')) {
         final modeVal = arg.substring('--mode='.length).toLowerCase();
-        if (modeVal == 'text' || modeVal == 'json' || modeVal == 'rpc')
-          return false;
+        if (nonInteractiveModes.contains(modeVal)) return false;
       }
       if (arg == '--mode' && i + 1 < args.length) {
         final modeVal = args[i + 1].toLowerCase();
-        if (modeVal == 'text' || modeVal == 'json' || modeVal == 'rpc')
-          return false;
+        if (nonInteractiveModes.contains(modeVal)) return false;
       }
       if (i == 0 && adminSubcommands.contains(arg.toLowerCase())) return false;
     }

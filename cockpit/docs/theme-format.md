@@ -13,7 +13,7 @@ the code-viewer syntax highlight, and the terminal palette.
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/jacobaraujo7/remote_pi/main/cockpit/docs/theme.schema.json",
+  "$schema": "https://raw.githubusercontent.com/leoliu0/remote-omp/main/cockpit/docs/theme.schema.json",
   "id": "acme.aurora",
   "name": "Aurora",
   "author": "Acme",
@@ -85,7 +85,7 @@ Swap only the brand and keep everything else from the native theme:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/jacobaraujo7/remote_pi/main/cockpit/docs/theme.schema.json",
+  "$schema": "https://raw.githubusercontent.com/leoliu0/remote-omp/main/cockpit/docs/theme.schema.json",
   "id": "acme.violet",
   "name": "Violet",
   "variants": {
@@ -103,7 +103,7 @@ every group filled in.
 The schema lives **in the repository**, not on our own domain:
 
 ```
-https://raw.githubusercontent.com/jacobaraujo7/remote_pi/main/cockpit/docs/theme.schema.json
+https://raw.githubusercontent.com/leoliu0/remote-omp/main/cockpit/docs/theme.schema.json
 ```
 
 Versioned with the code that implements it, so the site never serves one

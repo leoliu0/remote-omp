@@ -48,9 +48,9 @@ const FILTERS: Array<{ id: HomeFilter; label: string }> = [
 ];
 
 export const FILTER_EMPTY: Record<HomeFilter, { title: string; subtitle: string }> = {
-  online: { title: "No sessions online", subtitle: "Live sessions appear here when a paired Pi is active." },
+  online: { title: "No sessions online", subtitle: "Live sessions appear here when a paired omp is active." },
   offline: { title: "No offline sessions", subtitle: "Sessions you’ve seen before that aren’t live show up here." },
-  all: { title: "Nothing here…", subtitle: "When a paired Pi opens a session, it shows up here." },
+  all: { title: "Nothing here…", subtitle: "When a paired omp opens a session, it shows up here." },
 };
 
 /** Presence dot colours (the sidebar rail); rows show working/Done as pills via `StatusBadge`. */
@@ -194,12 +194,12 @@ export function HomeView({
     ) : (
       <div className="flex flex-col items-center justify-center py-14 px-4 text-center">
         <div className="text-sm text-[#ccc] mb-1">No pairings yet</div>
-        <div className="text-xs text-[#666]">Pair a PC in the Remote Pi app on your phone — it shows up here.</div>
+        <div className="text-xs text-[#666]">Pair a PC in the Remote OMP app on your phone — it shows up here.</div>
       </div>
     );
   } else if (counts.all === 0) {
     // Paired, no rooms at all: no tabs, nothing to filter.
-    body = pending ? <Spinner /> : <EmptyNote title="Nothing here…" subtitle="Run /remote-pi on your PC to start a session." />;
+    body = pending ? <Spinner /> : <EmptyNote title="Nothing here…" subtitle="Run /remote-omp on your PC to start a session." />;
   } else {
     const groups = groupItemsByPeer(visible);
     body = (
@@ -271,7 +271,7 @@ export function HomeView({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-sm font-semibold text-white tracking-tight">
             <span className="text-[#4fc3f7] font-bold">π</span>
-            <span>Remote Pi</span>
+            <span>Remote OMP</span>
           </div>
           <div className="flex items-center gap-2">
             <button

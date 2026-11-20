@@ -4,8 +4,8 @@ import 'dart:convert';
 import 'package:cockpit/app/cockpit/domain/contracts/rpc_gateway_factory.dart';
 import 'package:cockpit/app/cockpit/domain/contracts/rpc_process_gateway.dart';
 import 'package:cockpit/app/cockpit/domain/entities/context_usage.dart';
-import 'package:cockpit/app/cockpit/domain/entities/pi_command.dart';
-import 'package:cockpit/app/cockpit/domain/entities/pi_model.dart';
+import 'package:cockpit/app/cockpit/domain/entities/omp_command.dart';
+import 'package:cockpit/app/cockpit/domain/entities/omp_model.dart';
 import 'package:cockpit/app/cockpit/domain/entities/prompt_image.dart';
 import 'package:cockpit/app/cockpit/domain/entities/rpc_event.dart';
 import 'package:cockpit/app/cockpit/domain/entities/thinking_level.dart';
@@ -58,10 +58,10 @@ class AgentSession extends PaneItem {
   @override
   final String workingDirectory;
 
-  /// Conectar ao relay ao iniciar (injetado em `REMOTE_PI_DIRECT_CONFIG`).
+  /// Conectar ao relay ao iniciar (injetado em `REMOTE_OMP_DIRECT_CONFIG`).
   bool autoStartRelay;
 
-  /// Estado atual da conexão do relay (atualizado por `remote-pi:relay-state`).
+  /// Estado atual da conexão do relay (atualizado por `remote-omp:relay-state`).
   RelayStatus relayStatus = RelayStatus.disconnected;
 
   /// ID do modelo que o usuário escolheu para este agente (ex: `'claude-sonnet-4-6'`).
@@ -76,7 +76,7 @@ class AgentSession extends PaneItem {
   RpcProcessGateway? _gateway;
   StreamSubscription<RpcEvent>? _sub;
 
-  /// Caminho do arquivo de sessão do pi (`~/.pi/agent/sessions/<cwd>/*.jsonl`)
+  /// Caminho do arquivo de sessão do omp (`~/.omp/agent/sessions/<cwd>/*.jsonl`)
   /// que pertence a este agente. Capturado pela VM no 1º fim de turno e usado
   /// pra reanexar a conversa ao restaurar o workspace.
   String? sessionPath;
@@ -104,9 +104,9 @@ class AgentSession extends PaneItem {
   DateTime? _turnStartedAt;
   final List<AgentEntry> _entries = <AgentEntry>[];
 
-  List<PiModel> _models = const <PiModel>[];
-  List<PiCommand> _commands = const <PiCommand>[];
-  PiModel? _model;
+  List<OmpModel> _models = const <OmpModel>[];
+  List<OmpCommand> _commands = const <OmpCommand>[];
+  OmpModel? _model;
   ThinkingLevel _thinking = ThinkingLevel.off;
   ContextUsage? _ctx;
 
@@ -158,9 +158,9 @@ class AgentSession extends PaneItem {
   bool get isAlive =>
       _status == AgentStatus.idle || _status == AgentStatus.streaming;
   List<AgentEntry> get entries => List<AgentEntry>.unmodifiable(_entries);
-  List<PiModel> get models => _models;
-  List<PiCommand> get commands => _commands;
-  PiModel? get model => _model;
+  List<OmpModel> get models => _models;
+  List<OmpCommand> get commands => _commands;
+  OmpModel? get model => _model;
   ThinkingLevel get thinking => _thinking;
   ContextUsage? get contextUsage => _ctx;
 
@@ -169,7 +169,7 @@ class AgentSession extends PaneItem {
   /// Sobe o `pi --mode rpc` na [workingDirectory] e começa a ouvir o stream.
   ///
   /// [environment] é fundido com o ambiente do processo pai — use para injetar
-  /// `REMOTE_PI_DIRECT_CONFIG` sem perder PATH/HOME. Se `null`, herda tudo.
+  /// `REMOTE_OMP_DIRECT_CONFIG` sem perder PATH/HOME. Se `null`, herda tudo.
   ///
   /// [restoreSessionPath] (opcional) é o caminho completo do `.jsonl` a
   /// restaurar. Quando presente, passa `--session <id>` ao pi para que ele
@@ -287,7 +287,7 @@ class AgentSession extends PaneItem {
     unawaited(_refreshStats()); // o contexto mudou
   }
 
-  Future<void> changeModel(PiModel model) async {
+  Future<void> changeModel(OmpModel model) async {
     final gateway = _gateway;
     if (gateway == null || isBusy || model == _model) return;
     final result = await gateway.setModel(model);

@@ -72,8 +72,8 @@ class SelfUpdateState {
 /// UX híbrida (decisão B do plano 47): a checagem roda **em background**; a UI
 /// visível é só o nosso card, que reflete [state]/[changes]. Reinício
 /// **silencioso** (decisão C): ao aplicar o update o app é encerrado e relançado
-/// pelo motor nativo; os agentes `pi` filhos são reapeados no próximo boot por
-/// `PiProcessRegistry.cleanOrphans` e respawnados pelo estado no Hive.
+/// pelo motor nativo; os agentes `omp` filhos são reapeados no próximo boot por
+/// `OmpProcessRegistry.cleanOrphans` e respawnados pelo estado no Hive.
 ///
 /// > **A decisão B só vale integralmente no macOS.** No Windows o WinSparkle não
 /// > tem modo headless: `win_sparkle_check_update_without_ui()` é documentado

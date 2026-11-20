@@ -250,47 +250,47 @@ void main() {
       });
     });
 
-    group('Pi', () {
+    group('OMP', () {
       test('direct interactive launch and resume', () {
         expect(
-          TerminalHarnessClassifier.classify(executable: 'pi', argv: ['pi']),
-          equals(HarnessKind.pi),
+          TerminalHarnessClassifier.classify(executable: 'omp', argv: ['omp']),
+          equals(HarnessKind.omp),
         );
         expect(
           TerminalHarnessClassifier.classify(
-            executable: 'pi',
-            argv: ['pi', '-c'],
+            executable: 'omp',
+            argv: ['omp', '-c'],
           ),
-          equals(HarnessKind.pi),
+          equals(HarnessKind.omp),
         );
       });
 
       test('rejects print mode, rpc/json modes and subcommands', () {
         expect(
           TerminalHarnessClassifier.classify(
-            executable: 'pi',
-            argv: ['pi', '-p', 'prompt'],
+            executable: 'omp',
+            argv: ['omp', '-p', 'prompt'],
           ),
           isNull,
         );
         expect(
           TerminalHarnessClassifier.classify(
-            executable: 'pi',
-            argv: ['pi', '--mode', 'json'],
+            executable: 'omp',
+            argv: ['omp', '--mode', 'json'],
           ),
           isNull,
         );
         expect(
           TerminalHarnessClassifier.classify(
-            executable: 'pi',
-            argv: ['pi', '--mode=rpc'],
+            executable: 'omp',
+            argv: ['omp', '--mode=rpc'],
           ),
           isNull,
         );
         expect(
           TerminalHarnessClassifier.classify(
-            executable: 'pi',
-            argv: ['pi', 'export'],
+            executable: 'omp',
+            argv: ['omp', 'plugin', 'list'],
           ),
           isNull,
         );

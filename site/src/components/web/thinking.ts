@@ -1,4 +1,4 @@
-// Thinking traces in assistant text. pi-extension wraps the model's reasoning
+// Thinking traces in assistant text. omp-extension wraps the model's reasoning
 // in `<think>…</think>` inside the streamed text; while a turn streams, the
 // closing tag may not have arrived yet. The web shows these sections as a
 // collapsible `Thinking` block (Settings → Show thinking traces) or strips

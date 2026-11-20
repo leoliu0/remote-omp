@@ -2,16 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:cockpit/app/settings/domain/contracts/relay_gateway.dart';
 import 'package:cockpit/app/settings/domain/entities/paired_device.dart';
 import 'package:cockpit/app/core/domain/exceptions/relay_error.dart';
 import 'package:cockpit/app/core/domain/result.dart';
 
-/// Implementação via **shell-out** do `remote-pi` + leitura do config global
-/// `~/.pi/remote/config.json`.
+/// Implementação via **shell-out** do `remote-omp` + leitura do config global
+/// `~/.omp/remote/config.json`.
 ///
-/// O `remote-pi` é resolvido via [resolveRemotePiCommand]: binário no PATH/
+/// O `remote-omp` é resolvido via [resolveRemoteOmpCommand]: binário no PATH/
 /// prefixos conhecidos no POSIX; `node <index.js>` no Windows (onde não está no
 /// PATH). A resolução é memoizada — só faz os `exists()` uma vez.
 class RelayGatewayImpl implements RelayGateway {
@@ -20,7 +20,7 @@ class RelayGatewayImpl implements RelayGateway {
   Future<({String exe, List<String> prefixArgs})?>? _resolvedCmd;
 
   // Windows não seta HOME; o equivalente é USERPROFILE.
-  String? get _home => remotePiHome();
+  String? get _home => remoteOmpHome();
 
   @override
   Future<Result<String?, RelayError>> currentRelay() async {
@@ -29,7 +29,7 @@ class RelayGatewayImpl implements RelayGateway {
       return const Failure(RelayError('HOME not found in the environment.'));
     }
     try {
-      final file = File('$home/.pi/remote/config.json');
+      final file = File('$home/.omp/remote/config.json');
       if (!await file.exists()) return const Success(null);
       final json = jsonDecode(await file.readAsString());
       if (json is! Map) return const Success(null);
@@ -52,15 +52,15 @@ class RelayGatewayImpl implements RelayGateway {
 
   @override
   Future<Result<List<PairedDevice>, RelayError>> listDevices() async {
-    // Lê os pares direto de `~/.pi/remote/peers.json` (mesma fonte do
-    // `/remote-pi`). Não há subcomando `remote-pi devices` na CLI, e ler o
+    // Lê os pares direto de `~/.omp/remote/peers.json` (mesma fonte do
+    // `/remote-omp`). Não há subcomando `remote-omp devices` na CLI, e ler o
     // arquivo funciona igual em macOS/Linux/Windows.
     final home = _home;
     if (home == null) {
       return const Failure(RelayError('HOME not found in the environment.'));
     }
     try {
-      final file = File('$home/.pi/remote/peers.json');
+      final file = File('$home/.omp/remote/peers.json');
       if (!await file.exists()) return const Success(<PairedDevice>[]);
       final json = jsonDecode(await file.readAsString());
       if (json is! Map) return const Success(<PairedDevice>[]);
@@ -72,7 +72,7 @@ class RelayGatewayImpl implements RelayGateway {
         final epk = p['remote_epk'];
         if (epk is! String || epk.isEmpty) continue;
         final name = p['name'];
-        // shortId = remote_epk (o que `/remote-pi revoke <epk>` aceita);
+        // shortId = remote_epk (o que `/remote-omp revoke <epk>` aceita);
         // label = nome legível do pareamento (ex.: "iPhone").
         devices.add(
           PairedDevice(
@@ -150,7 +150,7 @@ class RelayGatewayImpl implements RelayGateway {
       if (cmd == null) {
         return Failure(
           RelayError(
-            '$onError\nCould not find remote-pi (install the extension).',
+            '$onError\nCould not find remote-omp (install the extension).',
           ),
         );
       }
@@ -171,5 +171,5 @@ class RelayGatewayImpl implements RelayGateway {
   }
 
   Future<({String exe, List<String> prefixArgs})?> _cmd() =>
-      _resolvedCmd ??= resolveRemotePiCommand();
+      _resolvedCmd ??= resolveRemoteOmpCommand();
 }

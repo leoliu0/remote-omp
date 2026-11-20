@@ -1,6 +1,6 @@
-# Remote Pi — Protocol & Security
+# Remote OMP — Protocol & Security
 
-Canonical documentation of the Remote Pi protocol and threat model.
+Canonical documentation of the Remote OMP protocol and threat model. The wire protocol is unchanged from the upstream Remote Pi; "Pi-key", `pi_envelope` and similar names are wire-level identifiers and keep their original spelling.
 Updated on 2026-07-18.
 
 ---
@@ -8,7 +8,7 @@ Updated on 2026-07-18.
 ## 30-Second Overview
 
 - **Coding Agent Mesh** running across multiple PCs belonging to the same user
-- **Each PC** runs `pi-extension` (Node.js daemon) with **one Pi-key** (Ed25519) stored in system keychain (macOS / Linux / Windows)
+- **Each PC** runs `omp-extension` (Node.js daemon) with **one Pi-key** (Ed25519) stored in system keychain (macOS / Linux / Windows)
 - **Mobile phone** acts as the **initial authenticator** (WhatsApp Web style QR code) — after pairing, PCs operate autonomously
 - **Owner-key** (Ed25519) lives in mobile keychain (iOS Keychain / Android Block Store), syncing across devices under the same Apple ID / Google Account
 - **Relay** (WebSocket) routes messages and stores/verifies signed `mesh_versions` payloads; authorizes direct co-membership
@@ -21,7 +21,7 @@ Updated on 2026-07-18.
 | Key | Algorithm | Storage | Created By | Used By |
 |---|---|---|---|---|
 | **Owner-key** | Ed25519 | iOS Keychain (iCloud sync) / Android Block Store (Google sync) | Mobile app on first boot | Signs `mesh_versions`, proves authority to pair/revoke PCs |
-| **Pi-key** | Ed25519 | `@napi-rs/keyring` on PC (macOS Keychain / Linux libsecret / Windows Credential Manager). Fallback: `~/.pi/remote/identity.json` (`0600`) | `pi-extension` on first boot | Authenticates WS connection to relay; provides canonical identity for `from_pc` and routing |
+| **Pi-key** | Ed25519 | `@napi-rs/keyring` on PC (macOS Keychain / Linux libsecret / Windows Credential Manager). Fallback: `~/.omp/remote/identity.json` (`0600`) | `omp-extension` on first boot | Authenticates WS connection to relay; provides canonical identity for `from_pc` and routing |
 | **App-key** | Ephemeral Ed25519 | Mobile app RAM | App per pairing session | Establishes authenticated channel during pairing |
 
 **Technical identity** for each Pi/PC is the raw 32-byte Ed25519 public key. Standard Base64 (RFC 4648) with padding is the canonical representation on wire boundaries. Local nicknames/aliases never replace canonical keys.
@@ -34,7 +34,7 @@ Updated on 2026-07-18.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Agent layer       Pi coding agent (future: Claude Code, OpenCode)  │
+│  Agent layer       omp coding agent (future: Claude Code, OpenCode) │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Envelope          {from, to, id, re, body} — JSONL 5 fields        │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -139,9 +139,9 @@ Cross-PC communication is mediated by the relay.
 
 ## App Actions
 
-Curated typed actions invoked by the mobile app on the paired Pi session:
+Curated typed actions invoked by the mobile app on the paired omp session:
 
-| Action | ClientMessage | pi-extension SDK Call |
+| Action | ClientMessage | omp-extension SDK Call |
 |---|---|---|
 | Compact context | `session_compact` | `ctx.compact()` |
 | New session | `session_new` | `ctx.newSession()` |
@@ -171,6 +171,6 @@ Curated typed actions invoked by the mobile app on the paired Pi session:
 ## Reference Implementations
 
 - **Relay** (Rust, axum): [`relay/src/`](relay/src/)
-- **Pi-extension** (Node/TS): [`pi-extension/src/`](pi-extension/src/)
+- **omp extension** (Node/TS): [`omp-extension/src/`](omp-extension/src/)
 - **Mobile app** (Flutter): [`app/lib/`](app/lib/)
 - **Architectural plans**: [`plan/`](plan/)

@@ -90,7 +90,7 @@ class RpcEventMapper {
     final details = message['details'];
 
     switch (customType) {
-      case 'remote-pi:relay-state':
+      case 'remote-omp:relay-state':
         if (details is! Map<String, dynamic>) {
           return const RpcUnknown('message_start:relay-state:no-details');
         }
@@ -103,7 +103,7 @@ class RpcEventMapper {
           },
           connected: details['connected'] == true,
         );
-      case 'remote-pi:name-assigned':
+      case 'remote-omp:name-assigned':
         if (details is! Map<String, dynamic>) {
           return const RpcUnknown('message_start:name-assigned:no-details');
         }
@@ -195,7 +195,7 @@ class RpcEventMapper {
   String? _str(Object? v) => v is String ? v : null;
 
   /// Valor inicial do campo: `placeholder.defaultValue`, `defaultValue` ou
-  /// `prefill`. Cobre o `ui.input(title, {defaultValue})` do remote-pi.
+  /// `prefill`. Cobre o `ui.input(title, {defaultValue})` do remote-omp.
   String? _defaultValue(Map<String, dynamic> json) {
     final p = json['placeholder'];
     if (p is Map && p['defaultValue'] is String) {

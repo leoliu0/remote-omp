@@ -4,7 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:cockpit/app/cockpit/domain/contracts/terminal_status_server.dart';
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:flutter/foundation.dart';
 
 /// [TerminalStatusServer] híbrido por plataforma:
@@ -25,7 +25,7 @@ class TerminalStatusServerImpl implements TerminalStatusServer {
   String? _token; // só no Windows/TCP
 
   String get _socketPath {
-    final home = remotePiHome() ?? Directory.systemTemp.path;
+    final home = remoteOmpHome() ?? Directory.systemTemp.path;
     // Namespaceado por debug/release: um Cockpit de dev (`flutter run`) e um de
     // produção rodam lado a lado, mas `~/.cockpit/` é o HOME real (não é isolado
     // por bundle id como o Hive). Sem o sufixo, ambos disputam o MESMO

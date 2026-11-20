@@ -22,7 +22,7 @@ extension AutomationHarnessSupport on HarnessKind {
     HarnessKind.cursor => const ['.local/bin/cursor-agent'],
     HarnessKind.antigravity => const ['.local/bin/agy'],
     HarnessKind.gitHubCopilot => const ['.local/bin/copilot'],
-    HarnessKind.pi => const ['.local/bin/pi'],
+    HarnessKind.omp => const ['.bun/bin/omp', '.local/bin/omp'],
     _ => const <String>[],
   };
 

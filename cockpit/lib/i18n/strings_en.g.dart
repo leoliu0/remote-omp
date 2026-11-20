@@ -693,8 +693,8 @@ class Translations$cockpit$agentEditDialog$en {
 	/// en: 'Agent name'
 	String get agentName => 'Agent name';
 
-	/// en: 'Relay (remote-pi)'
-	String get relaySection => 'Relay (remote-pi)';
+	/// en: 'Relay (remote-omp)'
+	String get relaySection => 'Relay (remote-omp)';
 
 	/// en: 'Auto-connect on start'
 	String get autoConnect => 'Auto-connect on start';
@@ -741,32 +741,32 @@ class Translations$cockpit$agentSetupChecklist$en {
 	/// en: 'Set up the agent environment'
 	String get title => 'Set up the agent environment';
 
-	/// en: 'Running an agent needs Pi installed. Complete the steps below — terminals and files work without any of this.'
-	String get intro => 'Running an agent needs Pi installed. Complete the steps below — terminals and files work without any of this.';
+	/// en: 'Running an agent needs omp (oh-my-pi) installed. Complete the steps below — terminals and files work without any of this.'
+	String get intro => 'Running an agent needs omp (oh-my-pi) installed. Complete the steps below — terminals and files work without any of this.';
 
-	/// en: 'Pi Code installed'
-	String get step1Title => 'Pi Code installed';
+	/// en: 'omp installed'
+	String get step1Title => 'omp installed';
 
-	/// en: 'The `pi` binary must be accessible.'
-	String get step1Description => 'The `pi` binary must be accessible.';
+	/// en: 'The `omp` binary must be accessible.'
+	String get step1Description => 'The `omp` binary must be accessible.';
 
-	/// en: 'remote-pi extension on Pi'
-	String get step2Title => 'remote-pi extension on Pi';
+	/// en: 'remote-omp extension on omp'
+	String get step2Title => 'remote-omp extension on omp';
 
-	/// en: 'Registered in ~/.pi/agent/settings.json.'
-	String get step2Description => 'Registered in ~/.pi/agent/settings.json.';
+	/// en: 'Installed as an omp plugin (omp plugin install remote-omp).'
+	String get step2Description => 'Installed as an omp plugin (omp plugin install remote-omp).';
 
 	/// en: 'Supervisor installed'
 	String get step3Title => 'Supervisor installed';
 
-	/// en: 'pi-supervisord service (remote-pi install).'
-	String get step3Description => 'pi-supervisord service (remote-pi install).';
+	/// en: 'remote-omp-supervisord service (remote-omp install).'
+	String get step3Description => 'remote-omp-supervisord service (remote-omp install).';
 
 	/// en: 'Install'
 	String get install => 'Install';
 
-	/// en: 'Install remote-pi extension'
-	String get installExtensionTitle => 'Install remote-pi extension';
+	/// en: 'Install remote-omp extension'
+	String get installExtensionTitle => 'Install remote-omp extension';
 
 	/// en: 'Install supervisor'
 	String get installSupervisorTitle => 'Install supervisor';
@@ -2167,8 +2167,8 @@ class Translations$cockpit$emptyPane$en {
 	/// en: 'New agent'
 	String get newAgent => 'New agent';
 
-	/// en: 'Runs a pi in the folder you choose'
-	String get newAgentDescription => 'Runs a pi in the folder you choose';
+	/// en: 'Runs an omp in the folder you choose'
+	String get newAgentDescription => 'Runs an omp in the folder you choose';
 
 	/// en: 'New terminal'
 	String get newTerminal => 'New terminal';
@@ -2521,8 +2521,8 @@ class Translations$settings$pairingDialog$en {
 	/// en: 'Connecting to the relay…'
 	String get connectingToRelay => 'Connecting to the relay…';
 
-	/// en: 'Open the Remote Pi app on your phone.'
-	String get step1 => 'Open the Remote Pi app on your phone.';
+	/// en: 'Open the Remote OMP app on your phone.'
+	String get step1 => 'Open the Remote OMP app on your phone.';
 
 	/// en: 'Tap add / pair device.'
 	String get step2 => 'Tap add / pair device.';
@@ -2943,8 +2943,8 @@ class Translations$settings$page$general$en {
 	/// en: 'Enable agents'
 	String get enableAgentsTitle => 'Enable agents';
 
-	/// en: 'Show the option to open agent tabs (pi). When off, Cockpit works as a terminal-only workspace.'
-	String get enableAgentsDesc => 'Show the option to open agent tabs (pi). When off, Cockpit works as a terminal-only workspace.';
+	/// en: 'Show the option to open agent tabs (omp). When off, Cockpit works as a terminal-only workspace.'
+	String get enableAgentsDesc => 'Show the option to open agent tabs (omp). When off, Cockpit works as a terminal-only workspace.';
 
 	/// en: 'Show Cockpit terminal'
 	String get showCockpitTitle => 'Show Cockpit terminal';
@@ -3494,8 +3494,8 @@ class Translations$settings$page$schedules$en {
 	/// en: 'Create a Daemon Agent first.'
 	String get createDaemonFirst => 'Create a Daemon Agent first.';
 
-	/// en: 'Supervisor offline. Schedules need pi-supervisord running (`remote-pi install`).'
-	String get supervisorOffline => 'Supervisor offline. Schedules need pi-supervisord running (`remote-pi install`).';
+	/// en: 'Supervisor offline. Schedules need remote-omp-supervisord running (`remote-omp install`).'
+	String get supervisorOffline => 'Supervisor offline. Schedules need remote-omp-supervisord running (`remote-omp install`).';
 
 	/// en: 'Failed to list schedules.'
 	String get failedToListSchedules => 'Failed to list schedules.';
@@ -3647,8 +3647,8 @@ class Translations$settings$page$daemons$en {
 	/// en: 'Supervisor offline'
 	String get supervisorOfflineTitle => 'Supervisor offline';
 
-	/// en: 'pi-supervisord is not running. Install it with `remote-pi install` to manage 24/7 agents.'
-	String get supervisorOfflineDesc => 'pi-supervisord is not running. Install it with `remote-pi install` to manage 24/7 agents.';
+	/// en: 'remote-omp-supervisord is not running. Install it with `remote-omp install` to manage 24/7 agents.'
+	String get supervisorOfflineDesc => 'remote-omp-supervisord is not running. Install it with `remote-omp install` to manage 24/7 agents.';
 
 	/// en: 'Failed to list daemons.'
 	String get failedToListDaemons => 'Failed to list daemons.';
@@ -3959,7 +3959,7 @@ extension on Translations {
 			'cockpit.commitMessageDialog.cancelGeneration' => 'Cancel generation',
 			'cockpit.agentEditDialog.title' => 'Edit agent',
 			'cockpit.agentEditDialog.agentName' => 'Agent name',
-			'cockpit.agentEditDialog.relaySection' => 'Relay (remote-pi)',
+			'cockpit.agentEditDialog.relaySection' => 'Relay (remote-omp)',
 			'cockpit.agentEditDialog.autoConnect' => 'Auto-connect on start',
 			'cockpit.agentEditDialog.informationSection' => 'Information',
 			'cockpit.agentEditDialog.folder' => 'Folder',
@@ -3972,15 +3972,15 @@ extension on Translations {
 			'cockpit.agentEditDialog.statusStreaming' => 'streaming',
 			'cockpit.agentEditDialog.statusEnded' => 'ended',
 			'cockpit.agentSetupChecklist.title' => 'Set up the agent environment',
-			'cockpit.agentSetupChecklist.intro' => 'Running an agent needs Pi installed. Complete the steps below — terminals and files work without any of this.',
-			'cockpit.agentSetupChecklist.step1Title' => 'Pi Code installed',
-			'cockpit.agentSetupChecklist.step1Description' => 'The `pi` binary must be accessible.',
-			'cockpit.agentSetupChecklist.step2Title' => 'remote-pi extension on Pi',
-			'cockpit.agentSetupChecklist.step2Description' => 'Registered in ~/.pi/agent/settings.json.',
+			'cockpit.agentSetupChecklist.intro' => 'Running an agent needs omp (oh-my-pi) installed. Complete the steps below — terminals and files work without any of this.',
+			'cockpit.agentSetupChecklist.step1Title' => 'omp installed',
+			'cockpit.agentSetupChecklist.step1Description' => 'The `omp` binary must be accessible.',
+			'cockpit.agentSetupChecklist.step2Title' => 'remote-omp extension on omp',
+			'cockpit.agentSetupChecklist.step2Description' => 'Installed as an omp plugin (omp plugin install remote-omp).',
 			'cockpit.agentSetupChecklist.step3Title' => 'Supervisor installed',
-			'cockpit.agentSetupChecklist.step3Description' => 'pi-supervisord service (remote-pi install).',
+			'cockpit.agentSetupChecklist.step3Description' => 'remote-omp-supervisord service (remote-omp install).',
 			'cockpit.agentSetupChecklist.install' => 'Install',
-			'cockpit.agentSetupChecklist.installExtensionTitle' => 'Install remote-pi extension',
+			'cockpit.agentSetupChecklist.installExtensionTitle' => 'Install remote-omp extension',
 			'cockpit.agentSetupChecklist.installSupervisorTitle' => 'Install supervisor',
 			'cockpit.agentSetupChecklist.createAgent' => 'Create agent',
 			'cockpit.agentSetupChecklist.back' => 'Back',
@@ -4389,7 +4389,7 @@ extension on Translations {
 			'cockpit.contentSearch.searching' => 'Searching…',
 			'cockpit.contentSearch.noResults' => 'No results.',
 			'cockpit.emptyPane.newAgent' => 'New agent',
-			'cockpit.emptyPane.newAgentDescription' => 'Runs a pi in the folder you choose',
+			'cockpit.emptyPane.newAgentDescription' => 'Runs an omp in the folder you choose',
 			'cockpit.emptyPane.newTerminal' => 'New terminal',
 			'cockpit.emptyPane.newTerminalDescription' => 'Opens a shell in the folder you choose',
 			'cockpit.topbar.collapseSidebar' => 'Collapse sidebar',
@@ -4477,7 +4477,7 @@ extension on Translations {
 			'settings.revokeDialog.ok' => 'Ok',
 			'settings.pairingDialog.title' => 'Pair device',
 			'settings.pairingDialog.connectingToRelay' => 'Connecting to the relay…',
-			'settings.pairingDialog.step1' => 'Open the Remote Pi app on your phone.',
+			'settings.pairingDialog.step1' => 'Open the Remote OMP app on your phone.',
 			'settings.pairingDialog.step2' => 'Tap add / pair device.',
 			'settings.pairingDialog.step3' => 'Point the camera at the QR below.',
 			'settings.pairingDialog.qrGenerationFailed' => 'Could not generate the QR.',
@@ -4501,7 +4501,7 @@ extension on Translations {
 			'settings.page.nav.remoteHosts' => 'Remote hosts',
 			'settings.page.general.sectionAgent' => 'Agent',
 			'settings.page.general.enableAgentsTitle' => 'Enable agents',
-			'settings.page.general.enableAgentsDesc' => 'Show the option to open agent tabs (pi). When off, Cockpit works as a terminal-only workspace.',
+			'settings.page.general.enableAgentsDesc' => 'Show the option to open agent tabs (omp). When off, Cockpit works as a terminal-only workspace.',
 			'settings.page.general.showCockpitTitle' => 'Show Cockpit terminal',
 			'settings.page.general.showCockpitDesc' => 'Keep a pathless, terminal-only workspace pinned at the top of the rail. Turning it off closes its terminals.',
 			'settings.page.general.launchAtStartupTitle' => 'Launch at login',
@@ -4661,7 +4661,7 @@ extension on Translations {
 			'settings.page.schedules.sectionScheduledPrompts' => 'Scheduled prompts',
 			'settings.page.schedules.createSchedule' => 'Create schedule',
 			'settings.page.schedules.createDaemonFirst' => 'Create a Daemon Agent first.',
-			'settings.page.schedules.supervisorOffline' => 'Supervisor offline. Schedules need pi-supervisord running (`remote-pi install`).',
+			'settings.page.schedules.supervisorOffline' => 'Supervisor offline. Schedules need remote-omp-supervisord running (`remote-omp install`).',
 			'settings.page.schedules.failedToListSchedules' => 'Failed to list schedules.',
 			'settings.page.schedules.noSchedules' => 'No schedules. Create a recurring prompt for a daemon.',
 			'settings.page.schedules.runNow' => 'Run now',
@@ -4709,7 +4709,7 @@ extension on Translations {
 			'settings.page.daemons.removeDaemonDialogTitle' => 'Remove daemon?',
 			'settings.page.daemons.removeDaemonDialogContent' => ({required Object name}) => '"${name}" stops running and leaves the registry. The folder and its local config are kept — you can recreate it later.',
 			'settings.page.daemons.supervisorOfflineTitle' => 'Supervisor offline',
-			'settings.page.daemons.supervisorOfflineDesc' => 'pi-supervisord is not running. Install it with `remote-pi install` to manage 24/7 agents.',
+			'settings.page.daemons.supervisorOfflineDesc' => 'remote-omp-supervisord is not running. Install it with `remote-omp install` to manage 24/7 agents.',
 			'settings.page.daemons.failedToListDaemons' => 'Failed to list daemons.',
 			'settings.page.daemons.noRegisteredAgents' => 'No registered agents. Create one from a folder.',
 			'settings.page.daemons.start' => 'Start',

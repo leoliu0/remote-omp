@@ -17,7 +17,7 @@ import {
   type AgentActivityJob,
 } from "./activity.ts";
 
-// Snapshot captured from a real omp run (pi-extension activity.test.ts): one
+// Snapshot captured from a real omp run (omp-extension activity.test.ts): one
 // async `sleep 20` bash job, then one `task` call spawning AgentA/AgentB.
 const SPAWN_MS = 1791581635609;
 const RUNNING_FRAME = {

@@ -6,7 +6,7 @@ import 'package:cockpit/app/cockpit/domain/entities/git_history_commit.dart';
 import 'package:cockpit/app/cockpit/domain/entities/git_history_file_change.dart';
 import 'package:cockpit/app/cockpit/domain/exceptions/git_history_error.dart';
 import 'package:cockpit/app/cockpit/domain/git_history_parsers.dart';
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:cockpit/app/core/domain/result.dart';
 
 // Os parsers moraram aqui; migraram pro dominio (compartilhados com o caminho

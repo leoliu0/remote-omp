@@ -2,9 +2,9 @@ import 'package:cockpit/app/core/domain/entities/pair_event.dart';
 
 /// Uma sessão **efêmera** de pareamento de aparelho.
 ///
-/// Sobe um `pi --mode rpc --no-session` (com a extensão remote-pi), injeta um
-/// `REMOTE_PI_DIRECT_CONFIG` de pareamento e dispara `/remote-pi pair`. Os
-/// eventos custom do remote-pi chegam tipados por [events]; [cancel] mata o
+/// Sobe um `omp --mode rpc --no-session` (com a extensão remote-omp), injeta um
+/// `REMOTE_OMP_DIRECT_CONFIG` de pareamento e dispara `/remote-omp pair`. Os
+/// eventos custom do remote-omp chegam tipados por [events]; [cancel] mata o
 /// processo (sem órfão) e limpa a pasta temporária.
 ///
 /// Uma instância = uma tentativa de pareamento (processo próprio). Contrato no
@@ -24,7 +24,7 @@ abstract class PairingGateway {
 
 /// Cria uma [PairingGateway] **nova por chamada** (cada tentativa de pareamento
 /// sobe seu próprio processo efêmero). Contrato no domínio; a impl (que conhece
-/// o `PiSpawnConfig`) mora em `data/`.
+/// o `OmpSpawnConfig`) mora em `data/`.
 ///
 /// É um **tipo nomeado** de propósito (em vez de `PairingGateway Function()`):
 /// assim o `ConnectivityViewModel` pode ser auto-injetado via `.new` — o parser

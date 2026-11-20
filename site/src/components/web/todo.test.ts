@@ -12,7 +12,7 @@ import {
 
 // The list after omp v18.9.2's `drop Ship` in a captured scratch run (init with
 // Setup/Build, done, start out of order, block, append, drop), as the
-// pi-extension sends it.
+// omp-extension sends it.
 const afterDrop = {
   type: "todo_state",
   ts: 1791587119493,

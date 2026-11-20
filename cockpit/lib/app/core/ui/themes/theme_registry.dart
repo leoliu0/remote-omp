@@ -22,7 +22,7 @@ const String kDefaultThemeId = 'cockpit';
 final CockpitThemeSpec cockpitDefaultTheme = CockpitThemeSpec(
   id: kDefaultThemeId,
   name: 'Cockpit',
-  author: 'Remote Pi',
+  author: 'Remote OMP',
   dark: _variant(
     ui: AppColors.dark,
     syntax: SyntaxColors.githubDark,
@@ -57,7 +57,7 @@ final CockpitThemeSpec cockpitDefaultTheme = CockpitThemeSpec(
 final CockpitThemeSpec cockpit2Theme = CockpitThemeSpec(
   id: 'cockpit.2',
   name: 'Cockpit 2',
-  author: 'Remote Pi',
+  author: 'Remote OMP',
   dark: _variant(
     // O conteúdo afunda, mas **não** até o quase-preto: o corpo da aba é onde o
     // olho fica o tempo todo, e um fundo fundo demais aumenta o contraste com o
@@ -165,7 +165,7 @@ ThemeVariant _variant({
 final CockpitThemeSpec panteraTheme = CockpitThemeSpec(
   id: 'pantera',
   name: 'Pantera',
-  author: 'Remote Pi',
+  author: 'Remote OMP',
   dark: _variant(
     ui: AppColors.dark.copyWith(
       bg: const Color(0xFF000000), // painéis
@@ -219,7 +219,7 @@ final CockpitThemeSpec panteraTheme = CockpitThemeSpec(
 /// <20° do vermelho de erro, e o teste de separação marca/estado (o mesmo que
 /// empurrou o Rosê para o magenta) reprovaria. Ciano é da paleta, se separa
 /// limpo de erro e aviso, e ainda lê como "Flexoki" — não como o azul da marca
-/// Remote Pi.
+/// Remote OMP.
 ///
 /// Syntax e terminal usam as séries oficiais (400 no escuro, 600 no claro). O
 /// fundo do código/terminal continua sendo `ui.panel`, como em todo built-in.
@@ -528,7 +528,7 @@ CockpitThemeSpec _tintedThemeOf(
 }) => CockpitThemeSpec(
   id: id,
   name: name,
-  author: 'Remote Pi',
+  author: 'Remote OMP',
   dark: _tintedVariant(
     darkFrom,
     tone,

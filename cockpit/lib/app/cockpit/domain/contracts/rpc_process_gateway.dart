@@ -1,8 +1,8 @@
 import 'package:cockpit/app/core/domain/contracts/service.dart';
 import 'package:cockpit/app/cockpit/domain/entities/agent_snapshot.dart';
 import 'package:cockpit/app/cockpit/domain/entities/context_usage.dart';
-import 'package:cockpit/app/cockpit/domain/entities/pi_command.dart';
-import 'package:cockpit/app/cockpit/domain/entities/pi_model.dart';
+import 'package:cockpit/app/cockpit/domain/entities/omp_command.dart';
+import 'package:cockpit/app/cockpit/domain/entities/omp_model.dart';
 import 'package:cockpit/app/cockpit/domain/entities/prompt_image.dart';
 import 'package:cockpit/app/cockpit/domain/entities/rpc_event.dart';
 import 'package:cockpit/app/cockpit/domain/entities/thinking_level.dart';
@@ -34,7 +34,7 @@ abstract class RpcProcessGateway implements Service {
   ///
   /// [environment] é **fundido** com o ambiente do processo pai — variáveis
   /// ausentes aqui são herdadas normalmente. Use para injetar
-  /// `REMOTE_PI_DIRECT_CONFIG` sem perder PATH/HOME/etc.
+  /// `REMOTE_OMP_DIRECT_CONFIG` sem perder PATH/HOME/etc.
   ///
   /// [sessionId] (opcional) é o ID da sessão a restaurar (basename do `.jsonl`
   /// sem extensão). Quando presente, passa `--session <id>` ao pi para que ele
@@ -69,16 +69,16 @@ abstract class RpcProcessGateway implements Service {
   // --- Comandos request/response (correlacionados por `id`) ----------------
 
   /// `get_available_models` — catálogo de modelos configurados.
-  Future<Result<List<PiModel>, RpcError>> availableModels();
+  Future<Result<List<OmpModel>, RpcError>> availableModels();
 
   /// `get_commands` — slash commands disponíveis (vêm das extensions).
-  Future<Result<List<PiCommand>, RpcError>> commands();
+  Future<Result<List<OmpCommand>, RpcError>> commands();
 
   /// `get_state` — recorte do estado atual (modelo + effort + streaming).
   Future<Result<AgentSnapshot, RpcError>> state();
 
   /// `set_model` — troca o modelo ativo; devolve o modelo aplicado.
-  Future<Result<PiModel, RpcError>> setModel(PiModel model);
+  Future<Result<OmpModel, RpcError>> setModel(OmpModel model);
 
   /// `set_thinking_level` — ajusta o effort de raciocínio.
   Future<Result<void, RpcError>> setThinkingLevel(ThinkingLevel level);
@@ -104,6 +104,6 @@ abstract class RpcProcessGateway implements Service {
   /// Envia um controle de relay diretamente no stdin, sem envolver o LLM nem
   /// aparecer no transcript. [verb]: `relay:on` | `relay:off` | `relay:toggle`
   /// | `relay:status`. O pi engole silenciosamente; a resposta chega como
-  /// evento customizado `remote-pi:relay-state` no stdout.
+  /// evento customizado `remote-omp:relay-state` no stdout.
   Future<Result<void, RpcError>> sendControl(String verb);
 }

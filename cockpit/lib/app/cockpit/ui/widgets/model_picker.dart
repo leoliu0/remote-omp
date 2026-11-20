@@ -1,17 +1,17 @@
-import 'package:cockpit/app/cockpit/domain/entities/pi_model.dart';
+import 'package:cockpit/app/cockpit/domain/entities/omp_model.dart';
 import 'package:cockpit/app/core/ui/themes/themes.dart';
 import 'package:cockpit/app/core/ui/widgets/hover_tap.dart';
 import 'package:cockpit/i18n/strings.g.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
 
-/// Seletor de modelo com busca (o catálogo tem centenas). Devolve o [PiModel]
+/// Seletor de modelo com busca (o catálogo tem centenas). Devolve o [OmpModel]
 /// escolhido, ou `null` se cancelar.
-Future<PiModel?> showModelPicker(
+Future<OmpModel?> showModelPicker(
   BuildContext context, {
-  required List<PiModel> models,
-  PiModel? current,
+  required List<OmpModel> models,
+  OmpModel? current,
 }) {
-  return showDialog<PiModel>(
+  return showDialog<OmpModel>(
     context: context,
     barrierColor: context.colors.scrim,
     builder: (context) => _ModelPicker(models: models, current: current),
@@ -20,8 +20,8 @@ Future<PiModel?> showModelPicker(
 
 class _ModelPicker extends StatefulWidget {
   const _ModelPicker({required this.models, required this.current});
-  final List<PiModel> models;
-  final PiModel? current;
+  final List<OmpModel> models;
+  final OmpModel? current;
 
   @override
   State<_ModelPicker> createState() => _ModelPickerState();

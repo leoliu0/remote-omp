@@ -1,11 +1,11 @@
-/// Um aparelho pareado com o relay, lido de `~/.pi/remote/peers.json`.
+/// Um aparelho pareado com o relay, lido de `~/.omp/remote/peers.json`.
 ///
 /// O Cockpit só **lista e revoga** — o pareamento em si (gerar QR) acontece do
-/// lado do app/agente, não aqui (não há comando `remote-pi pair`).
+/// lado do app/agente, não aqui (não há comando `remote-omp pair`).
 class PairedDevice {
   const PairedDevice({required this.shortId, required this.label});
 
-  /// Identificador curto usado para revogar (`remote-pi revoke <shortId>`).
+  /// Identificador curto usado para revogar (`remote-omp revoke <shortId>`).
   /// Pode conter caracteres base64 (`+`, `/`) — sempre passe como arg único.
   final String shortId;
 

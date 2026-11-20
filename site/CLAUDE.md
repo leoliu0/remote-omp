@@ -1,6 +1,6 @@
-# Remote Pi — Site (Next.js)
+# Remote OMP — Site (Next.js)
 
-Official website for Remote Pi. Presents project, GitHub links, and documentation.
+Official website for Remote OMP. Presents project, GitHub links, and documentation.
 
 ## Stack
 

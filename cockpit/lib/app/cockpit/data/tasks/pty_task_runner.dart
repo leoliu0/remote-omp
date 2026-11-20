@@ -4,7 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cockpit/app/cockpit/data/tasks/task_process_registry.dart';
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:cockpit/app/core/terminal/pty_output_scheduler.dart';
 import 'package:cockpit/app/core/utils/login_shell.dart';
 import 'package:cockpit/app/cockpit/domain/contracts/task_runner_gateway.dart';

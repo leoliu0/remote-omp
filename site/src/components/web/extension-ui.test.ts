@@ -12,7 +12,7 @@ import {
   type ExtensionUiRequest,
 } from "./extension-ui.ts";
 
-// The frame pi-extension's bridge emits for a pi-ask flow
+// The frame omp-extension's bridge emits for a pi-ask flow
 // (extension_ui_bridge.test.ts `singleQuestionFlow`), plus a multi + preview
 // question to exercise the rich envelope.
 const ASK_FRAME = {

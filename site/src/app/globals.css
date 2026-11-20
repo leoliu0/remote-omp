@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ===========================================================
-   Remote Pi — design tokens
+   Remote OMP — design tokens
    Dark, sky-blue accent (#4fc3f7), generous spacing.
    Palette is the canonical one: black bg, white ink, blue accent.
    Fonts are loaded via next/font (see layout.tsx) and exposed as
@@ -1972,7 +1972,7 @@ a {
 }
 
 /* ===========================================================
-   COCKPIT — product page (hero shot + requires-Pi note)
+   COCKPIT — product page (hero shot + requires-omp note)
    Sections reuse .page, .section-head, .feat-card, .callout, .btn.
    =========================================================== */
 .ck-shot {

@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:cockpit/app/core/utils/login_shell.dart';
 
-/// Resolve o caminho de um executável (`pi`, `node`, `remote-pi`, …) de forma
+/// Resolve o caminho de um executável (`omp`, `node`, `remote-omp`, …) de forma
 /// robusta — apps GUI não herdam a PATH do shell.
 ///
 /// Estratégia preferida:

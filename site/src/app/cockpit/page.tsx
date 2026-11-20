@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     url: "https://remote-pi.jacobmoura.work/cockpit",
     title: pageTitle,
     description: pageDescription,
-    siteName: "Remote Pi",
+    siteName: "Remote OMP",
   },
   twitter: {
     card: "summary_large_image",
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
 };
 
-const GITHUB_URL = "https://github.com/jacobaraujo7/remote_pi";
+const GITHUB_URL = "https://github.com/leoliu0/remote-omp";
 
 /* visual-first section: eyebrow + short headline + max one sentence + big shot */
 function Shot({
@@ -66,7 +66,7 @@ export default function CockpitPage() {
         <div className="wrap">
           {/* ---------------- HERO / JUST A TERMINAL ---------------- */}
           <header className="page-head reveal" style={{ maxWidth: 820 }}>
-            <span className="eyebrow">Remote Pi Cockpit</span>
+            <span className="eyebrow">Remote OMP Cockpit</span>
             <h1>Just a terminal. Until your agents need more.</h1>
             <p className="lede">
               A fast, multiplexed terminal, 100% local with no cloud and no
@@ -93,7 +93,7 @@ export default function CockpitPage() {
           <div className="ck-shot reveal">
             <Image
               src="/cockpit/hero-terminals.png"
-              alt="Remote Pi Cockpit as a multiplexed terminal: several real shells split across panes, with a workspace sidebar and file tree."
+              alt="Remote OMP Cockpit as a multiplexed terminal: several real shells split across panes, with a workspace sidebar and file tree."
               width={3456}
               height={2168}
               priority
@@ -108,7 +108,7 @@ export default function CockpitPage() {
               <span className="eyebrow">Agents</span>
               <h2>Agents live in tabs.</h2>
               <p>
-                Any tab can be a live Pi agent: streaming rich markdown, taking
+                Any tab can be a live omp agent: streaming rich markdown, taking
                 images, editing your code while you watch the diff.
               </p>
             </div>
@@ -349,7 +349,7 @@ panes:
                 marginTop: 40,
               }}
             >
-              Part of the <Link href="/">Remote Pi ecosystem</Link>, where daemons,
+              Part of the <Link href="/">Remote OMP ecosystem</Link>, where daemons,
               schedules, and the agent mesh live there.
             </p>
           </div>

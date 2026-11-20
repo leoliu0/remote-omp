@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:cockpit/app/core/domain/contracts/automation_gateway.dart';
 import 'package:cockpit/app/core/domain/entities/automation.dart';
 import 'package:cockpit/app/core/domain/exceptions/automation_error.dart';
@@ -13,19 +13,18 @@ import 'package:cockpit/app/core/utils/executable_resolver.dart';
 class CliAutomationGateway implements AutomationGateway {
   CliAutomationGateway({this.timeout = const Duration(seconds: 60)});
 
-  /// Isolamento do Pi. **A mesma lista vale para descoberta e geração** — foi
+  /// Isolamento do omp. **A mesma lista vale para descoberta e geração** — foi
   /// justamente o descompasso que quebrou o harness: a descoberta listava os
   /// modelos do provider `antigravity` (registrado por uma extensão npm) e a
   /// geração rodava com `--no-extensions`, derrubando o provider e devolvendo
   /// `Model "antigravity/…" not found`. Sem `--no-extensions` aqui: as tools
   /// continuam desligadas por `--no-tools`, então extensão carregada não
   /// reintroduz risco de escrita.
-  static const List<String> piIsolationFlags = <String>[
+  static const List<String> ompIsolationFlags = <String>[
     '--no-session',
     '--no-tools',
     '--no-skills',
     '--no-context-files',
-    '--no-approve',
   ];
 
   final Duration timeout;
@@ -74,11 +73,10 @@ class CliAutomationGateway implements AutomationGateway {
     }
     try {
       final discovered = switch (id) {
-        HarnessKind.pi => parsePiModels(
-          await _runForDiscovery(executable, const [
-            ...piIsolationFlags,
-            '--list-models',
-          ]),
+        // `omp models` não abre sessão (sem flags de isolamento); o catálogo
+        // sai como JSON, com o `selector` (`provider/id`) de cada modelo.
+        HarnessKind.omp => parseOmpModels(
+          await _runForDiscovery(executable, const ['models', '--json']),
         ),
         HarnessKind.codex => await _discoverCodexModels(executable),
         HarnessKind.openCode => parseOpenCodeModels(
@@ -306,12 +304,12 @@ class CliAutomationGateway implements AutomationGateway {
         : <String>['--model', model];
     final promptWithInstructions = CommitMessagePrompt.withSystemPrompt(prompt);
     return switch (harnessId) {
-      HarnessKind.pi => (
+      HarnessKind.omp => (
         args: <String>[
           '-p',
           '--mode',
           'json',
-          ...piIsolationFlags,
+          ...ompIsolationFlags,
           '--system-prompt',
           CommitMessagePrompt.systemPrompt,
           ...modelArgs,
@@ -379,7 +377,7 @@ class CliAutomationGateway implements AutomationGateway {
         ],
         stdin: null,
       ),
-      // Diferente do pi e do cursor-agent, aqui `-p` **recebe** o prompt
+      // Diferente do omp e do cursor-agent, aqui `-p` **recebe** o prompt
       // (`flag needs an argument: -p`) em vez de ligar o modo print e ler um
       // posicional.
       HarnessKind.antigravity => (
@@ -454,8 +452,8 @@ class CliAutomationGateway implements AutomationGateway {
       case HarnessKind.cursor:
       case HarnessKind.antigravity:
         message = _resultField(stdout);
-      case HarnessKind.pi:
-        message = _lastJsonText(stdout, pi: true);
+      case HarnessKind.omp:
+        message = _lastJsonText(stdout, omp: true);
       case HarnessKind.codex:
         message = _lastJsonText(stdout, codex: true);
       case HarnessKind.openCode:
@@ -510,7 +508,7 @@ class CliAutomationGateway implements AutomationGateway {
 
   static String _lastJsonText(
     String stdout, {
-    bool pi = false,
+    bool omp = false,
     bool codex = false,
     bool openCode = false,
     bool copilot = false,
@@ -519,8 +517,8 @@ class CliAutomationGateway implements AutomationGateway {
     for (final line in stdout.split('\n')) {
       final raw = _decodeSingleJson(line);
       if (raw is! Map) continue;
-      if (pi && raw['type'] == 'message_end') {
-        // O Pi fecha a mensagem do **usuário** com um `message_end` também —
+      if (omp && raw['type'] == 'message_end') {
+        // O omp fecha a mensagem do **usuário** com um `message_end` também —
         // sem filtrar o papel, o prompt inteiro viraria a mensagem de commit
         // se o turno terminasse sem resposta.
         final message = raw['message'] as Map?;
@@ -568,15 +566,29 @@ class CliAutomationGateway implements AutomationGateway {
         .join();
   }
 
-  static List<AutomationModel> parsePiModels(String output) {
+  /// `omp models --json` → `{"models": [{"kind", "selector", ...}]}`. Só entram
+  /// os modelos de chat (o catálogo também lista embeddings, imagem etc.).
+  static List<AutomationModel> parseOmpModels(String output) {
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(output);
+    } on FormatException {
+      return const <AutomationModel>[];
+    }
+    if (decoded is! Map || decoded['models'] is! List) {
+      return const <AutomationModel>[];
+    }
     final models = <AutomationModel>[];
-    for (final line in output.split('\n').skip(1)) {
-      final columns = line.trim().split(RegExp(r'\s{2,}'));
-      if (columns.length < 2 || columns[0].isEmpty || columns[1].isEmpty) {
+    for (final entry in decoded['models'] as List) {
+      if (entry is! Map) continue;
+      final kind = entry['kind'];
+      final selector = entry['selector'];
+      if ((kind != null && kind != 'chat') ||
+          selector is! String ||
+          selector.isEmpty) {
         continue;
       }
-      final id = '${columns[0]}/${columns[1]}';
-      models.add(AutomationModel(id: id, label: id));
+      models.add(AutomationModel(id: selector, label: selector));
     }
     return _uniqueModels(models);
   }

@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:cockpit/app/cockpit/domain/entities/pi_command.dart';
+import 'package:cockpit/app/cockpit/domain/entities/omp_command.dart';
 import 'package:cockpit/app/cockpit/domain/entities/prompt_image.dart';
 import 'package:cockpit/app/cockpit/domain/entities/rpc_event.dart'
     show RelayStatus;
@@ -297,25 +297,25 @@ class _AgentComposerState extends State<AgentComposer> {
   }
 
   // --- slash command data ---
-  List<PiCommand> get _builtins {
+  List<OmpCommand> get _builtins {
     final tr = context.t.cockpit.agentComposer;
-    return <PiCommand>[
-      PiCommand(name: 'new', description: tr.cmdNewDescription),
-      PiCommand(name: 'compact', description: tr.cmdCompactDescription),
+    return <OmpCommand>[
+      OmpCommand(name: 'new', description: tr.cmdNewDescription),
+      OmpCommand(name: 'compact', description: tr.cmdCompactDescription),
     ];
   }
 
-  /// Embutidos + comandos das extensions, **suprimindo os `/remote-pi`**.
-  List<PiCommand> get _allCommands => <PiCommand>[
+  /// Embutidos + comandos das extensions, **suprimindo os `/remote-omp`**.
+  List<OmpCommand> get _allCommands => <OmpCommand>[
     ..._builtins,
     ...widget.session.commands.where(
-      (c) => c.name != 'remote-pi' && !c.name.startsWith('remote-pi '),
+      (c) => c.name != 'remote-omp' && !c.name.startsWith('remote-omp '),
     ),
   ];
 
-  List<PiCommand> get _cmdMatches {
+  List<OmpCommand> get _cmdMatches {
     final query = _cmdQuery;
-    if (query == null) return const <PiCommand>[];
+    if (query == null) return const <OmpCommand>[];
     final q = query.toLowerCase();
     return _allCommands
         .where((c) => c.name.toLowerCase().startsWith(q))

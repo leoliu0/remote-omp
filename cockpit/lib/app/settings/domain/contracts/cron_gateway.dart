@@ -3,7 +3,7 @@ import 'package:cockpit/app/settings/domain/exceptions/daemon_error.dart';
 import 'package:cockpit/app/core/domain/result.dart';
 
 /// Fronteira do cron de daemons (plan/39): agenda prompts recorrentes num
-/// daemon. Mesmo control-plane UDS dos daemons (`~/.pi/remote/supervisor.sock`,
+/// daemon. Mesmo control-plane UDS dos daemons (`~/.omp/remote/supervisor.sock`,
 /// ops `cron_*`). Reusa [DaemonError] — é o mesmo supervisor.
 ///
 /// A validação (cron-expr válida, intervalo ≥ 60s, supervisor up) é feita no

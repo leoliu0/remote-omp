@@ -377,7 +377,7 @@ describe("Home derivations", () => {
   });
 
   it("labels registry names like the omp footer (drops a leading \"Claude \")", () => {
-    // room_meta.model as pi-extension sends it (captured from omp v18.8.7);
+    // room_meta.model as omp-extension sends it (captured from omp v18.8.7);
     // the terminal footer shows "Opus 5.5 · auto" for this session.
     assert.equal(formatModelName("Claude Opus 5.5"), "Opus 5.5");
     assert.equal(formatModelName("Claude Sonnet 5.5"), "Sonnet 5.5");

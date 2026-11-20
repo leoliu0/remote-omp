@@ -3,12 +3,16 @@ import 'dart:io';
 
 import 'package:cockpit/app/cockpit/domain/contracts/session_history.dart';
 import 'package:cockpit/app/cockpit/domain/entities/session_info.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:path/path.dart' as p;
 
-/// Lê as sessões salvas do pi de `~/.pi/agent/sessions/<cwd-codificado>/`.
+/// Lê as sessões salvas do omp de `~/.omp/agent/sessions/<cwd-codificado>/`.
 ///
-/// A pasta de uma sessão segue o **mesmo esquema do pi** (core/session-manager):
-/// remove o separador inicial, troca `/`, `\` e `:` por `-`, e envolve em `--…--`
-/// (ex.: `/Users/jacob/app` → `--Users-jacob-app--`;
+/// A pasta de uma sessão segue o **mesmo esquema do omp**
+/// (`session/session-paths.ts`): `/`, `\` e `:` viram `-`, e o prefixo depende
+/// de onde o cwd mora — sob o tmp do SO, `-tmp-<relativo>`; sob o HOME,
+/// `-<relativo>` (ex.: `~/code/app` → `-code-app`); fora dos dois, o formato
+/// legado `--<absoluto>--` (ex.: `/srv/app` → `--srv-app--`;
 /// `R:\code\orbe` → `--R-code-orbe--`). Cada `.jsonl` é uma sessão.
 class SessionHistoryImpl implements SessionHistory {
   const SessionHistoryImpl();
@@ -90,18 +94,62 @@ class SessionHistoryImpl implements SessionHistory {
     final home =
         Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
     final agentDir =
-        Platform.environment['PI_CODING_AGENT_DIR'] ?? '$home/.pi/agent';
+        Platform.environment['PI_CODING_AGENT_DIR'] ?? '$home/.omp/agent';
     return '$agentDir/sessions';
   }
 
-  /// Codifica o cwd no nome de pasta do pi. Espelha
-  /// `core/session-manager.js`: `--${cwd.replace(/^[/\\]/,'').replace(/[/\\:]/g,'-')}--`.
-  /// Sem isso, no Windows o `:`/`\` do path (ex.: `R:\code`) entram crus e geram
-  /// um nome de diretório inválido.
   String _encode(String cwd) {
-    final stripped = cwd.replaceFirst(RegExp(r'^[/\\]'), '');
-    final slug = stripped.replaceAll(RegExp(r'[/\\:]'), '-');
-    return '--$slug--';
+    final home =
+        Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+    return encodeSessionDirName(
+      cwd,
+      home: home,
+      tmp: Directory.systemTemp.path,
+    );
+  }
+
+  /// Codifica o cwd no nome de pasta do omp. Espelha
+  /// `getDefaultSessionDirName` do omp: tmp tem precedência sobre o HOME (é a
+  /// raiz mais específica), e o fallback é o formato legado absoluto.
+  @visibleForTesting
+  static String encodeSessionDirName(
+    String cwd, {
+    required String? home,
+    required String tmp,
+  }) {
+    final resolved = _canonical(p.absolute(cwd));
+    String encodeRelative(String prefix, String relative) {
+      final encoded = relative.replaceAll(RegExp(r'[/\\:]'), '-');
+      if (encoded.isEmpty) return prefix;
+      return prefix.endsWith('-') ? '$prefix$encoded' : '$prefix-$encoded';
+    }
+
+    final tmpRel = p.relative(resolved, from: _canonical(tmp));
+    if (_isWithin(tmpRel)) {
+      return encodeRelative('-tmp', tmpRel == '.' ? '' : tmpRel);
+    }
+    if (home != null && home.isNotEmpty) {
+      final homeRel = p.relative(resolved, from: _canonical(home));
+      if (_isWithin(homeRel)) {
+        return encodeRelative('-', homeRel == '.' ? '' : homeRel);
+      }
+    }
+    final stripped = resolved.replaceFirst(RegExp(r'^[/\\]'), '');
+    return '--${stripped.replaceAll(RegExp(r'[/\\:]'), '-')}--';
+  }
+
+  static bool _isWithin(String relative) =>
+      relative == '.' ||
+      (!relative.startsWith('..') && !p.isAbsolute(relative));
+
+  /// Resolve symlinks (ex.: `/var` → `/private/var` no macOS) como o omp faz
+  /// antes de comparar com o HOME/tmp; cai no próprio caminho se não existir.
+  static String _canonical(String path) {
+    try {
+      return Directory(path).resolveSymbolicLinksSync();
+    } catch (_) {
+      return path;
+    }
   }
 
   /// Sufixo uuid do nome do arquivo `<timestamp>_<uuid>.jsonl`. Aceita `/` e `\`

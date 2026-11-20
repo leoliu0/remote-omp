@@ -223,7 +223,7 @@ export function SettingsModal({
                 ))}
               </div>
             )}
-            <div className="text-[10px] text-[#666]">Pair or remove PCs in the Remote Pi app on your phone.</div>
+            <div className="text-[10px] text-[#666]">Pair or remove PCs in the Remote OMP app on your phone.</div>
           </div>
 
           <div className="border-t border-white/10" />
@@ -237,7 +237,7 @@ export function SettingsModal({
             <button
               type="button"
               onClick={() => {
-                if (confirm("Sign out of Remote Pi on this browser? You can sign in again from your phone.")) onSignOut();
+                if (confirm("Sign out of Remote OMP on this browser? You can sign in again from your phone.")) onSignOut();
               }}
               className="px-3 py-1.5 text-red-400 hover:text-red-300 border border-red-500/30 hover:bg-red-500/10 rounded-lg text-xs cursor-pointer"
             >
@@ -249,8 +249,8 @@ export function SettingsModal({
 
           {/* SECTION 5: ABOUT */}
           <div className="space-y-1 text-[#666] text-[11px]">
-            <div className="text-white font-medium">Remote Pi Web 1.0.0</div>
-            <div>Agent mesh over the Remote Pi relay</div>
+            <div className="text-white font-medium">Remote OMP Web 1.0.0</div>
+            <div>Agent mesh over the Remote OMP relay</div>
           </div>
         </div>
       </div>

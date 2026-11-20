@@ -207,5 +207,5 @@ ask for something that requires approval and see the tab move to `waiting`
 - Using Codex `prompt` / `agent` handlers — `command` only.
 - Blocking or changing agent behavior via the hook (ours is a pure observer:
   never writes to stdout, never fails loudly).
-- Other harnesses (`pi`, Gemini CLI): the generic installer opens the path,
+- Other harnesses (`omp`, Gemini CLI): the generic installer opens the path,
   but each one needs its own investigation.

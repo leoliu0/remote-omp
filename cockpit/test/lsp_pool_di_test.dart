@@ -13,7 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   testWidgets('LspServerPool resolve via core upward', (tester) async {
     final core = buildCoreModule(
-      config: const PiSpawnConfig(executable: 'pi'),
+      config: const OmpSpawnConfig(executable: 'omp'),
       // Irrelevante para este teste; só satisfaz o grafo (cache frio, sem uso).
       terminalProfiles: TerminalProfileResolverImpl(),
     );

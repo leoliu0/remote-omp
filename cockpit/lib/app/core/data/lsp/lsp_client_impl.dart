@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:cockpit/app/core/data/lsp/lsp_codec.dart';
 import 'package:cockpit/app/core/data/lsp/lsp_process_registry.dart';
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:cockpit/app/core/domain/contracts/lsp_client.dart';
 import 'package:cockpit/app/core/domain/entities/lsp_diagnostic.dart';
 import 'package:cockpit/app/core/domain/entities/lsp_semantic_tokens.dart';
@@ -60,7 +60,7 @@ const List<String> _kSemanticTokenModifiers = <String>[
 /// [encodeLspMessage]), parse do stdout ([LspMessageDecoder]), handshake LSP,
 /// publish de diagnostics e kill limpo.
 ///
-/// Espelha o padrão do `PiRpcProcess` (write-chain serializada, Completer por id,
+/// Espelha o padrão do `OmpRpcProcess` (write-chain serializada, Completer por id,
 /// close-stdin→SIGTERM→SIGKILL). Difere no framing (Content-Length, não JSONL) e
 /// no id JSON-RPC (inteiro, não `req-N`).
 class LspClientImpl implements LspClient {
@@ -78,7 +78,7 @@ class LspClientImpl implements LspClient {
   final Map<int, Completer<Object?>> _pending = <int, Completer<Object?>>{};
   int _seq = 0;
 
-  /// Serializa escritas no stdin (ver `PiRpcProcess._writeChain`).
+  /// Serializa escritas no stdin (ver `OmpRpcProcess._writeChain`).
   Future<void> _writeChain = Future<void>.value();
 
   Process? _process;
@@ -420,7 +420,7 @@ class LspClientImpl implements LspClient {
   }
 
   /// Escreve uma mensagem no stdin, serializada com as demais (ver write-chain
-  /// do `PiRpcProcess`).
+  /// do `OmpRpcProcess`).
   void _send(Map<String, dynamic> message) {
     final bytes = encodeLspMessage(message);
     final result = _writeChain.then((_) async {

@@ -14,18 +14,18 @@ import { RevealController } from "@/components/landing/reveal-controller";
 export const metadata: Metadata = {
   title: "Cockpit reference",
   description:
-    "Reference for Remote Pi Cockpit: the internal CLI, .ckp pane layouts, .cockpit/tasks.json Task Run, the theme format, agent turn status hooks, and databases.",
+    "Reference for Remote OMP Cockpit: the internal CLI, .ckp pane layouts, .cockpit/tasks.json Task Run, the theme format, agent turn status hooks, and databases.",
 };
 
-const GITHUB_URL = "https://github.com/jacobaraujo7/remote_pi";
+const GITHUB_URL = "https://github.com/leoliu0/remote-omp";
 const COCKPIT_DOCS =
-  "https://github.com/jacobaraujo7/remote_pi/tree/main/cockpit/docs";
+  "https://github.com/leoliu0/remote-omp/tree/main/cockpit/docs";
 const THEME_SCHEMA =
-  "https://raw.githubusercontent.com/jacobaraujo7/remote_pi/main/cockpit/docs/theme.schema.json";
+  "https://raw.githubusercontent.com/leoliu0/remote-omp/main/cockpit/docs/theme.schema.json";
 const TASKS_SCHEMA =
-  "https://github.com/jacobaraujo7/remote_pi/blob/main/cockpit/docs/tasks.schema.json";
+  "https://github.com/leoliu0/remote-omp/blob/main/cockpit/docs/tasks.schema.json";
 const THEME_EXAMPLE =
-  "https://github.com/jacobaraujo7/remote_pi/blob/main/cockpit/docs/theme.example.json";
+  "https://github.com/leoliu0/remote-omp/blob/main/cockpit/docs/theme.example.json";
 
 const DOCS_TOC: TocItem[] = [
   { id: "install", label: "Install" },
@@ -179,7 +179,7 @@ export default function CockpitDocsPage() {
               </Link>
               ; for the mesh, daemons, and the relay, see the{" "}
               <Link href="/docs" className="text-accent underline">
-                Remote Pi docs
+                Remote OMP docs
               </Link>
               .
             </p>
@@ -207,9 +207,9 @@ export default function CockpitDocsPage() {
                 </p>
                 <p>
                   Cockpit is a terminal first: it needs no account, no cloud,
-                  and no Remote Pi setup to be useful. The mesh, pairing, and
+                  and no Remote OMP setup to be useful. The mesh, pairing, and
                   daemon features light up only once you install the{" "}
-                  <InlineCode>remote-pi</InlineCode> extension described in the{" "}
+                  <InlineCode>remote-omp</InlineCode> extension described in the{" "}
                   <Link href="/docs#install" className="text-accent underline">
                     main docs
                   </Link>
@@ -1342,7 +1342,7 @@ cockpit mongo browse --db atlas --database shop`}
                   </li>
                   <li>
                     <Link href="/docs" className="text-accent underline">
-                      Remote Pi docs
+                      Remote OMP docs
                     </Link>{" "}
                     — mesh, relay, daemons, pairing.
                   </li>

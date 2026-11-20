@@ -4,7 +4,7 @@ import { memo, useCallback, useState, useEffect, useLayoutEffect, useMemo, useRe
 import {
   PairedSession,
   PeerPresence,
-  RemotePiRelayClient,
+  RemoteOmpRelayClient,
   type RoomAction,
   type WebChatMessage,
   type WireSkill,
@@ -234,7 +234,7 @@ const ChatTimeline = memo(function ChatTimeline({
           </div>
           <div className="text-sm font-medium text-white">No messages yet</div>
           <div className="text-xs text-[#666] font-mono mt-1">
-            Send a prompt below to interact with your Pi agent.
+            Send a prompt below to interact with your omp agent.
           </div>
         </div>
       ) : (
@@ -309,7 +309,7 @@ export function WebChat({
   const [skills, setSkills] = useState<WireSkill[]>([]);
   // The Agents board belongs to the client (room) it came from, so switching
   // sessions never shows the previous room's jobs.
-  const [agents, setAgents] = useState<{ client: RemotePiRelayClient | null; board: AgentBoard }>({
+  const [agents, setAgents] = useState<{ client: RemoteOmpRelayClient | null; board: AgentBoard }>({
     client: null,
     board: EMPTY_BOARD,
   });
@@ -320,19 +320,19 @@ export function WebChat({
     writeAgentsPanelOpen(open);
   };
   // The terminal footer row's values, bound to the client (room) they came from.
-  const [statusLine, setStatusLine] = useState<{ client: RemotePiRelayClient | null; line: StatusLine | null }>({
+  const [statusLine, setStatusLine] = useState<{ client: RemoteOmpRelayClient | null; line: StatusLine | null }>({
     client: null,
     line: null,
   });
   // omp's plan mode from `plan_state` (the Pi sends one after every sync reply),
   // bound to its client like the status line; null until the first frame.
-  const [planState, setPlanState] = useState<{ client: RemotePiRelayClient | null; state: PlanState | null }>({
+  const [planState, setPlanState] = useState<{ client: RemoteOmpRelayClient | null; state: PlanState | null }>({
     client: null,
     state: null,
   });
   // omp's todo list from `todo_state` (sent on attach, after every sync reply and
   // on change), bound to its client; [] hides the panel.
-  const [todo, setTodo] = useState<{ client: RemotePiRelayClient | null; phases: TodoPhase[] }>({
+  const [todo, setTodo] = useState<{ client: RemoteOmpRelayClient | null; phases: TodoPhase[] }>({
     client: null,
     phases: [],
   });
@@ -380,7 +380,7 @@ export function WebChat({
   };
   // Built during render (no side effects in the constructor); the effect below
   // wires callbacks and subscribes it to the shared relay link.
-  const client = useMemo(() => new RemotePiRelayClient(connection, session), [connection, session]);
+  const client = useMemo(() => new RemoteOmpRelayClient(connection, session), [connection, session]);
   const agentBoard = agents.client === client ? agents.board : EMPTY_BOARD;
   const liveTodo = todo.client === client ? todo.phases : NO_TODOS;
   // The list follows new content only while the reader is at the bottom
@@ -584,7 +584,7 @@ export function WebChat({
     const sent = client.respondExtensionUi(resp);
     setPendingPrompt((open) =>
       open && open.request.id === resp.id
-        ? { ...open, error: sent ? null : "Not connected — check the link to Pi and retry." }
+        ? { ...open, error: sent ? null : "Not connected — check the link to omp and retry." }
         : open
     );
     return sent;
@@ -665,7 +665,7 @@ export function WebChat({
 
           <div className="min-w-0">
             <div className="text-sm font-semibold text-white truncate font-mono flex items-center gap-2">
-              <span>{session.name || "Remote Pi"}</span>
+              <span>{session.name || "Remote OMP"}</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-[#888] font-normal">
                 {session.roomId}
               </span>

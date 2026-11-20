@@ -1,7 +1,7 @@
-# Android release for Remote Pi app (app/).
+# Android release for Remote OMP app (app/).
 #
 # Trigger: tag `app-v<version>` (version MUST match app/pubspec.yaml).
-# Produces: GitHub Release with signed `RemotePi.apk` (release keystore) +
+# Produces: GitHub Release with signed `RemoteOMP.apk` (release keystore) +
 # SHA256SUMS. Direct APK distribution without app stores.
 #
 # Anti-debug guard: app Gradle silently falls back to debug keys if
@@ -70,12 +70,12 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           mkdir -p android/signing
-          echo "$ANDROID_KEYSTORE" | base64 -d > android/signing/remotepi-release.jks
+          echo "$ANDROID_KEYSTORE" | base64 -d > android/signing/remoteomp-release.jks
           cat > android/key.properties <<EOF
           storePassword=$ANDROID_KEYSTORE_PASSWORD
           keyPassword=$ANDROID_KEY_PASSWORD
           keyAlias=$ANDROID_KEY_ALIAS
-          storeFile=signing/remotepi-release.jks
+          storeFile=signing/remoteomp-release.jks
           storeType=PKCS12
           EOF
 
@@ -93,7 +93,7 @@ jobs:
           BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
           APK_CERT=$("$ANDROID_HOME/build-tools/$BT/apksigner" verify --print-certs "$APK" \
             | grep -m1 "SHA-256 digest" | awk '{print $NF}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
-          KS_CERT=$(keytool -list -v -keystore android/signing/remotepi-release.jks \
+          KS_CERT=$(keytool -list -v -keystore android/signing/remoteomp-release.jks \
             -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" \
             | grep -m1 "SHA256:" | awk '{print $NF}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           echo "apk:      $APK_CERT"
@@ -107,14 +107,14 @@ jobs:
         run: |
           VERSION="${{ steps.v.outputs.version }}"
           mkdir -p out
-          cp build/app/outputs/flutter-apk/app-release.apk out/RemotePi.apk
-          (cd out && sha256sum RemotePi.apk > SHA256SUMS)
+          cp build/app/outputs/flutter-apk/app-release.apk out/RemoteOMP.apk
+          (cd out && sha256sum RemoteOMP.apk > SHA256SUMS)
           BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
           jq -n --arg version "$VERSION" --arg date "$(date -u +%F)" \
-            --arg notes "Remote Pi (app) ${VERSION}" \
-            --arg url "$BASE/RemotePi.apk" \
-            --arg sha256 "$(sha256sum out/RemotePi.apk | cut -d' ' -f1)" \
-            --argjson size "$(stat -c%s out/RemotePi.apk)" \
+            --arg notes "Remote OMP (app) ${VERSION}" \
+            --arg url "$BASE/RemoteOMP.apk" \
+            --arg sha256 "$(sha256sum out/RemoteOMP.apk | cut -d' ' -f1)" \
+            --argjson size "$(stat -c%s out/RemoteOMP.apk)" \
             '{version:$version, date:$date, notes:$notes, artifacts:[
                {platform:"android", arch:"universal", format:"apk",
                 url:$url, sha256:$sha256, size:$size}]}' \
@@ -125,7 +125,7 @@ jobs:
         run: |
           VERSION="${{ steps.v.outputs.version }}"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" out/RemotePi.apk out/SHA256SUMS out/latest.json --clobber
+            gh release upload "$RELEASE_TAG" out/RemoteOMP.apk out/SHA256SUMS out/latest.json --clobber
           else
             NOTES_FILE=$(mktemp)
             {
@@ -134,8 +134,8 @@ jobs:
               echo "---"
               echo "**Site publishing (manual gate):** download \`latest.json\` from this release and place at \`/Users/flutterando/app/data/\` on the rp-s3 host — only then the site and in-app banner will offer this version."
             } > "$NOTES_FILE"
-            gh release create "$RELEASE_TAG" out/RemotePi.apk out/SHA256SUMS out/latest.json \
-              --title "Remote Pi (app) ${VERSION}" \
+            gh release create "$RELEASE_TAG" out/RemoteOMP.apk out/SHA256SUMS out/latest.json \
+              --title "Remote OMP (app) ${VERSION}" \
               --notes-file "$NOTES_FILE" \
               --latest=false
           fi
@@ -143,11 +143,11 @@ jobs:
       - name: Summary
         run: |
           {
-            echo "## Remote Pi app ${{ steps.v.outputs.version }} — APK published"
+            echo "## Remote OMP app ${{ steps.v.outputs.version }} — APK published"
             echo ""
             echo "Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
             echo ""
-            echo "Asset: \`RemotePi.apk\` (signed with release keystore, verified in job)."
+            echo "Asset: \`RemoteOMP.apk\` (signed with release keystore, verified in job)."
             echo ""
             echo "**Next step (manual):** download \`latest.json\` from release and"
             echo "place on rp-s3 (\`/Users/flutterando/app/data/\`) to publish on site and in-app banner."

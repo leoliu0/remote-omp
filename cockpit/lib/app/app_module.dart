@@ -11,12 +11,12 @@ import 'package:flutter_modular/flutter_modular.dart';
 /// ausência dele, no caso do core), então aqui é só `module(...)`.
 ///
 /// `Future` porque o `cockpit` faz bootstrap async (abre os próprios stores JSON).
-/// Os valores threadados são o [PiSpawnConfig] e o resolver de perfis de
+/// Os valores threadados são o [OmpSpawnConfig] e o resolver de perfis de
 /// terminal: ambos moram no core (root-owned) e as features os resolvem
 /// **upward**; os demais async (boxes/versão/notifier) cada builder resolve
 /// sozinho. Construído **uma vez** no `main` — dedup por identidade preservado.
 Future<Module> buildAppModule({
-  required PiSpawnConfig config,
+  required OmpSpawnConfig config,
   required WindowActivityController windowActivity,
 }) async {
   // Plano 50: descobre os perfis de terminal e injeta a instância **já

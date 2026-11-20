@@ -1,8 +1,9 @@
-# Remote Pi — Site
+# Remote OMP — Site
 
-Landing page for [Remote Pi](https://github.com/jacobaraujo7/remote_pi) — the
-project that lets you control a Pi coding agent from your phone over an
-end-to-end encrypted channel.
+Landing page for [Remote OMP](https://github.com/leoliu0/remote-omp) — the
+project that lets you control an [omp (oh-my-pi)](https://github.com/can1357/oh-my-pi)
+coding agent from your phone over an end-to-end encrypted channel. Remote OMP
+is a fork of [jacobaraujo7/remote_pi](https://github.com/jacobaraujo7/remote_pi).
 
 This package ships three static routes:
 

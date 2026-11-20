@@ -1,7 +1,7 @@
 import 'package:cockpit/app/cockpit/domain/entities/agent_snapshot.dart';
 import 'package:cockpit/app/cockpit/domain/entities/context_usage.dart';
-import 'package:cockpit/app/cockpit/domain/entities/pi_command.dart';
-import 'package:cockpit/app/cockpit/domain/entities/pi_model.dart';
+import 'package:cockpit/app/cockpit/domain/entities/omp_command.dart';
+import 'package:cockpit/app/cockpit/domain/entities/omp_model.dart';
 import 'package:cockpit/app/cockpit/domain/entities/thinking_level.dart';
 import 'package:cockpit/app/cockpit/domain/entities/transcript_message.dart';
 
@@ -12,13 +12,13 @@ import 'package:cockpit/app/cockpit/domain/entities/transcript_message.dart';
 class RpcDataMapper {
   const RpcDataMapper();
 
-  PiModel? model(Object? json) {
+  OmpModel? model(Object? json) {
     if (json is! Map) return null;
     final id = json['id'] as String?;
     final provider = json['provider'] as String?;
     if (id == null || provider == null) return null;
     final input = json['input'];
-    return PiModel(
+    return OmpModel(
       provider: provider,
       id: id,
       name: json['name'] as String? ?? id,
@@ -36,28 +36,28 @@ class RpcDataMapper {
     );
   }
 
-  List<PiModel> models(Object? data) {
-    if (data is! Map || data['models'] is! List) return const <PiModel>[];
+  List<OmpModel> models(Object? data) {
+    if (data is! Map || data['models'] is! List) return const <OmpModel>[];
     return (data['models'] as List)
         .map(model)
-        .whereType<PiModel>()
+        .whereType<OmpModel>()
         .toList(growable: false);
   }
 
   /// `get_commands` → `{commands:[{name, description, source, ...}]}`.
-  List<PiCommand> commands(Object? data) {
-    if (data is! Map || data['commands'] is! List) return const <PiCommand>[];
+  List<OmpCommand> commands(Object? data) {
+    if (data is! Map || data['commands'] is! List) return const <OmpCommand>[];
     return (data['commands'] as List)
         .whereType<Map>()
         .map((c) {
           final name = c['name'] as String?;
           if (name == null || name.isEmpty) return null;
-          return PiCommand(
+          return OmpCommand(
             name: name,
             description: c['description'] as String? ?? '',
           );
         })
-        .whereType<PiCommand>()
+        .whereType<OmpCommand>()
         .toList(growable: false);
   }
 

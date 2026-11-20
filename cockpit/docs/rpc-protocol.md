@@ -1,13 +1,13 @@
-# Protocolo `pi --mode rpc` — schema usado pelo Cockpit
+# Protocolo `omp --mode rpc` — schema usado pelo Cockpit
 
 Documento do **Passo 0 (spike)** do [plano 37](../../plan/37-desktop-cockpit.md).
-Descreve o protocolo RPC que o `PiRpcProcess` (`lib/data/rpc/`) fala com o
-`pi --mode rpc`. **Validado empiricamente** (pi `0.78.1`, `/opt/homebrew/bin/pi`)
-e conferido contra a doc oficial do SDK em
-`@earendil-works/pi-coding-agent/docs/rpc.md`.
+Descreve o protocolo RPC que o `OmpRpcProcess` (`lib/data/rpc/`) fala com o
+`omp --mode rpc`. **Validado empiricamente** no spike com o pi `0.78.1` (o
+protocolo RPC do omp descende dele; o Cockpit agora spawna `omp`) e conferido
+contra a doc oficial do SDK em `@oh-my-pi/pi-coding-agent/docs/rpc.md`.
 
-> O Cockpit spawna **pi puro** (decisão B do plano 37): `pi --mode rpc
-> --no-session --no-extensions` — sem a extensão remote-pi, logo **sem
+> O Cockpit spawna **omp puro** (decisão B do plano 37): `omp --mode rpc
+> --no-session --no-extensions` — sem a extensão remote-omp, logo **sem
 > relay/mesh/crypto**. Local-only.
 
 ## Transporte
@@ -15,7 +15,7 @@ e conferido contra a doc oficial do SDK em
 - **Comandos** → uma linha JSON por `stdin`.
 - **Eventos + respostas** ← uma linha JSON por `stdout`.
 - **stderr** carrega *warnings/diagnóstico* (ex.: "Model not found…") — **não é
-  protocolo**. O `PiRpcProcess` lê stdout e stderr em canais separados; stderr
+  protocolo**. O `OmpRpcProcess` lê stdout e stderr em canais separados; stderr
   vira `RpcDiagnostic`, nunca é parseado como JSON.
 
 ### Framing (JSONL estrito)
@@ -61,7 +61,7 @@ então não passa `streamingBehavior`. O gateway suporta `steerIfBusy` para o fu
 ### Comandos request/response (correlacionados por `id`)  ✅ usados
 
 Todo comando aceita um `id` opcional; se presente, a `response` ecoa o mesmo
-`id`. O `PiRpcProcess` usa isso para um canal request/response: gera um `id`,
+`id`. O `OmpRpcProcess` usa isso para um canal request/response: gera um `id`,
 registra um `Completer`, manda o comando e completa quando a `response` com
 aquele `id` chega no stdout (essas respostas **não** entram no stream de
 eventos — são interceptadas). Timeout de 15s; processo morto → requests
@@ -169,7 +169,7 @@ Tipos emitidos mas **ignorados** no MVP (viram `RpcUnknown`): `message_start`,
 ## Achados do spike (importam para a UI)
 
 1. **`prompt`, não `sendUserMessage`.** Wire real `{"type":"prompt","message":…}`.
-2. **Fechar o stdin é o encerramento gracioso.** Ao fechar `stdin`, o pi sai com
+2. **Fechar o stdin é o encerramento gracioso.** Ao fechar `stdin`, o omp sai com
    **code 0** sozinho — não precisa de SIGTERM. O `kill()` do gateway fecha o
    stdin e só escala para SIGTERM→SIGKILL se ele não sair em 3s. Resultado:
    **sem processo órfão** (`pgrep -f "cli.js --mode rpc"` limpo).
@@ -180,9 +180,9 @@ Tipos emitidos mas **ignorados** no MVP (viram `RpcUnknown`): `message_start`,
    `hideThinkingBlock` na TUI. A UI precisa tolerar (o MVP mostra dim).
 5. **stderr ≠ protocolo.** Warnings (ex.: "Model … not found") saem no stderr. Ler
    junto com o stdout quebraria o parser JSONL. Canais separados.
-6. **App macOS não herda o PATH do shell.** O binário `pi` é resolvido por
-   caminhos conhecidos (`/opt/homebrew/bin/pi`, `/usr/local/bin/pi`) ou
-   `--dart-define=COCKPIT_PI_PATH=…`. Ver `lib/config/env.dart`.
+6. **App macOS não herda o PATH do shell.** O binário `omp` é resolvido por
+   caminhos conhecidos (`/opt/homebrew/bin/omp`, `/usr/local/bin/omp`,
+   `~/.bun/bin/omp`) ou `--dart-define=COCKPIT_OMP_PATH=…`. Ver `lib/app/core/env.dart`.
 7. **Sandbox do macOS bloqueia spawn + leitura de pasta.** Desligado nas
    entitlements (decisão B, dev tool local — fora da App Store por ora).
 8. **Erro de turno não vem nos deltas — vem na mensagem final.** Quando o
@@ -194,17 +194,17 @@ Tipos emitidos mas **ignorados** no MVP (viram `RpcUnknown`): `message_start`,
 
 ## Provider/model no spawn
 
-`pi --mode rpc` usa o provider/model do `~/.pi/agent/settings.json` por padrão.
+`omp --mode rpc` usa o provider/model do `~/.omp/agent/config.yml` por padrão.
 Para o demo (a máquina tem o default `ollama`, que pode estar fora do ar),
 aponte para um provider com chave via `--dart-define`:
 
 ```bash
 flutter run -d macos \
-  --dart-define=COCKPIT_PI_PROVIDER=deepseek \
-  --dart-define=COCKPIT_PI_MODEL=deepseek-chat
+  --dart-define=COCKPIT_OMP_PROVIDER=deepseek \
+  --dart-define=COCKPIT_OMP_MODEL=deepseek-chat
 ```
 
-Sem overrides → usa o default do pi. Ver `PiSpawnConfig` em `lib/config/env.dart`.
+Sem overrides → usa o default do omp. Ver `OmpSpawnConfig` em `lib/config/env.dart`.
 
 ## Como reproduzir o spike
 

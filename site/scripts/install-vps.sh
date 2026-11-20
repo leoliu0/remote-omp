@@ -31,7 +31,7 @@ rm -f /tmp/rpsite.tgz
 
 cat > /etc/systemd/system/remote-pi-site.service <<'EOF'
 [Unit]
-Description=Remote Pi website (Next.js standalone)
+Description=Remote OMP website (Next.js standalone)
 After=network-online.target
 
 [Service]
@@ -85,7 +85,7 @@ EOF
 
 cat > /etc/systemd/system/caddy.service <<'EOF'
 [Unit]
-Description=Caddy (HTTPS for Remote Pi website)
+Description=Caddy (HTTPS for Remote OMP website)
 After=network-online.target
 
 [Service]

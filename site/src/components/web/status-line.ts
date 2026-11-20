@@ -1,5 +1,5 @@
 // omp's footer status row, shown under the composer. Wire contract:
-// pi-extension src/protocol/types.ts `StatusLineMessage` (full snapshot per
+// omp-extension src/protocol/types.ts `StatusLineMessage` (full snapshot per
 // frame). Formatting follows omp 18.8.7 packages/tui/src/status-line
 // (default preset, left side): `π · model · thinking · path · git · context · cost`.
 // Model and thinking come from room meta, labelled like the Home tile.

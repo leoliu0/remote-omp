@@ -95,7 +95,7 @@ ColorScheme _schemeFrom(AppColors c, Brightness brightness) {
     popover: c.panel,
     popoverForeground: c.text,
     // "primary" = a marca. O texto sobre ela é derivado da luminância: no azul
-    // Remote Pi dá branco (como era), mas um accent claro de tema custom recebe
+    // Remote OMP dá branco (como era), mas um accent claro de tema custom recebe
     // texto escuro em vez de branco ilegível.
     primary: c.accent,
     primaryForeground: onColor(c.accent),

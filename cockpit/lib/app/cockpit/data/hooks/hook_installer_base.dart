@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'package:cockpit/app/cockpit/domain/contracts/hook_installer.dart';
-import 'package:cockpit/app/core/data/setup/remote_pi_resolver.dart';
+import 'package:cockpit/app/core/data/setup/remote_omp_resolver.dart';
 import 'package:cockpit/app/core/domain/result.dart';
 
 /// Parte comum dos instaladores de hook: materializar a CLI `cockpit` num
@@ -51,7 +51,7 @@ abstract class HookInstallerBase implements HookInstaller {
 
   @override
   Future<Result<void, String>> ensureInstalled() async {
-    final home = remotePiHome();
+    final home = remoteOmpHome();
     if (home == null) {
       return const Failure<void, String>('HOME não resolvido');
     }

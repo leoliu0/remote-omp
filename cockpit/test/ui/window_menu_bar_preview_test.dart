@@ -125,7 +125,7 @@ Widget _titleBar({required bool hamburger}) => Container(
       const SizedBox(width: 8),
       const Icon(Icons.view_sidebar_outlined, size: 16),
       const SizedBox(width: 8),
-      const Text('remote_pi'),
+      const Text('remote_omp'),
       const Spacer(),
       const Icon(Icons.view_sidebar_outlined, size: 16),
       const SizedBox(width: 12),

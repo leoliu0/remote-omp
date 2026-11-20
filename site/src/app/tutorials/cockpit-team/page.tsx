@@ -9,13 +9,13 @@ import { RevealController } from "@/components/landing/reveal-controller";
 export const metadata: Metadata = {
   title: "An agent team in Cockpit",
   description:
-    "Use Cockpit's multiplexer to run an orchestrator, a backend, and a frontend agent side by side — each in its own folder with its own AGENTS.md, coordinating over the remote-pi mesh.",
+    "Use Cockpit's multiplexer to run an orchestrator, a backend, and a frontend agent side by side — each in its own folder with its own AGENTS.md, coordinating over the remote-omp mesh.",
 };
 
 /* ---- example AGENTS.md files (one per folder) ---- */
 const ORCHESTRATOR_MD = `# Orchestrator
 
-You coordinate two teammates over the Remote Pi mesh: \`backend\` and
+You coordinate two teammates over the Remote OMP mesh: \`backend\` and
 \`frontend\`. You don't write app code yourself — you split the work,
 delegate it, and integrate the results.
 
@@ -31,7 +31,7 @@ Keep each message small and explicit: say what you want and what
 
 const BACKEND_MD = `# Backend
 
-You own the server and API in this folder. On the Remote Pi mesh you are
+You own the server and API in this folder. On the Remote OMP mesh you are
 the peer named \`backend\`.
 
 ## How you work
@@ -45,7 +45,7 @@ the peer named \`backend\`.
 
 const FRONTEND_MD = `# Frontend
 
-You own the UI in this folder. On the Remote Pi mesh you are the peer
+You own the UI in this folder. On the Remote OMP mesh you are the peer
 named \`frontend\`.
 
 ## How you work
@@ -78,14 +78,14 @@ export default function CockpitTeamTutorial() {
                 <strong className="text-fg">backend</strong>, and a{" "}
                 <strong className="text-fg">frontend</strong> — each with its own{" "}
                 <InlineCode>AGENTS.md</InlineCode>, all talking to each other over
-                the <InlineCode>remote-pi</InlineCode> mesh.
+                the <InlineCode>remote-omp</InlineCode> mesh.
               </p>
             </header>
 
             <article className="prose">
               <DocsSection id="what" title="What you'll build">
                 <p>
-                  Three Pi agents, side by side as panes in a single Cockpit
+                  Three omp agents, side by side as panes in a single Cockpit
                   workspace. Each lives in its own subfolder and reads that
                   folder&apos;s <InlineCode>AGENTS.md</InlineCode> as its standing
                   brief, so each one boots into a role. They coordinate by sending
@@ -105,7 +105,7 @@ export default function CockpitTeamTutorial() {
                   >
                     Getting started
                   </Link>{" "}
-                  (install Pi + the <InlineCode>remote-pi</InlineCode> extension)
+                  (install omp + the <InlineCode>remote-omp</InlineCode> extension)
                   and{" "}
                   <Link
                     href="/tutorials/mesh-local"
@@ -127,12 +127,12 @@ export default function CockpitTeamTutorial() {
                       Cockpit page
                     </Link>
                     . On first launch its onboarding checks for{" "}
-                    <InlineCode>pi</InlineCode>, the{" "}
-                    <InlineCode>remote-pi</InlineCode> extension, and the
+                    <InlineCode>omp</InlineCode>, the{" "}
+                    <InlineCode>remote-omp</InlineCode> extension, and the
                     supervisor, and helps you install anything missing.
                   </li>
                   <li>
-                    The <InlineCode>remote-pi</InlineCode> extension is what hands
+                    The <InlineCode>remote-omp</InlineCode> extension is what hands
                     every agent the mesh tools, so make sure onboarding is green
                     before you build the team.
                   </li>
@@ -157,7 +157,7 @@ export default function CockpitTeamTutorial() {
                   language="text"
                 />
                 <p>
-                  <InlineCode>AGENTS.md</InlineCode> is the brief Pi reads when it
+                  <InlineCode>AGENTS.md</InlineCode> is the brief omp reads when it
                   starts in a folder — the agent&apos;s role and house rules. Give
                   each one a clear job and tell it how to behave on the mesh.
                 </p>
@@ -177,7 +177,7 @@ export default function CockpitTeamTutorial() {
                   language="markdown"
                 />
                 <Callout variant="note" title="One agent per folder">
-                  Pi allows exactly one agent per directory — which is precisely
+                  omp allows exactly one agent per directory — which is precisely
                   why each teammate gets its own subfolder. Three folders, three
                   agents, three distinct peers on the mesh.
                 </Callout>
@@ -201,7 +201,7 @@ export default function CockpitTeamTutorial() {
                 </p>
                 <Callout variant="tip" title="Name them to match">
                   When an agent asks for a name (or in its{" "}
-                  <InlineCode>/remote-pi</InlineCode> wizard), use{" "}
+                  <InlineCode>/remote-omp</InlineCode> wizard), use{" "}
                   <InlineCode>orchestrator</InlineCode>,{" "}
                   <InlineCode>backend</InlineCode>, and{" "}
                   <InlineCode>frontend</InlineCode>. Those are the names teammates
@@ -218,7 +218,7 @@ export default function CockpitTeamTutorial() {
                   pane&apos;s composer, run the slash command once.
                 </p>
                 <CodeBlock
-                  code="/remote-pi"
+                  code="/remote-omp"
                   label="each pane · composer"
                   language="text"
                 />
@@ -244,7 +244,7 @@ export default function CockpitTeamTutorial() {
                 />
                 <p>
                   If a teammate is missing from the roster, run{" "}
-                  <InlineCode>/remote-pi</InlineCode> in its pane and check again.
+                  <InlineCode>/remote-omp</InlineCode> in its pane and check again.
                 </p>
               </DocsSection>
 

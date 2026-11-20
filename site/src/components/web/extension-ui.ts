@@ -1,5 +1,5 @@
 // Plan/57 — interactive extension prompts (ask_user / pi-ask, plan review) on
-// the web. Wire shapes mirror pi-extension/src/protocol/types.ts
+// the web. Wire shapes mirror omp-extension/src/protocol/types.ts
 // (ExtensionUiRequestWire / ExtensionUiResponseWire); parsing and response
 // building follow the phone (app/lib/protocol/protocol.dart and
 // app/lib/ui/chat/widgets/extension_ui_sheet.dart) so the extension sees the
@@ -33,7 +33,7 @@ export interface AskEnrichment {
   questions: AskQuestion[];
 }
 
-/** omp's Plan Review choices (pi-extension `PlanReviewAction`), in omp's order. */
+/** omp's Plan Review choices (omp-extension `PlanReviewAction`), in omp's order. */
 export type PlanReviewAction = "approve_execute" | "approve_compact" | "approve_keep" | "refine" | "save_quit";
 
 export interface PlanReviewOption {
@@ -43,7 +43,7 @@ export interface PlanReviewOption {
   disabled: boolean;
 }
 
-/** The `plan` envelope of a plan review request (pi-extension `PlanReviewWire`). */
+/** The `plan` envelope of a plan review request (omp-extension `PlanReviewWire`). */
 export interface PlanReview {
   planFilePath: string;
   title: string;

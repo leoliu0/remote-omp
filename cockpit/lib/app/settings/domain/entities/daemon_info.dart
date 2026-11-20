@@ -9,10 +9,10 @@ DaemonState daemonStateFromWire(String? raw) => switch (raw) {
   _ => DaemonState.unknown,
 };
 
-/// Um "Daemon Agent" — um `pi --mode rpc` que roda 24/7 sob o `pi-supervisord`.
+/// Um "Daemon Agent" — um `omp --mode rpc` que roda 24/7 sob o `remote-omp-supervisord`.
 ///
-/// Espelha o `DaemonInfo` do control protocol do remote-pi
-/// (`pi-extension/src/daemon/control_protocol.ts`). O `id` é derivado do cwd
+/// Espelha o `DaemonInfo` do control protocol do remote-omp
+/// (`omp-extension/src/daemon/control_protocol.ts`). O `id` é derivado do cwd
 /// (sha256[0..8]); `name`/cwd vêm do registry + config local.
 class DaemonInfo {
   const DaemonInfo({

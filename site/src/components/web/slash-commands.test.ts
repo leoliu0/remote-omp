@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { slashMenuItems } from "./slash-commands.ts";
 
-// pi-extension index.ts:6119-6123 `skills_list.skills: {name, description}[]`.
+// omp-extension index.ts:6119-6123 `skills_list.skills: {name, description}[]`.
 test("the Pi's skills follow the commands, never listed twice (app filterSlashCommands)", () => {
   const items = slashMenuItems([
     { name: "pdf", description: "Read and create PDFs" },

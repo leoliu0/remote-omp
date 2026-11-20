@@ -9,7 +9,7 @@ referência: [`../../plan/43-cockpit-packaging.md`](../../plan/43-cockpit-packag
 | Item | Valor |
 |---|---|
 | App ID (macOS bundle id / Linux app id) | `work.jacobmoura.cockpit` |
-| Nome de exibição | **Remote Pi Cockpit** |
+| Nome de exibição | **Remote OMP Cockpit** |
 | Binário | `cockpit` (Linux/Windows) / `Cockpit` (macOS) — **não** renomeado |
 | Team ID (Apple) | `U843T2P7A2` |
 | Versão (SSOT) | `version:` do `pubspec.yaml` (`x.y.z+n`) |
@@ -68,8 +68,8 @@ codesign --verify --deep --strict --verbose=2 "$APP"   # checagem
 #    via npm, alternativa pra CI). Layout: app + atalho /Applications.
 mkdir -p dist
 STAGE=$(mktemp -d); cp -R "$APP" "$STAGE/"; ln -s /Applications "$STAGE/Applications"
-DMG="dist/RemotePiCockpit-1.0.0-macos-universal.dmg"
-hdiutil create -volname "Remote Pi Cockpit" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+DMG="dist/RemoteOMPCockpit-1.0.0-macos-universal.dmg"
+hdiutil create -volname "Remote OMP Cockpit" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 rm -rf "$STAGE"
 
 # 4. Assina o DMG.
@@ -103,7 +103,7 @@ fastforge package --platform windows --targets exe   # usa windows/packaging/exe
 ```
 
 Sem assinatura nesta fase (aviso do SmartScreen documentado no site). Artefato:
-`RemotePiCockpit-Setup-<v>-windows-x64.exe`.
+`RemoteOMPCockpit-Setup-<v>-windows-x64.exe`.
 
 ## Linux — `.deb` + `.rpm` (x86_64 e arm64)
 

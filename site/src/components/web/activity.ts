@@ -1,5 +1,5 @@
 // The `agent_activity` panel (omp's bottom "waiting on N jobs" list): running
-// subagents and background jobs. Wire contract: pi-extension
+// subagents and background jobs. Wire contract: omp-extension
 // src/protocol/types.ts `AgentActivityJob`. Every frame is a FULL snapshot —
 // the client replaces its list, never merges. Elapsed time is not on the wire;
 // it is computed here and ticks client-side. Strings match the phone app.

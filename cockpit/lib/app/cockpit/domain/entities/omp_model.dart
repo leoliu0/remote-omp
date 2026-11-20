@@ -1,7 +1,7 @@
 /// Um modelo de LLM que o agente pode usar. Versão de domínio do objeto `Model`
 /// do RPC (`get_available_models` / `set_model` / `get_state`).
-class PiModel {
-  const PiModel({
+class OmpModel {
+  const OmpModel({
     required this.provider,
     required this.id,
     required this.name,
@@ -33,7 +33,7 @@ class PiModel {
   /// Identidade lógica: provider + id (o que `set_model` precisa).
   @override
   bool operator ==(Object other) =>
-      other is PiModel && other.provider == provider && other.id == id;
+      other is OmpModel && other.provider == provider && other.id == id;
 
   @override
   int get hashCode => Object.hash(provider, id);

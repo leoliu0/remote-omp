@@ -1082,13 +1082,13 @@ mod tests {
             "id": "t1",
             "kind": "terminal",
             "title": "zsh",
-            "workspacePath": "/Users/x/Projects/remote_pi",
+            "workspacePath": "/Users/x/Projects/remote_omp",
             "working": true,
         })];
         let lines = format_list("list-panes", &data);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].starts_with("● t1    "), "{}", lines[0]);
-        assert!(lines[0].contains("remote_pi"), "{}", lines[0]);
+        assert!(lines[0].contains("remote_omp"), "{}", lines[0]);
         assert!(lines[0].ends_with("zsh"), "{}", lines[0]);
     }
 
@@ -1119,7 +1119,7 @@ mod tests {
 
     #[test]
     fn formata_workspaces_com_fallback_de_panes() {
-        let novo = vec![json!({"name": "remote_pi", "tabs": 3, "path": "/p"})];
+        let novo = vec![json!({"name": "remote_omp", "tabs": 3, "path": "/p"})];
         assert!(format_list("list-workspaces", &novo)[0].contains("3 tabs"));
         let antigo = vec![json!({"name": "old", "panes": 2, "path": "/q"})];
         assert!(format_list("list-workspaces", &antigo)[0].contains("2 tabs"));

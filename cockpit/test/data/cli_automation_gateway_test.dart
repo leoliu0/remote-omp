@@ -32,8 +32,8 @@ void main() {
   );
 
   test('replaces supported harness system prompts', () {
-    final pi = CliAutomationGateway.buildCommand(
-      const AutomationSelection(harnessId: HarnessKind.pi),
+    final omp = CliAutomationGateway.buildCommand(
+      const AutomationSelection(harnessId: HarnessKind.omp),
       'repository context',
     );
     final claude = CliAutomationGateway.buildCommand(
@@ -41,12 +41,12 @@ void main() {
       'repository context',
     );
 
-    for (final command in [pi, claude]) {
+    for (final command in [omp, claude]) {
       final flag = command.args.indexOf('--system-prompt');
       expect(flag, isNonNegative);
       expect(command.args[flag + 1], CommitMessagePrompt.systemPrompt);
     }
-    expect(pi.args.last, 'repository context');
+    expect(omp.args.last, 'repository context');
     expect(claude.stdin, 'repository context');
   });
 
@@ -72,25 +72,25 @@ void main() {
     }
   });
 
-  test('Pi discovery and generation share the same isolation flags', () {
+  test('omp discovery and generation share the same isolation flags', () {
     // O bug: a descoberta listava os modelos do provider `antigravity` (que é
     // registrado por uma extensão) e a geração rodava com `--no-extensions`,
     // derrubando o provider — o CLI respondia "Model not found" para um id que
     // o próprio Cockpit tinha oferecido.
     final generation = CliAutomationGateway.buildCommand(
       const AutomationSelection(
-        harnessId: HarnessKind.pi,
+        harnessId: HarnessKind.omp,
         modelId: 'antigravity/gemini-3.7-flash',
       ),
       'prompt',
     );
 
     expect(
-      CliAutomationGateway.piIsolationFlags,
+      CliAutomationGateway.ompIsolationFlags,
       isNot(contains('--no-extensions')),
     );
     expect(generation.args, isNot(contains('--no-extensions')));
-    for (final flag in CliAutomationGateway.piIsolationFlags) {
+    for (final flag in CliAutomationGateway.ompIsolationFlags) {
       expect(generation.args, contains(flag));
     }
     expect(generation.args, containsAll(['--no-tools', '--no-session']));
@@ -202,10 +202,10 @@ void main() {
     );
     expect(
       CliAutomationGateway.parseOutput(
-        HarnessKind.pi,
-        '{"type":"message_end","message":{"content":[{"type":"text","text":"fix: pi output"}]}}',
+        HarnessKind.omp,
+        '{"type":"message_end","message":{"content":[{"type":"text","text":"fix: omp output"}]}}',
       ),
-      'fix: pi output',
+      'fix: omp output',
     );
   });
 
@@ -258,8 +258,10 @@ void main() {
   });
 
   test('parses model discovery output', () {
-    final pi = CliAutomationGateway.parsePiModels(
-      'provider  model  context  max-out\nopenai  gpt-5  200000  32000\n',
+    final omp = CliAutomationGateway.parseOmpModels(
+      '{"models":[{"provider":"openai","kind":"chat","id":"gpt-5",'
+      '"selector":"openai/gpt-5"},{"provider":"voyage","kind":"embedding",'
+      '"id":"v3","selector":"voyage/v3"}]}',
     );
     final openCode = CliAutomationGateway.parseOpenCodeModels(
       'anthropic/claude-sonnet-4\ninvalid line\n',
@@ -274,7 +276,7 @@ void main() {
       'claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n',
     );
 
-    expect(pi.single.id, 'openai/gpt-5');
+    expect(omp.single.id, 'openai/gpt-5');
     expect(openCode.single.id, 'anthropic/claude-sonnet-4');
     expect(cursor.first.id, 'auto');
     expect(cursor.first.label, 'Auto');

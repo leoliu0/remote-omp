@@ -9,7 +9,7 @@ import { RevealController } from "@/components/landing/reveal-controller";
 export const metadata: Metadata = {
   title: "Claude in the mesh",
   description:
-    "Advanced extra: remote-pi claude puts Claude Code on the agent mesh as a named peer next to Pi — agent-to-agent, driven from the terminal. Not in the app yet.",
+    "Advanced extra: remote-omp claude puts Claude Code on the agent mesh as a named peer next to omp — agent-to-agent, driven from the terminal. Not in the app yet.",
 };
 
 export default function ClaudeMeshTutorial() {
@@ -29,9 +29,9 @@ export default function ClaudeMeshTutorial() {
               </span>
               <h1>Claude in the mesh</h1>
               <p className="lede">
-                <InlineCode>remote-pi claude</InlineCode> puts{" "}
+                <InlineCode>remote-omp claude</InlineCode> puts{" "}
                 <strong className="text-fg">Claude Code</strong> on the same
-                agent mesh as Pi — a named peer on the local UDS broker and,
+                agent mesh as omp — a named peer on the local UDS broker and,
                 through the relay, across PCs. This is an advanced,
                 agent-to-agent setup driven entirely from the terminal. It is{" "}
                 <strong className="text-fg">
@@ -45,9 +45,9 @@ export default function ClaudeMeshTutorial() {
               <DocsSection id="prereqs" title="Before you start">
           <ul className="ml-6 list-disc space-y-2">
             <li>
-              The <InlineCode>remote-pi</InlineCode> CLI on your{" "}
+              The <InlineCode>remote-omp</InlineCode> CLI on your{" "}
               <InlineCode>$PATH</InlineCode> — run{" "}
-              <InlineCode>/remote-pi install</InlineCode> once (see the{" "}
+              <InlineCode>/remote-omp install</InlineCode> once (see the{" "}
               <Link href="/tutorials/daemon" className="text-accent underline">
                 daemon tutorial
               </Link>
@@ -60,7 +60,7 @@ export default function ClaudeMeshTutorial() {
             </li>
             <li>
               A folder that <strong className="text-fg">isn&apos;t</strong>{" "}
-              already running a Pi agent (see{" "}
+              already running an omp agent (see{" "}
               <a href="#cwd-lock" className="text-accent underline">
                 one agent per folder
               </a>
@@ -71,8 +71,8 @@ export default function ClaudeMeshTutorial() {
 
         <DocsSection id="run" title="Run it">
           <CodeBlock
-            code={`remote-pi claude            # uses the current folder
-remote-pi claude ~/code/api  # or target a specific folder`}
+            code={`remote-omp claude            # uses the current folder
+remote-omp claude ~/code/api  # or target a specific folder`}
             label="Shell"
             language="bash"
           />
@@ -81,7 +81,7 @@ remote-pi claude ~/code/api  # or target a specific folder`}
             to the folder name) and saves a small config:
           </p>
           <CodeBlock
-            code={`[remote-pi] No config found for /Users/you/code/api
+            code={`[remote-omp] No config found for /Users/you/code/api
 Let's set up this agent.
 
 Agent name [api]: reviewer`}
@@ -98,7 +98,7 @@ Agent name [api]: reviewer`}
 
         <DocsSection id="injected" title="What it wires in">
           <p>
-            <InlineCode>remote-pi claude</InlineCode> is a wrapper. It injects
+            <InlineCode>remote-omp claude</InlineCode> is a wrapper. It injects
             three things, then spawns <InlineCode>claude</InlineCode> in the
             target folder.
           </p>
@@ -106,18 +106,18 @@ Agent name [api]: reviewer`}
           <DocsSubsection id="mcp" title="1. An MCP server (the mesh tools)">
             <p>
               It registers a stdio MCP server named{" "}
-              <InlineCode>remote-pi-mesh</InlineCode> in Claude&apos;s{" "}
+              <InlineCode>remote-omp-mesh</InlineCode> in Claude&apos;s{" "}
               <strong className="text-fg">local scope</strong> — per-folder,
               stored in <InlineCode>~/.claude.json</InlineCode>, not written into
               the project directory and not committed to version control:
             </p>
             <CodeBlock
-              code="claude mcp add remote-pi-mesh -s local -- node …/mesh_server.js --cwd <folder>"
+              code="claude mcp add remote-omp-mesh -s local -- node …/mesh_server.js --cwd <folder>"
               label="What the wrapper runs (you don't type this)"
               language="bash"
             />
             <p>
-              The server exposes three tools to Claude — the same mesh API Pi
+              The server exposes three tools to Claude — the same mesh API omp
               agents get:
             </p>
             <ul className="ml-6 list-disc space-y-2">
@@ -183,7 +183,7 @@ Agent name [api]: reviewer`}
             <ul className="ml-6 list-disc space-y-2">
               <li>
                 <strong className="text-fg">Push</strong> — with{" "}
-                <InlineCode>--dangerously-load-development-channels server:remote-pi-mesh</InlineCode>{" "}
+                <InlineCode>--dangerously-load-development-channels server:remote-omp-mesh</InlineCode>{" "}
                 on (the wrapper sets it), the notification{" "}
                 <strong className="text-fg">wakes Claude</strong> right away, so
                 it reacts to an incoming message without you prompting it.
@@ -200,7 +200,7 @@ Agent name [api]: reviewer`}
         <DocsSection id="flags" title="The --dangerously-* flags">
           <p>The wrapper launches Claude with two flags:</p>
           <CodeBlock
-            code="claude --dangerously-load-development-channels server:remote-pi-mesh --dangerously-skip-permissions"
+            code="claude --dangerously-load-development-channels server:remote-omp-mesh --dangerously-skip-permissions"
             label="Launch (the wrapper runs this)"
             language="bash"
           />
@@ -223,10 +223,10 @@ Agent name [api]: reviewer`}
         <DocsSection id="cwd-lock" title="One agent per folder">
           <p>
             A kernel-enforced lock (the same one{" "}
-            <InlineCode>/remote-pi</InlineCode> takes) allows{" "}
-            <strong className="text-fg">one remote-pi agent per folder</strong> —
-            Pi <em className="text-fg">or</em> Claude, never both in the same
-            directory. If a folder already has a Pi agent, start Claude in a
+            <InlineCode>/remote-omp</InlineCode> takes) allows{" "}
+            <strong className="text-fg">one remote-omp agent per folder</strong> —
+            omp <em className="text-fg">or</em> Claude, never both in the same
+            directory. If a folder already has an omp agent, start Claude in a
             different folder; both still meet in the same local mesh. A second
             agent in a locked folder is refused before it connects, so it never
             becomes a ghost peer.
@@ -236,9 +236,9 @@ Agent name [api]: reviewer`}
         <DocsSection id="no-app" title="Why this isn't in the app yet">
           <p>
             The mobile app talks to the{" "}
-            <strong className="text-fg">relay</strong>, and it sees only the Pi
+            <strong className="text-fg">relay</strong>, and it sees only the omp
             agent that paired it. It does not see local UDS peers — like a Claude
-            joined with <InlineCode>remote-pi claude</InlineCode> — so a
+            joined with <InlineCode>remote-omp claude</InlineCode> — so a
             mesh-mate Claude won&apos;t show up in your phone. Surfacing the full
             mesh in the app is future work; for now this is a terminal-driven,
             agent-to-agent feature. Relay traffic, where it&apos;s used, is
@@ -249,7 +249,7 @@ Agent name [api]: reviewer`}
             <Link href="/tutorials/mesh-local" className="text-accent underline">
               local mesh
             </Link>{" "}
-            tutorial — start one peer as Pi and another as Claude, in two
+            tutorial — start one peer as omp and another as Claude, in two
             folders, and have them message each other.
           </p>
         </DocsSection>

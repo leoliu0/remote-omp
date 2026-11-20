@@ -30,7 +30,7 @@ void main() {
 
     test('push (CSI > flags u) ativa; pop (CSI < u) desativa', () {
       final k = KittyKeyboardTracker();
-      k.feed('\x1b[>7u'); // pi empurra flags=7 ao iniciar
+      k.feed('\x1b[>7u'); // omp empurra flags=7 ao iniciar
       expect(k.active, isTrue);
       k.feed('\x1b[<u'); // remove ao sair
       expect(k.active, isFalse);

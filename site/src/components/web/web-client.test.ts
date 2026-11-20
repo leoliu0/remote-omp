@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  RemotePiRelayClient,
+  RemoteOmpRelayClient,
   buildRoomCommand,
   parseModelsList,
   requestRoomAction,
@@ -40,7 +40,7 @@ function fakeConnection(sent: InnerFrame[]): RelayConnection {
 
 test("a local send uses one id for the optimistic bubble and the user_message frame", () => {
   const sent: InnerFrame[] = [];
-  const client = new RemotePiRelayClient(fakeConnection(sent), SESSION);
+  const client = new RemoteOmpRelayClient(fakeConnection(sent), SESSION);
   // The clock moves on every read: two separate Date.now() ids would differ.
   const realNow = Date.now;
   let t = 1791600000000;
@@ -91,7 +91,7 @@ function liveConnection(sent: InnerFrame[], online = true) {
 
 test("presence follows the frames that start and stop a turn, as in the app", () => {
   const { conn, push } = liveConnection([]);
-  const client = new RemotePiRelayClient(conn, SESSION);
+  const client = new RemoteOmpRelayClient(conn, SESSION);
   const seen: PeerPresence[] = [];
   client.connect({ onPresenceChange: (p) => seen.push(p) });
   // index.ts:741 echo of a prompt → working; index.ts:2771 steer echo → no change.
@@ -109,7 +109,7 @@ test("presence follows the frames that start and stop a turn, as in the app", ()
 // index.ts:6119-6123 — sent after every session_sync reply.
 test("skills_list reaches the chat for the slash menu", () => {
   const { conn, push } = liveConnection([]);
-  const client = new RemotePiRelayClient(conn, SESSION);
+  const client = new RemoteOmpRelayClient(conn, SESSION);
   let skills: WireSkill[] | null = null;
   client.connect({ onSkills: (s) => (skills = s) });
   push({ type: "skills_list", in_reply_to: "sync_1", skills: [{ name: "pdf", description: "Read PDFs" }, { name: "" }] });
@@ -181,7 +181,7 @@ test("plan_mode enter/exit/review send the typed action and resolve on its actio
 
 test("plan_state frames reach the chat for this room only", () => {
   const { conn, push } = liveConnection([]);
-  const client = new RemotePiRelayClient(conn, SESSION);
+  const client = new RemoteOmpRelayClient(conn, SESSION);
   const seen: PlanState[] = [];
   client.connect({ onPlanState: (s) => seen.push(s) });
   push({ type: "plan_state", status: "review", plan_file_path: "local://hello-txt-plan.md", title: "hello-txt" });
@@ -197,7 +197,7 @@ test("plan_state frames reach the chat for this room only", () => {
 
 test("todo_state frames reach the chat for this room only; [] clears", () => {
   const { conn, push } = liveConnection([]);
-  const client = new RemotePiRelayClient(conn, SESSION);
+  const client = new RemoteOmpRelayClient(conn, SESSION);
   const seen: TodoPhase[][] = [];
   client.connect({ onTodoState: (p) => seen.push(p) });
   push({ type: "todo_state", ts: 1, phases: [{ name: "Setup", tasks: [{ content: "Create repo", status: "in_progress" }] }] });

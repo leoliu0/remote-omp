@@ -27,19 +27,19 @@
         font-size="104"
         font-weight="700"
         fill="#FFFFFF"
-        letter-spacing="-1">Remote Pi</text>
+        letter-spacing="-1">Remote OMP</text>
 
   <text x="560" y="346"
         font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
         font-size="26"
         font-weight="400"
-        fill="#B0BEC5">Control your Pi coding agent from your phone</text>
+        fill="#B0BEC5">Control your omp coding agent from your phone</text>
 
   <text x="560" y="402"
         font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace"
         font-size="22"
         font-weight="500"
-        fill="#4FC3F7">pi install npm:remote-pi</text>
+        fill="#4FC3F7">omp plugin install remote-omp</text>
 
   <rect x="560" y="430" width="72" height="3" rx="1.5" fill="#4FC3F7"/>
 
@@ -47,5 +47,5 @@
         font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
         font-size="18"
         font-weight="400"
-        fill="#78909C">remote-pi.jacobmoura.work</text>
+        fill="#78909C">github.com/leoliu0/remote-omp</text>
 </svg>

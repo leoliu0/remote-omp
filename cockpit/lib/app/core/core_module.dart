@@ -23,10 +23,10 @@ import 'package:flutter_modular/flutter_modular.dart';
 /// core na resolução do `auto_injector` — só o `provide` page-scoped e o próprio
 /// core enxergam. Por isso:
 ///
-/// - [PiSpawnConfig]: o cockpit injeta para spawnar `pi --mode rpc`; o settings,
+/// - [OmpSpawnConfig]: o cockpit injeta para spawnar `pi --mode rpc`; o settings,
 ///   para o `pi` efêmero de pareamento/revoke.
 /// - [PairingGatewayFactory] / [RevokeGatewayFactory]: criam um `pi --mode rpc`
-///   efêmero por dialog e recebem o [PiSpawnConfig] no construtor. Root-owned
+///   efêmero por dialog e recebem o [OmpSpawnConfig] no construtor. Root-owned
 ///   aqui, resolvem o config (mesmo escopo) e ficam visíveis ao
 ///   `ConnectivityViewModel` (page-scoped) da feature settings.
 ///
@@ -43,21 +43,21 @@ import 'package:flutter_modular/flutter_modular.dart';
 /// - [EnvironmentProbe] / [SystemPermissions]: compartilhados pelas duas
 ///   features — o cockpit usa no checklist do agente (`SetupViewModel`) e o
 ///   settings para ocultar abas remotas até o ambiente estar instalado e para a
-///   aba de Notificações. [EnvironmentProbeImpl] resolve o [PiSpawnConfig] daqui.
+///   aba de Notificações. [EnvironmentProbeImpl] resolve o [OmpSpawnConfig] daqui.
 ///
 /// - [TerminalProfileResolver]: descoberta dos shells disponíveis (plano 50).
 ///   Compartilhado — o cockpit resolve o perfil ao abrir uma aba (o `+` e seu
 ///   seletor) e o settings lista os perfis para escolher o padrão. Chega **já
 ///   aquecido** do `buildAppModule` (a descoberta é async; `register` não é).
 Module buildCoreModule({
-  required PiSpawnConfig config,
+  required OmpSpawnConfig config,
   required TerminalProfileResolver terminalProfiles,
 }) {
   const lspFactory = LspClientFactoryImpl();
   final automation = AutomationController(CliAutomationGateway());
   return createModule(
     register: (c) => c
-      ..addInstance<PiSpawnConfig>(config)
+      ..addInstance<OmpSpawnConfig>(config)
       ..addInstance<TerminalProfileResolver>(terminalProfiles)
       ..addInstance<LspClientFactory>(lspFactory)
       ..addInstance<AutomationController>(automation)

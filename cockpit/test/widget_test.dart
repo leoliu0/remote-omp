@@ -246,7 +246,7 @@ void main() {
     test('trio satisfeito → agentReady', () async {
       final vm = SetupViewModel(_FakeEnv(), _FakeInstaller());
       await vm.recheckAll();
-      expect(vm.pi, CheckStatus.ok);
+      expect(vm.omp, CheckStatus.ok);
       expect(vm.extension, CheckStatus.ok);
       expect(vm.supervisor, CheckStatus.ok);
       expect(vm.agentReady, isTrue);
@@ -259,10 +259,10 @@ void main() {
       expect(vm.agentReady, isFalse);
     });
 
-    test('pi ou supervisor faltando também bloqueia', () async {
-      final a = SetupViewModel(_FakeEnv(pi: false), _FakeInstaller());
+    test('omp ou supervisor faltando também bloqueia', () async {
+      final a = SetupViewModel(_FakeEnv(omp: false), _FakeInstaller());
       await a.recheckAll();
-      expect(a.pi, CheckStatus.missing);
+      expect(a.omp, CheckStatus.missing);
       expect(a.agentReady, isFalse);
 
       final b = SetupViewModel(_FakeEnv(sup: false), _FakeInstaller());
@@ -274,12 +274,12 @@ void main() {
 }
 
 class _FakeEnv implements EnvironmentProbe {
-  _FakeEnv({this.pi = true, this.ext = true, this.sup = true});
-  final bool pi;
+  _FakeEnv({this.omp = true, this.ext = true, this.sup = true});
+  final bool omp;
   final bool ext;
   final bool sup;
   @override
-  Future<bool> piInstalled() async => pi;
+  Future<bool> ompInstalled() async => omp;
   @override
   Future<bool> extensionInstalled() async => ext;
   @override

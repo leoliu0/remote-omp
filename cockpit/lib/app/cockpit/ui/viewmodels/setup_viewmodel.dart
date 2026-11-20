@@ -4,7 +4,7 @@ import 'package:cockpit/app/core/domain/contracts/environment_probe.dart';
 import 'package:cockpit/app/core/domain/entities/setup_check.dart';
 import 'package:flutter/foundation.dart';
 
-/// Estado das 3 checagens do ambiente de **agente** (pi + extensão remote-pi +
+/// Estado das 3 checagens do ambiente de **agente** (omp + extensão remote-omp +
 /// supervisor) + ações de re-checagem/instalação.
 ///
 /// Gate de "Create agent" = [agentReady] (o trio satisfeito; `notApplicable`
@@ -18,7 +18,7 @@ class SetupViewModel extends ChangeNotifier {
   final EnvironmentProbe _env;
   final EnvironmentInstaller _installer;
 
-  CheckStatus pi = CheckStatus.checking;
+  CheckStatus omp = CheckStatus.checking;
   CheckStatus extension = CheckStatus.checking;
   CheckStatus supervisor = CheckStatus.checking;
 
@@ -26,16 +26,16 @@ class SetupViewModel extends ChangeNotifier {
 
   /// O trio satisfeito → habilita criar o agente.
   bool get agentReady =>
-      pi.satisfied && extension.satisfied && supervisor.satisfied;
+      omp.satisfied && extension.satisfied && supervisor.satisfied;
 
   /// Roda as 3 ao abrir o checklist do agente.
   Future<void> recheckAll() async {
-    await Future.wait([recheckPi(), recheckExtension(), recheckSupervisor()]);
+    await Future.wait([recheckOmp(), recheckExtension(), recheckSupervisor()]);
   }
 
-  Future<void> recheckPi() => _run(
-    (s) => pi = s,
-    () async => await _env.piInstalled() ? CheckStatus.ok : CheckStatus.missing,
+  Future<void> recheckOmp() => _run(
+    (s) => omp = s,
+    () async => await _env.ompInstalled() ? CheckStatus.ok : CheckStatus.missing,
   );
 
   Future<void> recheckExtension() => _run(
@@ -50,7 +50,7 @@ class SetupViewModel extends ChangeNotifier {
         await _env.supervisorInstalled() ? CheckStatus.ok : CheckStatus.missing,
   );
 
-  /// Botão "Instalar" do passo da extensão: roda `pi install npm:remote-pi` e,
+  /// Botão "Instalar" do passo da extensão: roda `omp plugin install remote-omp` e,
   /// em caso de sucesso, re-checa a extensão (e o supervisor, agora possível).
   Future<InstallResult> installExtension() async {
     final result = await _installer.installExtension();

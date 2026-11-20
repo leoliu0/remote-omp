@@ -4,7 +4,7 @@ import { LegalShell, LegalSection } from "@/components/legal-shell";
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description:
-    "Privacy Policy for Remote Pi — what little data we touch, why we touch it, and your LGPD rights.",
+    "Privacy Policy for Remote OMP — what little data we touch, why we touch it, and your LGPD rights.",
 };
 
 const CONTACT_EMAIL = "jacob@flutterando.com.br";
@@ -31,7 +31,7 @@ export default function PrivacyPage() {
     >
       <LegalSection id="who" number={1} title="Who We Are (Data Controller)">
         <p>
-          Remote Pi is operated by Flutterando Desenvolvimento de Programas de
+          Remote OMP is operated by Flutterando Desenvolvimento de Programas de
           Computador LTDA, a company incorporated in Brazil (CNPJ
           33.637.582/0001-70), with offices at Rua Clara Nunes, 198, Maringá/PR,
           CEP 87.045-650.
@@ -52,7 +52,7 @@ export default function PrivacyPage() {
           2.1 Data you provide directly
         </h3>
         <p>
-          Remote Pi is designed so that you provide essentially nothing to us on
+          Remote OMP is designed so that you provide essentially nothing to us on
           the relay path. There is no account, no email registration, no
           profile, and no payment information. The pairing flow generates
           cryptographic keys locally on your devices.
@@ -96,7 +96,7 @@ export default function PrivacyPage() {
           <li>
             <strong className="text-fg">Signed mesh-membership blobs.</strong>{" "}
             When you pair a new machine, your Owner key signs a small JSON
-            blob listing which Pi devices belong to that Owner&apos;s mesh,
+            blob listing which omp devices belong to that Owner&apos;s mesh,
             and your app uploads it to the relay via{" "}
             <code className="rounded bg-surface px-1 py-0.5 font-mono text-xs text-fg">
               POST /mesh/&lt;owner_pk_hash&gt;
@@ -104,7 +104,7 @@ export default function PrivacyPage() {
             . The relay verifies the Ed25519 signature and persists the blob
             (a few KB per Owner) so that new devices restoring the same Owner
             key can recover their peer list. The blob contains: Owner public
-            key, a version number, the list of Pi public keys you have
+            key, a version number, the list of omp-host public keys you have
             paired, and a timestamp. It is{" "}
             <strong className="text-fg">not encrypted</strong> — anyone with
             access to the relay database can read it. Pairing on your own
@@ -123,7 +123,7 @@ export default function PrivacyPage() {
         <ul className="ml-6 list-disc space-y-2">
           <li>Precise device location.</li>
           <li>Contacts, photos, microphone, or camera content.</li>
-          <li>The text of your prompts or the responses produced by your Pi-side agent.</li>
+          <li>The text of your prompts or the responses produced by your omp-side agent.</li>
           <li>Advertising identifiers (IDFA, AAID).</li>
           <li>Behavioral analytics or tracking telemetry.</li>
         </ul>
@@ -320,7 +320,7 @@ export default function PrivacyPage() {
       <LegalSection id="cookies" number={11} title="Cookies">
         <p>
           This site does not use tracking, advertising, or analytics cookies.
-          The mobile application and the Pi-side extension do not use cookies
+          The mobile application and the omp-side extension do not use cookies
           either. We may use strictly functional cookies on this site only if
           needed for security (for example, CSRF protection on a future
           contact form); none are used today.

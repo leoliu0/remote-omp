@@ -60,8 +60,8 @@ void main() {
           const ProcessSnapshot(
             pid: 101,
             ppid: 100,
-            executable: '/usr/local/bin/pi',
-            argv: ['pi'],
+            executable: '/usr/local/bin/omp',
+            argv: ['omp'],
           ),
           const ProcessSnapshot(
             pid: 102,
@@ -76,7 +76,7 @@ void main() {
           snapshots: snapshots,
         );
 
-        expect(result, equals(HarnessKind.pi));
+        expect(result, equals(HarnessKind.omp));
       },
     );
 
@@ -97,8 +97,8 @@ void main() {
         const ProcessSnapshot(
           pid: 102,
           ppid: 101,
-          executable: '/usr/local/bin/pi',
-          argv: ['pi'],
+          executable: '/usr/local/bin/omp',
+          argv: ['omp'],
         ),
       ];
 
@@ -107,11 +107,11 @@ void main() {
         snapshots: snapshots,
       );
 
-      expect(result, equals(HarnessKind.pi));
+      expect(result, equals(HarnessKind.omp));
     });
 
     test('when nested harness exits, restores enclosing harness', () {
-      // Simulating pi exited, only claude remains
+      // Simulating omp exited, only claude remains
       final snapshots = [
         const ProcessSnapshot(
           pid: 100,
@@ -146,8 +146,8 @@ void main() {
         const ProcessSnapshot(
           pid: 101,
           ppid: 100,
-          executable: '/usr/local/bin/pi',
-          argv: ['pi'],
+          executable: '/usr/local/bin/omp',
+          argv: ['omp'],
           state: 'T', // Stopped
         ),
       ];
@@ -171,8 +171,8 @@ void main() {
         const ProcessSnapshot(
           pid: 101,
           ppid: 100,
-          executable: '/usr/local/bin/pi',
-          argv: ['pi'],
+          executable: '/usr/local/bin/omp',
+          argv: ['omp'],
           isForeground: false,
         ),
       ];

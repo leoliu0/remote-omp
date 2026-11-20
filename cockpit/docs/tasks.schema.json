@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://remote-pi.dev/cockpit/tasks.schema.json",
+  "$id": "https://remote-omp.dev/cockpit/tasks.schema.json",
   "title": "Cockpit Task Run config",
   "description": "Schema for .cockpit/tasks.json — see cockpit/docs/tasks-json.md",
   "type": "object",

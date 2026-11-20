@@ -14,30 +14,30 @@ type InstallTab = {
 const CURL = "curl -fsSL https://remote-pi.jacobmoura.work/install.sh | bash";
 
 const INSTALL_TABS: Record<string, InstallTab> = {
-  "No Pi yet": {
+  "No omp yet": {
     label: "bash — fresh machine",
     lines: [{ p: "$", c: CURL }],
     copy: CURL,
     note: (
       <>
-        Installs <b>Pi</b>, the Remote&nbsp;Pi plugin, and the always-on
+        Installs <b>omp</b>, the Remote&nbsp;OMP plugin, and the always-on
         supervisor — then prints the pairing step. No sudo; everything lands in
         your home directory.
       </>
     ),
   },
-  "Already have Pi": {
-    label: "bash + Pi",
+  "Already have omp": {
+    label: "bash + omp",
     lines: [
-      { p: "$", c: "pi install npm:remote-pi" },
-      { p: "›", c: "/remote-pi" },
-      { p: "›", c: "/remote-pi pair" },
+      { p: "$", c: "omp plugin install remote-omp" },
+      { p: "›", c: "/remote-omp" },
+      { p: "›", c: "/remote-omp pair" },
     ],
-    copy: "pi install npm:remote-pi",
+    copy: "omp plugin install remote-omp",
     note: (
       <>
-        Run the first line in your shell; the <code>/remote-pi</code> lines run
-        inside <b>Pi</b>. The first <code>/remote-pi</code> is a quick setup
+        Run the first line in your shell; the <code>/remote-omp</code> lines run
+        inside <b>omp</b>. The first <code>/remote-omp</code> is a quick setup
         wizard (name + relay), then <b>pair</b> shows a QR you scan with the app.
       </>
     ),
@@ -63,13 +63,13 @@ export function Install() {
           <span className="eyebrow">Install</span>
           <h2>One command, then scan a QR.</h2>
           <p>
-            No accounts, no sign-up. Add the plugin to Pi, pair your phone once,
+            No accounts, no sign-up. Add the plugin to omp, pair your phone once,
             and you&apos;re driving every agent from your pocket.
           </p>
         </div>
 
         <div className="install-card reveal">
-          <div className="tabs" role="tablist" aria-label="Install Remote Pi">
+          <div className="tabs" role="tablist" aria-label="Install Remote OMP">
             {tabs.map((t) => (
               <button
                 key={t}

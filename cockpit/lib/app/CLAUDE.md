@@ -64,7 +64,7 @@ Module buildFooModule(/* deps async resolvidas no main */) => createModule(
     + `ConnectivityViewModel`.
   - **vários primitivos** ambíguos (`String`...): um **value object injetável**
     (ex.: `UpdateTarget`).
-- **Valores async** (stores JSON, `PiSpawnConfig`, versão) são resolvidos no `main`
+- **Valores async** (stores JSON, `OmpSpawnConfig`, versão) são resolvidos no `main`
   e passados às factories `buildXModule(...)` — `register` é síncrono.
 - Registre a feature no `app_module.dart` com `c.module(fooModule)`.
 
@@ -91,7 +91,7 @@ Paths em [`core/routes.dart`](core/routes.dart) (`RoutePaths`).
 `flutter_modular` não tem provider de árvore ad-hoc. Para um controller de dialog
 (ex. pareamento), crie-o no call-site, passe por **construtor** e consuma com
 `ListenableBuilder` — e **descarte no fim** (`ctrl.dispose()` após `showDialog`),
-senão vaza o `pi --mode rpc` efêmero. Ver `settings/ui/pairing_dialog.dart`.
+senão vaza o `omp --mode rpc` efêmero. Ver `settings/ui/pairing_dialog.dart`.
 
 ## Regra crítica: `BuildContext` em código assíncrono
 

@@ -1,6 +1,6 @@
-# Remote Pi — Orchestrator
+# Remote OMP — Orchestrator
 
-You are at the **root** of the Remote Pi monorepo. This directory is exclusively for **planning and orchestration**.
+You are at the **root** of the Remote OMP monorepo. This directory is exclusively for **planning and orchestration**.
 
 ## What to do here
 
@@ -55,7 +55,7 @@ dispatch to the target subproject with the plan as context.
 ## Subprojects
 
 - `app/` — Flutter mobile client (iOS + Android)
-- `pi-extension/` — Node/TypeScript daemon running on paired PCs
+- `omp-extension/` — Node/TypeScript daemon running on paired PCs (omp plugin)
 - `relay/` — Rust WebSocket relay and presence router
 - `site/` — Next.js documentation and download site
 - `cockpit/` — Flutter desktop app (macOS / Windows / Linux)
@@ -67,7 +67,7 @@ dispatch to the target subproject with the plan as context.
 |---|---|
 | `App` | `app/` |
 | `Relay` | `relay/` |
-| `Extension` | `pi-extension/` |
+| `Extension` | `omp-extension/` |
 | `Site` | `site/` |
 | `Cockpit` | `cockpit/` |
 | `Orchestrator` | monorepo root |

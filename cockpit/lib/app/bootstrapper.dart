@@ -6,7 +6,7 @@ import 'package:cockpit/app/app_module.dart';
 import 'package:cockpit/app/app_widget.dart';
 import 'package:cockpit/app/cockpit/data/hooks/claude_hook_installer_impl.dart';
 import 'package:cockpit/app/cockpit/data/hooks/codex_hook_installer_impl.dart';
-import 'package:cockpit/app/cockpit/data/rpc/pi_process_registry.dart';
+import 'package:cockpit/app/cockpit/data/rpc/omp_process_registry.dart';
 import 'package:cockpit/app/cockpit/data/terminal/sidecar/sidecar_terminal_connector.dart';
 import 'package:cockpit/app/cockpit/data/tasks/task_process_registry.dart';
 import 'package:cockpit/app/cockpit/domain/contracts/hook_installer.dart';
@@ -183,7 +183,7 @@ class _CockpitBootstrapperState extends State<CockpitBootstrapper> {
         // Mata filhos órfãos desta instância ou de instâncias já encerradas,
         // preservando agents/LSP/tasks de outros Cockpits ainda vivos.
         await Future.wait([
-          PiProcessRegistry.cleanOrphans(),
+          OmpProcessRegistry.cleanOrphans(),
           LspProcessRegistry.cleanOrphans(),
           TaskProcessRegistry.cleanOrphans(),
         ]);
@@ -206,7 +206,7 @@ class _CockpitBootstrapperState extends State<CockpitBootstrapper> {
           }
         }
 
-        final config = await PiSpawnConfig.resolve();
+        final config = await OmpSpawnConfig.resolve();
         _appModule = await buildAppModule(
           config: config,
           windowActivity: _windowActivity,

@@ -8,7 +8,7 @@ const chunk = (delta: string, inReplyTo = TURN) => ({ type: "agent_chunk", in_re
 const toolRequest = (id: string, tool: string, args: Record<string, unknown>) => ({ type: "tool_request", tool_call_id: id, tool, args });
 const toolResult = (id: string, result: string) => ({ type: "tool_result", tool_call_id: id, result });
 
-// One turn as pi-extension streams it to every client (index.ts message_update /
+// One turn as omp-extension streams it to every client (index.ts message_update /
 // _handleToolStart / _maybeFinalizeTurn): thinking + text, a tool, text, an
 // async bash, thinking closed at a tool boundary, the answer, then agent_done
 // and the final agent_message.
@@ -108,7 +108,7 @@ test("an open thinking block streamed at a tool boundary stays its own segment",
     { type: "user_input", id: TURN, text: "go" },
     chunk("<think>"),
     chunk("Check the tree first."),
-    // pi-extension closes the dangling wrapper right before the tool_request.
+    // omp-extension closes the dangling wrapper right before the tool_request.
     chunk("</think>"),
     toolRequest("toolu_1", "read", { path: "." }),
     // While the tool runs, nothing streams: the thinking segment is closed.
@@ -189,7 +189,7 @@ test("a steer splits the segment; the next turn starts a fresh one", () => {
   assert.equal(state.messages.find((m) => m.id === "cli_steer")?.status, "sent", "echo confirms the optimistic row in place");
 });
 
-// Captured live 2026-10-10 from the scratch omp room (pi-extension
+// Captured live 2026-10-10 from the scratch omp room (omp-extension
 // _echoUserMessage): the Pi echoes a client's prompt back as `user_message`,
 // not `user_input`. The web ignored it, so its own bubble stayed ⏳ and prompts
 // sent from the phone never appeared live. The app treats both types alike
@@ -246,7 +246,7 @@ test("final text with nothing streamed (reload mid-turn) is added once", () => {
 
 // ── frames the app shows that the web used to drop ─────────────────────────
 
-// pi-extension index.ts:3073-3076 (provider error mid-turn).
+// omp-extension index.ts:3073-3076 (provider error mid-turn).
 test("an error frame stops the turn and shows `⚠ code: message`, as the app does", () => {
   const state = replay([
     { type: "user_input", id: TURN, text: "Run the checks" },

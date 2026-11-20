@@ -41,8 +41,8 @@ void main() {
             const ProcessSnapshot(
               pid: 101,
               ppid: 100,
-              executable: '/bin/pi',
-              argv: ['pi'],
+              executable: '/bin/omp',
+              argv: ['omp'],
             ),
           ],
         );
@@ -69,7 +69,7 @@ void main() {
         await pumpEventQueue();
 
         expect(fakeProvider.callCount, equals(1));
-        expect(notifiedHarness, equals(HarnessKind.pi));
+        expect(notifiedHarness, equals(HarnessKind.omp));
 
         monitor.dispose();
       },

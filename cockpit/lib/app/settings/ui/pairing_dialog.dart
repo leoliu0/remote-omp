@@ -7,7 +7,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
 
-/// Dialog de pareamento: mostra os passos + QR Code do `/remote-pi pair`. Fecha
+/// Dialog de pareamento: mostra os passos + QR Code do `/remote-omp pair`. Fecha
 /// sozinho (retornando `true`) quando um aparelho parear — quem abriu recarrega
 /// a lista. Recebe o [PairingController] por construtor (quem abre é dono do
 /// ciclo de vida → descarta ao fechar).

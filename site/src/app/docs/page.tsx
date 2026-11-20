@@ -13,20 +13,20 @@ import { RevealController } from "@/components/landing/reveal-controller";
 export const metadata: Metadata = {
   title: "Docs",
   description:
-    "Reference for Remote Pi: the relay, protocol & security, the full command reference, configuration files, and troubleshooting.",
+    "Reference for Remote OMP: the relay, protocol & security, the full command reference, configuration files, and troubleshooting.",
 };
 
-const GITHUB_URL = "https://github.com/jacobaraujo7/remote_pi";
-const PI_URL = "https://github.com/earendil-works/pi";
+const GITHUB_URL = "https://github.com/leoliu0/remote-omp";
+const OMP_URL = "https://github.com/can1357/oh-my-pi";
 const RELAY_README_URL =
-  "https://github.com/jacobaraujo7/remote_pi/blob/main/relay/README.md";
-const ISSUES_URL = "https://github.com/jacobaraujo7/remote_pi/issues";
+  "https://github.com/leoliu0/remote-omp/blob/main/relay/README.md";
+const ISSUES_URL = "https://github.com/leoliu0/remote-omp/issues";
 
 const DOCS_TOC: TocItem[] = [
   { id: "quick-start", label: "Quick start" },
   { id: "what-it-does", label: "What it does" },
   { id: "install", label: "Install" },
-  { id: "using-remote-pi", label: <>Using <InlineCode>/remote-pi</InlineCode></> },
+  { id: "using-remote-omp", label: <>Using <InlineCode>/remote-omp</InlineCode></> },
   { id: "pairing", label: "Pairing a mobile device" },
   { id: "quick-actions", label: "Quick actions from the phone" },
   { id: "agent-network", label: "Agent network" },
@@ -37,7 +37,7 @@ const DOCS_TOC: TocItem[] = [
     sub: [
       { id: "community-relay", label: "Community relay" },
       { id: "self-host", label: "Self-host" },
-      { id: "point-pi", label: "Point Pi at your relay" },
+      { id: "point-omp", label: "Point omp at your relay" },
     ],
   },
   { id: "protocol", label: "Protocol & Security" },
@@ -58,7 +58,7 @@ const DOCS_TOC: TocItem[] = [
       { id: "footer-stuck", label: "Stuck on pairing" },
       { id: "timeout-mobile", label: "Mobile times out" },
       { id: "timeout-request", label: "Reply never arrives" },
-      { id: "one-pi-per-cwd", label: "One Pi per cwd" },
+      { id: "one-omp-per-cwd", label: "One omp per cwd" },
     ],
   },
   { id: "links", label: "Links" },
@@ -71,26 +71,26 @@ export default function DocsPage() {
         <div className="wrap">
           <header className="page-head reveal">
             <span className="eyebrow">Documentation</span>
-            <h1>Remote Pi docs</h1>
+            <h1>Remote OMP docs</h1>
             <div className="meta-line">
               <span>Last updated: 2026-05-31</span>
               <span>License: MIT</span>
             </div>
             <p className="lede">
               This is the <strong className="text-fg">reference</strong>. Remote
-              Pi is a mesh for coding agents: agents on the same machine talk
+              OMP is a mesh for coding agents: agents on the same machine talk
               through a local UDS broker, agents on different machines reach each
               other through an open-source relay, and your phone authenticates
-              new peers and drives sessions. The first supported harness is the{" "}
+              new peers and drives sessions. The supported harness is{" "}
               <a
                 className="text-accent underline"
-                href={PI_URL}
+                href={OMP_URL}
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Pi coding agent
+                omp (oh-my-pi)
               </a>
-              ; <InlineCode>/remote-pi</InlineCode> wires everything up. To{" "}
+              ; <InlineCode>/remote-omp</InlineCode> wires everything up. To{" "}
               <strong className="text-fg">learn by doing</strong>, start with
               the{" "}
               <Link href="/tutorials" className="text-accent underline">
@@ -99,7 +99,7 @@ export default function DocsPage() {
               ; for <strong className="text-fg">why</strong> it works this way,
               see{" "}
               <Link href="/why" className="text-accent underline">
-                Why Pi
+                Why Remote OMP
               </Link>
               . The pages below are for looking things up.
             </p>
@@ -128,7 +128,7 @@ export default function DocsPage() {
 
       <DocsSection id="what-it-does" title="What it does">
         <p>
-          Remote Pi adds two independent layers on top of Pi. The{" "}
+          Remote OMP adds two independent layers on top of omp. The{" "}
           <strong className="text-fg">agent network</strong> lets agents
           discover and message each other — over a local socket on one machine,
           or through the relay across PCs. The{" "}
@@ -160,10 +160,11 @@ export default function DocsPage() {
 
       <DocsSection id="install" title="Install">
         <p>
-          Requirements: Node 20+ and Pi (the host coding agent). Remote Pi
-          installs as a Pi plugin with{" "}
-          <InlineCode>pi install npm:remote-pi</InlineCode>, which self-registers
-          the <InlineCode>/remote-pi</InlineCode> slash command and deploys the
+          Requirements: Node 20+ and omp (the host coding agent). Remote OMP
+          installs as an omp plugin with{" "}
+          <InlineCode>omp plugin install remote-omp</InlineCode>, which
+          self-registers the <InlineCode>/remote-omp</InlineCode> slash command
+          and deploys the
           agent-network skill. The complete setup — wizard, pairing, first
           command — is in the tutorial.
         </p>
@@ -180,13 +181,13 @@ export default function DocsPage() {
         </p>
       </DocsSection>
 
-      <DocsSection id="using-remote-pi" title="Using /remote-pi">
+      <DocsSection id="using-remote-omp" title="Using /remote-omp">
         <p>
-          <InlineCode>/remote-pi</InlineCode> is the everyday entry point. The
+          <InlineCode>/remote-omp</InlineCode> is the everyday entry point. The
           first run opens a short wizard (agent name, whether to use the relay)
           that creates the per-folder config; later runs join the local mesh and
           start the relay automatically. Re-run the wizard with{" "}
-          <InlineCode>/remote-pi setup</InlineCode>. Every subcommand is in the{" "}
+          <InlineCode>/remote-omp setup</InlineCode>. Every subcommand is in the{" "}
           <a href="#commands" className="text-accent underline">
             command reference
           </a>
@@ -203,12 +204,12 @@ export default function DocsPage() {
 
       <DocsSection id="pairing" title="Pairing a mobile device">
         <p>
-          <InlineCode>/remote-pi pair</InlineCode> prints a QR (and a copy-paste
-          URI); scan it with the Remote Pi app. Pairing is{" "}
+          <InlineCode>/remote-omp pair</InlineCode> prints a QR (and a copy-paste
+          URI); scan it with the Remote OMP app. Pairing is{" "}
           <strong className="text-fg">per machine</strong> — once a device is
-          paired, every Pi process on that machine accepts it. Manage devices
-          with <InlineCode>/remote-pi devices</InlineCode> and{" "}
-          <InlineCode>/remote-pi revoke &lt;shortid&gt;</InlineCode> (see the{" "}
+          paired, every omp process on that machine accepts it. Manage devices
+          with <InlineCode>/remote-omp devices</InlineCode> and{" "}
+          <InlineCode>/remote-omp revoke &lt;shortid&gt;</InlineCode> (see the{" "}
           <a href="#commands" className="text-accent underline">
             command reference
           </a>
@@ -283,10 +284,10 @@ export default function DocsPage() {
       <DocsSection id="daemon-mode" title="Daemon mode">
         <p>
           Promote a folder to a 24/7 background agent: run{" "}
-          <InlineCode>/remote-pi install</InlineCode> once per machine to install
+          <InlineCode>/remote-omp install</InlineCode> once per machine to install
           the supervisor (launchd on macOS,{" "}
           <InlineCode>systemd --user</InlineCode> on Linux) and link the CLI,
-          then <InlineCode>remote-pi create &lt;folder&gt; --name &quot;…&quot;</InlineCode>{" "}
+          then <InlineCode>remote-omp create &lt;folder&gt; --name &quot;…&quot;</InlineCode>{" "}
           to register and start a daemon. One supervisor per machine, N daemons
           under it. Every command is in the{" "}
           <a href="#commands" className="text-accent underline">
@@ -301,7 +302,7 @@ export default function DocsPage() {
           for the full how-to; the <em>why</em> (and how it compares to
           all-in-one platforms) is{" "}
           <Link href="/why" className="text-accent underline">
-            Why Pi
+            Why Remote OMP
           </Link>
           .
         </p>
@@ -311,7 +312,7 @@ export default function DocsPage() {
 
       <DocsSection id="relay" title="The relay">
         <p>
-          The relay is the only network-touching piece of Remote Pi. In the
+          The relay is the only network-touching piece of Remote OMP. In the
           current MVP it sees both message payloads (forwarded but never logged
           or inspected by the community operator) and connection metadata: which
           keypair is online, which room/cwd identifiers exist, message timing,
@@ -326,7 +327,7 @@ export default function DocsPage() {
         <p>
           The relay also <strong className="text-fg">persists a small SQLite
           table</strong> called <InlineCode>mesh_versions</InlineCode> — blobs
-          signed by your Owner key listing the Pi devices that belong to your
+          signed by your Owner key listing the omp devices that belong to your
           mesh (a few KB per Owner). The relay verifies the Ed25519
           signature on every <InlineCode>POST /mesh/&lt;owner_pk_hash&gt;</InlineCode>{" "}
           and stores what you signed; it never decides membership itself.
@@ -414,16 +415,16 @@ export default function DocsPage() {
           </p>
           <p>
             Bind the container to your VPN interface, terminate TLS in a reverse
-            proxy, and point both your Pi and your phone at the resulting{" "}
+            proxy, and point both your omp and your phone at the resulting{" "}
             <InlineCode>https://…</InlineCode> URL.
           </p>
         </DocsSubsection>
 
-        <DocsSubsection id="point-pi" title="Pointing Pi at your own relay">
+        <DocsSubsection id="point-omp" title="Pointing omp at your own relay">
           <p>Once your relay is reachable, tell the extension:</p>
           <CodeBlock
-            code="/remote-pi set-relay https://relay.yourdomain.tld"
-            label="In Pi"
+            code="/remote-omp set-relay https://relay.yourdomain.tld"
+            label="In omp"
             language="text"
           />
           <p>
@@ -436,26 +437,26 @@ export default function DocsPage() {
             exposes.
           </p>
           <p>
-            This writes <InlineCode>~/.pi/remote/config.json</InlineCode> with{" "}
+            This writes <InlineCode>~/.omp/remote/config.json</InlineCode> with{" "}
             <InlineCode>{`{ "relay": "..." }`}</InlineCode>. Resolution order
             (highest precedence first):
           </p>
           <ol className="ml-6 list-decimal space-y-2">
             <li>
-              <InlineCode>REMOTE_PI_RELAY</InlineCode> environment variable
+              <InlineCode>REMOTE_OMP_RELAY</InlineCode> environment variable
               (CI / one-off overrides)
             </li>
-            <li><InlineCode>~/.pi/remote/config.json</InlineCode></li>
+            <li><InlineCode>~/.omp/remote/config.json</InlineCode></li>
             <li>
               The built-in default (
               <InlineCode>https://relay-rp1.jacobmoura.work</InlineCode>)
             </li>
           </ol>
           <p>Verify the active URL and its source with:</p>
-          <CodeBlock code="/remote-pi config" label="In Pi" language="text" />
+          <CodeBlock code="/remote-omp config" label="In omp" language="text" />
           <p>
-            To switch URLs while connected: <InlineCode>/remote-pi stop</InlineCode>{" "}
-            then <InlineCode>/remote-pi</InlineCode> again. The mobile app has
+            To switch URLs while connected: <InlineCode>/remote-omp stop</InlineCode>{" "}
+            then <InlineCode>/remote-omp</InlineCode> again. The mobile app has
             its own relay-URL setting in its preferences pane — keep both
             pointing at the same relay.
           </p>
@@ -476,7 +477,7 @@ export default function DocsPage() {
           >
             PROTOCOL.md
           </a>{" "}
-          on GitHub. It is the source of truth that the Pi extension, the
+          on GitHub. It is the source of truth that the omp extension, the
           mobile apps, and the relay all implement against. Read it when you
           need exact behavior or when writing a new harness adapter.
         </p>
@@ -500,53 +501,53 @@ export default function DocsPage() {
 
       <DocsSection id="commands" title="Command reference">
         <p>
-          Every command works as a Pi slash command (interactive) and as a
-          shell-level <InlineCode>remote-pi &lt;subcommand&gt;</InlineCode>{" "}
+          Every command works as an omp slash command (interactive) and as a
+          shell-level <InlineCode>remote-omp &lt;subcommand&gt;</InlineCode>{" "}
           when the package is installed globally (
-          <InlineCode>npm install -g remote-pi</InlineCode>).
+          <InlineCode>npm install -g remote-omp</InlineCode>).
         </p>
 
         <DocsSubsection
           id="commands-local"
-          title="Local session — one Pi, one terminal"
+          title="Local session — one omp, one terminal"
         >
           <DocsTable
             headers={["Command", "Description"]}
             rows={[
               [
-                <InlineCode key="c">/remote-pi</InlineCode>,
+                <InlineCode key="c">/remote-omp</InlineCode>,
                 "Connect (join local mesh + start relay), or run setup on first use",
               ],
               [
-                <InlineCode key="c">/remote-pi setup</InlineCode>,
+                <InlineCode key="c">/remote-omp setup</InlineCode>,
                 "Run the setup wizard and update local config",
               ],
               [
-                <InlineCode key="c">/remote-pi status</InlineCode>,
+                <InlineCode key="c">/remote-omp status</InlineCode>,
                 "Show local mesh + relay status",
               ],
               [
-                <InlineCode key="c">/remote-pi peers</InlineCode>,
+                <InlineCode key="c">/remote-omp peers</InlineCode>,
                 "List local and cross-PC mesh peers, grouped by PC label",
               ],
               [
-                <InlineCode key="c">/remote-pi stop</InlineCode>,
+                <InlineCode key="c">/remote-omp stop</InlineCode>,
                 <>Stop everything for <em>this</em> terminal (mesh + relay)</>,
               ],
               [
-                <InlineCode key="c">/remote-pi pair [--ttl &lt;seconds&gt;]</InlineCode>,
+                <InlineCode key="c">/remote-omp pair [--ttl &lt;seconds&gt;]</InlineCode>,
                 "Show QR + copy-paste pairing URI for a new mobile device (QR valid 60s by default; --ttl clamps to 10–600s)",
               ],
               [
-                <InlineCode key="c">/remote-pi devices</InlineCode>,
+                <InlineCode key="c">/remote-omp devices</InlineCode>,
                 "List paired mobile devices (online/offline per device)",
               ],
               [
-                <InlineCode key="c">/remote-pi revoke &lt;shortid&gt;</InlineCode>,
+                <InlineCode key="c">/remote-omp revoke &lt;shortid&gt;</InlineCode>,
                 "Revoke a paired device by its shortid (brings the relay up first, like pair, to notify the device)",
               ],
               [
-                <InlineCode key="c">/remote-pi set-relay &lt;url&gt;</InlineCode>,
+                <InlineCode key="c">/remote-omp set-relay &lt;url&gt;</InlineCode>,
                 "Persist a new relay URL (http:// or https://)",
               ],
             ]}
@@ -555,7 +556,7 @@ export default function DocsPage() {
 
         <DocsSubsection
           id="commands-daemon"
-          title="Daemon fleet — one supervisor, N background Pis"
+          title="Daemon fleet — one supervisor, N background omps"
         >
           <p className="text-sm">
             See <a href="#daemon-mode" className="text-accent underline">Daemon mode</a> for the overview and the{" "}
@@ -565,52 +566,52 @@ export default function DocsPage() {
             headers={["Command", "Description"]}
             rows={[
               [
-                <InlineCode key="c">/remote-pi create &lt;cwd&gt; [--name X]</InlineCode>,
+                <InlineCode key="c">/remote-omp create &lt;cwd&gt; [--name X]</InlineCode>,
                 "Register a folder as a daemon (starts it when the supervisor is running)",
               ],
               [
-                <InlineCode key="c">/remote-pi remove &lt;id&gt;</InlineCode>,
+                <InlineCode key="c">/remote-omp remove &lt;id&gt;</InlineCode>,
                 "Unregister a daemon (local config preserved)",
               ],
               [
-                <InlineCode key="c">/remote-pi daemons</InlineCode>,
+                <InlineCode key="c">/remote-omp daemons</InlineCode>,
                 "List registered daemons + state",
               ],
               [
-                <InlineCode key="c">/remote-pi daemon start [&lt;id&gt;]</InlineCode>,
+                <InlineCode key="c">/remote-omp daemon start [&lt;id&gt;]</InlineCode>,
                 "Start one daemon by id, or every registered daemon with no id",
               ],
               [
-                <InlineCode key="c">/remote-pi daemon stop [&lt;id&gt;]</InlineCode>,
+                <InlineCode key="c">/remote-omp daemon stop [&lt;id&gt;]</InlineCode>,
                 <>
                   Stop one daemon by id, or every running daemon with no id (
-                  <InlineCode>/remote-pi stop</InlineCode> stops only the local
+                  <InlineCode>/remote-omp stop</InlineCode> stops only the local
                   terminal)
                 </>,
               ],
               [
-                <InlineCode key="c">/remote-pi daemon restart [&lt;id&gt;]</InlineCode>,
+                <InlineCode key="c">/remote-omp daemon restart [&lt;id&gt;]</InlineCode>,
                 "Restart one daemon by id, or every daemon with no id",
               ],
               [
-                <InlineCode key="c">/remote-pi daemon status</InlineCode>,
+                <InlineCode key="c">/remote-omp daemon status</InlineCode>,
                 "Detailed runtime status (pid, uptime, restart count)",
               ],
               [
-                <InlineCode key="c">/remote-pi daemon send &lt;id&gt; &quot;&lt;text&gt;&quot;</InlineCode>,
+                <InlineCode key="c">/remote-omp daemon send &lt;id&gt; &quot;&lt;text&gt;&quot;</InlineCode>,
                 "Send a prompt to a specific daemon",
               ],
               [
-                <InlineCode key="c">/remote-pi install</InlineCode>,
+                <InlineCode key="c">/remote-omp install</InlineCode>,
                 <>
-                  Install <InlineCode>pi-supervisord</InlineCode> as a system
+                  Install <InlineCode>remote-omp-supervisord</InlineCode> as a system
                   service <strong className="text-fg">and</strong> symlink the{" "}
-                  <InlineCode>remote-pi</InlineCode> CLI into{" "}
+                  <InlineCode>remote-omp</InlineCode> CLI into{" "}
                   <InlineCode>~/.local/bin/</InlineCode>
                 </>,
               ],
               [
-                <InlineCode key="c">/remote-pi uninstall</InlineCode>,
+                <InlineCode key="c">/remote-omp uninstall</InlineCode>,
                 <>
                   Remove the system service <strong className="text-fg">and</strong>{" "}
                   the <InlineCode>~/.local/bin</InlineCode> symlinks (daemon
@@ -632,7 +633,7 @@ export default function DocsPage() {
             <a href="#daemon-mode" className="text-accent underline">
               Daemon mode
             </a>{" "}
-            / <InlineCode>/remote-pi install</InlineCode>) — otherwise{" "}
+            / <InlineCode>/remote-omp install</InlineCode>) — otherwise{" "}
             <InlineCode>cron add</InlineCode> warns instead of scheduling. See
             the{" "}
             <Link href="/tutorials/daemon#cron" className="text-accent underline">
@@ -645,34 +646,34 @@ export default function DocsPage() {
             rows={[
               [
                 <InlineCode key="c">
-                  /remote-pi cron add &lt;id&gt; &quot;&lt;expr&gt;&quot;
+                  /remote-omp cron add &lt;id&gt; &quot;&lt;expr&gt;&quot;
                   &quot;&lt;prompt&gt;&quot; [--tz Area/City] [--wake]
                   [--no-skip-busy] [--catchup]
                 </InlineCode>,
                 "Schedule a recurring prompt to a daemon (5-field cron expression; runs must be ≥60s apart)",
               ],
               [
-                <InlineCode key="c">/remote-pi cron list</InlineCode>,
+                <InlineCode key="c">/remote-omp cron list</InlineCode>,
                 "List jobs: schedule, enabled, last run / status, next run",
               ],
               [
-                <InlineCode key="c">/remote-pi cron run &lt;jobId&gt;</InlineCode>,
+                <InlineCode key="c">/remote-omp cron run &lt;jobId&gt;</InlineCode>,
                 "Fire a job now, ignoring its schedule",
               ],
               [
-                <InlineCode key="c">/remote-pi cron enable &lt;jobId&gt;</InlineCode>,
+                <InlineCode key="c">/remote-omp cron enable &lt;jobId&gt;</InlineCode>,
                 "Resume a paused job",
               ],
               [
-                <InlineCode key="c">/remote-pi cron disable &lt;jobId&gt;</InlineCode>,
+                <InlineCode key="c">/remote-omp cron disable &lt;jobId&gt;</InlineCode>,
                 "Pause a job without deleting it",
               ],
               [
-                <InlineCode key="c">/remote-pi cron remove &lt;jobId&gt;</InlineCode>,
+                <InlineCode key="c">/remote-omp cron remove &lt;jobId&gt;</InlineCode>,
                 "Delete a job",
               ],
               [
-                <InlineCode key="c">/remote-pi cron log [&lt;jobId&gt;] [--tail N]</InlineCode>,
+                <InlineCode key="c">/remote-omp cron log [&lt;jobId&gt;] [--tail N]</InlineCode>,
                 <>
                   Tail the fire / skip audit log (default N = 20), optionally for
                   one job
@@ -704,7 +705,7 @@ export default function DocsPage() {
             <li>
               <strong className="text-fg">Audit.</strong> Every fire{" "}
               <em>and</em> every skip appends one line to{" "}
-              <InlineCode>~/.pi/remote/cron.jsonl</InlineCode> with a{" "}
+              <InlineCode>~/.omp/remote/cron.jsonl</InlineCode> with a{" "}
               <InlineCode>result</InlineCode> of{" "}
               <InlineCode>delivered</InlineCode>,{" "}
               <InlineCode>deliver_failed</InlineCode>,{" "}
@@ -717,7 +718,7 @@ export default function DocsPage() {
             </li>
           </ul>
         </DocsSubsection>
-        <p>The footer in the Pi TUI reflects state live:</p>
+        <p>The footer in the omp TUI reflects state live:</p>
         <ul className="ml-6 list-disc space-y-2">
           <li>
             <InlineCode>📡 local (N)</InlineCode> — local mesh session and
@@ -749,7 +750,7 @@ export default function DocsPage() {
           headers={["Path", "Scope", "What's in it"]}
           rows={[
             [
-              <InlineCode key="p">&lt;cwd&gt;/.pi/remote-pi/config.json</InlineCode>,
+              <InlineCode key="p">&lt;cwd&gt;/.omp/remote-omp/config.json</InlineCode>,
               "Per-directory",
               <>
                 <InlineCode>agent_name</InlineCode>,{" "}
@@ -757,25 +758,25 @@ export default function DocsPage() {
               </>,
             ],
             [
-              <InlineCode key="p">~/.pi/remote/config.json</InlineCode>,
+              <InlineCode key="p">~/.omp/remote/config.json</InlineCode>,
               "Per-user",
               <><InlineCode>relay</InlineCode> URL</>,
             ],
             [
-              <InlineCode key="p">~/.pi/remote/peers.json</InlineCode>,
+              <InlineCode key="p">~/.omp/remote/peers.json</InlineCode>,
               "Per-machine",
               "Paired mobile devices",
             ],
             [
-              <InlineCode key="p">~/.pi/remote/daemons.json</InlineCode>,
+              <InlineCode key="p">~/.omp/remote/daemons.json</InlineCode>,
               "Per-machine",
               <>Daemon registry (list of <InlineCode>{`{ cwd, name }`}</InlineCode> entries)</>,
             ],
             [
-              <InlineCode key="p">~/.pi/remote/identity.json</InlineCode>,
+              <InlineCode key="p">~/.omp/remote/identity.json</InlineCode>,
               "Per-machine",
               <>
-                Pi-secret fallback when the OS keyring is unavailable
+                Machine-secret fallback when the OS keyring is unavailable
                 (headless Linux). Stored with{" "}
                 <InlineCode>chmod 0600</InlineCode>. See{" "}
                 <a
@@ -790,12 +791,12 @@ export default function DocsPage() {
               </>,
             ],
             [
-              <InlineCode key="p">~/.pi/remote/sessions/local/</InlineCode>,
+              <InlineCode key="p">~/.omp/remote/sessions/local/</InlineCode>,
               "Per-machine",
               <>Broker socket + <InlineCode>audit.jsonl</InlineCode></>,
             ],
             [
-              <InlineCode key="p">~/.pi/remote/skills/agent-network/SKILL.md</InlineCode>,
+              <InlineCode key="p">~/.omp/remote/skills/agent-network/SKILL.md</InlineCode>,
               "Per-user",
               "Agent skill the LLM reads",
             ],
@@ -803,7 +804,7 @@ export default function DocsPage() {
         />
         <p>Override the relay for a single run without persisting:</p>
         <CodeBlock
-          code="REMOTE_PI_RELAY=https://staging.example.tld pi"
+          code="REMOTE_OMP_RELAY=https://staging.example.tld omp"
           label="Shell"
           language="bash"
         />
@@ -817,17 +818,17 @@ export default function DocsPage() {
         <p className="text-sm">
           Daemons don&apos;t read the per-directory file at all — the supervisor
           injects their whole config inline via the{" "}
-          <InlineCode>REMOTE_PI_DIRECT_CONFIG</InlineCode> environment variable
+          <InlineCode>REMOTE_OMP_DIRECT_CONFIG</InlineCode> environment variable
           at spawn (a fixed <InlineCode>assistent</InlineCode> workspace with
           the relay on), so a daemon folder needs no{" "}
-          <InlineCode>.pi/remote-pi/</InlineCode> of its own. You can set the
+          <InlineCode>.omp/remote-omp/</InlineCode> of its own. You can set the
           same variable yourself to override{" "}
-          <InlineCode>&lt;cwd&gt;/.pi/remote-pi/config.json</InlineCode> for a
+          <InlineCode>&lt;cwd&gt;/.omp/remote-omp/config.json</InlineCode> for a
           single run — an escape hatch for CI, ops, and the Cockpit desktop
           client:
         </p>
         <CodeBlock
-          code={`REMOTE_PI_DIRECT_CONFIG='{"agent_name":"ci","auto_start_relay":true}' pi`}
+          code={`REMOTE_OMP_DIRECT_CONFIG='{"agent_name":"ci","auto_start_relay":true}' omp`}
           label="Shell"
           language="bash"
         />
@@ -838,8 +839,8 @@ export default function DocsPage() {
           <p>
             The icon reflects whether <em>any</em> device has been paired on
             this machine, not whether one is connected right now. If you really
-            have a paired device in <InlineCode>/remote-pi devices</InlineCode>,
-            restart Pi — the cache may be stale (fixed in current release;
+            have a paired device in <InlineCode>/remote-omp devices</InlineCode>,
+            restart omp — the cache may be stale (fixed in current release;
             report a bug if it recurs).
           </p>
         </DocsSubsection>
@@ -859,7 +860,7 @@ export default function DocsPage() {
           <ul className="ml-6 list-disc space-y-2">
             <li>
               <strong className="text-fg">Receiver crashed or never processed.</strong>{" "}
-              Run <InlineCode>/remote-pi peers</InlineCode> to see whether the
+              Run <InlineCode>/remote-omp peers</InlineCode> to see whether the
               peer is still online.
             </li>
             <li>
@@ -887,13 +888,13 @@ export default function DocsPage() {
           </p>
         </DocsSubsection>
         <DocsSubsection
-          id="one-pi-per-cwd"
-          title="Two Pi processes can't share a directory"
+          id="one-omp-per-cwd"
+          title="Two omp processes can't share a directory"
         >
           <p>
             A cwd lock allows{" "}
-            <strong className="text-fg">one Pi process per directory</strong>.
-            If you try to run <InlineCode>/remote-pi</InlineCode> in a second
+            <strong className="text-fg">one omp process per directory</strong>.
+            If you try to run <InlineCode>/remote-omp</InlineCode> in a second
             terminal that&apos;s already in the same folder, the second start
             is rejected (and the relay, separately, refuses a duplicate room
             with <InlineCode>RoomAlreadyOpenError</InlineCode>).
@@ -910,8 +911,8 @@ export default function DocsPage() {
           </p>
           <p>
             If you actually wanted a second terminal at the same workspace
-            (e.g. just to read state), stop the running Pi first or open a
-            shell that does <em>not</em> launch Pi.
+            (e.g. just to read state), stop the running omp first or open a
+            shell that does <em>not</em> launch omp.
           </p>
         </DocsSubsection>
       </DocsSection>
@@ -939,7 +940,7 @@ export default function DocsPage() {
           <li>
             Source:{" "}
             <a className="text-accent underline" href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
-              github.com/jacobaraujo7/remote_pi
+              github.com/leoliu0/remote-omp
             </a>
           </li>
           <li>
@@ -954,9 +955,9 @@ export default function DocsPage() {
             </a>
           </li>
           <li>
-            Pi coding agent:{" "}
-            <a className="text-accent underline" href={PI_URL} target="_blank" rel="noopener noreferrer">
-              github.com/earendil-works/pi
+            omp (oh-my-pi) coding agent:{" "}
+            <a className="text-accent underline" href={OMP_URL} target="_blank" rel="noopener noreferrer">
+              github.com/can1357/oh-my-pi
             </a>
           </li>
           <li>
@@ -968,11 +969,17 @@ export default function DocsPage() {
           <li>
             Issues / bugs:{" "}
             <a className="text-accent underline" href={ISSUES_URL} target="_blank" rel="noopener noreferrer">
-              github.com/jacobaraujo7/remote_pi/issues
+              github.com/leoliu0/remote-omp/issues
             </a>
           </li>
         </ul>
-        <p className="text-sm">License: MIT.</p>
+        <p className="text-sm">
+          License: MIT. Remote OMP is a fork of{" "}
+          <a className="text-accent underline" href="https://github.com/jacobaraujo7/remote_pi" target="_blank" rel="noopener noreferrer">
+            jacobaraujo7/remote_pi
+          </a>
+          .
+        </p>
       </DocsSection>
             </article>
           </div>

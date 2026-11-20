@@ -8,11 +8,11 @@ import 'package:cockpit/app/core/ui/widgets/app_tooltip.dart';
 import 'package:cockpit/i18n/strings.g.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
 
-/// Checklist do ambiente de **agente** (pi + extensão remote-pi + supervisor),
+/// Checklist do ambiente de **agente** (omp + extensão remote-omp + supervisor),
 /// exibido inline numa aba de agente vazia quando o usuário escolhe "New agent"
 /// e o ambiente ainda não está pronto. Antes era a tela de onboarding do boot;
 /// agora dispara sob demanda (decisão: Cockpit como multiplexador não exige o
-/// Pi). O botão "Create agent" só habilita quando o trio está satisfeito.
+/// omp). O botão "Create agent" só habilita quando o trio está satisfeito.
 ///
 /// Re-checa ao montar e quando a janela volta a ter foco (o usuário sai pro
 /// terminal/sistema, instala algo e volta).
@@ -117,8 +117,8 @@ class _AgentSetupChecklistState extends State<AgentSetupChecklist>
                   index: 1,
                   title: tr.step1Title,
                   description: tr.step1Description,
-                  status: vm.pi,
-                  onRecheck: vm.recheckPi,
+                  status: vm.omp,
+                  onRecheck: vm.recheckOmp,
                 ),
                 _StepCard(
                   index: 2,

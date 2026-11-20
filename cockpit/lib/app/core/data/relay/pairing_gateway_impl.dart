@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:cockpit/app/core/env.dart';
-import 'package:cockpit/app/core/data/relay/ephemeral_pi_rpc.dart';
+import 'package:cockpit/app/core/data/relay/ephemeral_omp_rpc.dart';
 import 'package:cockpit/app/core/domain/contracts/pairing_gateway.dart';
 import 'package:cockpit/app/core/domain/entities/pair_event.dart';
 
@@ -11,22 +11,22 @@ import 'package:cockpit/app/core/domain/entities/pair_event.dart';
 class PairingGatewayFactoryImpl implements PairingGatewayFactory {
   PairingGatewayFactoryImpl(this._config);
 
-  final PiSpawnConfig _config;
+  final OmpSpawnConfig _config;
 
   @override
   PairingGateway create() => PairingGatewayImpl(_config);
 }
 
-/// Implementação do [PairingGateway] sobre uma sessão [EphemeralPiRpc].
+/// Implementação do [PairingGateway] sobre uma sessão [EphemeralOmpRpc].
 ///
-/// Dispara `/remote-pi pair` e traduz as mensagens `role: "custom"` do stdout
-/// (`remote-pi:pair-code` / `remote-pi:paired`) em [PairEvent]. Cada pair-code
+/// Dispara `/remote-omp pair` e traduz as mensagens `role: "custom"` do stdout
+/// (`remote-omp:pair-code` / `remote-omp:paired`) em [PairEvent]. Cada pair-code
 /// chega como DOIS eventos (`message_start` + `message_end`) com payload igual,
 /// então deduplicamos por assinatura.
 class PairingGatewayImpl implements PairingGateway {
-  PairingGatewayImpl(PiSpawnConfig config) : _rpc = EphemeralPiRpc(config);
+  PairingGatewayImpl(OmpSpawnConfig config) : _rpc = EphemeralOmpRpc(config);
 
-  final EphemeralPiRpc _rpc;
+  final EphemeralOmpRpc _rpc;
   final StreamController<PairEvent> _events =
       StreamController<PairEvent>.broadcast();
 
@@ -46,17 +46,17 @@ class PairingGatewayImpl implements PairingGateway {
     try {
       final command = jsonEncode(<String, dynamic>{
         'type': 'prompt',
-        'message': '/remote-pi pair --ttl ${ttl.inSeconds}',
+        'message': '/remote-omp pair --ttl ${ttl.inSeconds}',
       });
       await _rpc.start(prompt: command, onLine: _onLine, onExit: _onExit);
 
-      // O `/remote-pi pair` sobe o relay sozinho — dá uns segundos pra conexão
+      // O `/remote-omp pair` sobe o relay sozinho — dá uns segundos pra conexão
       // antes de desistir (sem pair-code = extensão ausente ou relay off).
       _bootTimeout = Timer(const Duration(seconds: 30), () {
         if (!_gotCode) {
           _emit(
             const PairFailed(
-              'Could not start pairing. Check that the remote-pi extension is '
+              'Could not start pairing. Check that the remote-omp extension is '
               'installed and that a relay is configured.',
             ),
           );
@@ -89,7 +89,7 @@ class PairingGatewayImpl implements PairingGateway {
     if (!_seen.add(signature)) return; // dedup message_start/message_end
 
     switch (customType) {
-      case 'remote-pi:pair-code':
+      case 'remote-omp:pair-code':
         final uri = details['uri'];
         if (uri is! String || uri.isEmpty) return;
         _gotCode = true;
@@ -103,7 +103,7 @@ class PairingGatewayImpl implements PairingGateway {
             name: details['name']?.toString(),
           ),
         );
-      case 'remote-pi:paired':
+      case 'remote-omp:paired':
         _emit(PairDevicePaired(name: details['name']?.toString()));
     }
   }

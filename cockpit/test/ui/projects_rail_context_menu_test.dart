@@ -71,7 +71,7 @@ UpdateViewModel _fakeUpdateVm() => UpdateViewModel(
 
 final _root = Project(
   id: 'ws1',
-  name: 'Remote Pi',
+  name: 'Remote OMP',
   path: '/repo',
   colorValue: 0xFF3B82F6,
   createdAt: DateTime.utc(2026),
@@ -172,7 +172,7 @@ Widget _rail({
 
 /// Rótulo traduzido de "N worktrees", lido da árvore já montada.
 String _countLabel(WidgetTester tester, int n) => TranslationProvider.of(
-  tester.element(find.text('Remote Pi')),
+  tester.element(find.text('Remote OMP')),
 ).translations.cockpit.projectsRail.worktreeCount(n: n);
 
 /// Clique-direito no centro de [finder].
@@ -233,7 +233,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Remote Pi'));
+    await tester.tap(find.text('Remote OMP'));
     await tester.pumpAndSettle();
 
     expect(selected, ['ws1']);
@@ -245,11 +245,11 @@ void main() {
     await tester.pumpAndSettle();
 
     final tr = TranslationProvider.of(
-      tester.element(find.text('Remote Pi')),
+      tester.element(find.text('Remote OMP')),
     ).translations.cockpit.projectsRail;
 
     expect(find.text(tr.settings), findsNothing);
-    await _secondaryTap(tester, find.text('Remote Pi'));
+    await _secondaryTap(tester, find.text('Remote OMP'));
     expect(find.text(tr.settings), findsOneWidget);
     expect(find.text(tr.createWorktree), findsOneWidget);
   });
@@ -259,7 +259,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final tr = TranslationProvider.of(
-      tester.element(find.text('Remote Pi')),
+      tester.element(find.text('Remote OMP')),
     ).translations.cockpit.projectsRail;
 
     await _secondaryTap(tester, find.text('feat/x'));

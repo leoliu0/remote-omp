@@ -1,4 +1,4 @@
-/// Uma sessão salva do pi (um `.jsonl` em `~/.pi/agent/sessions/<cwd>/`).
+/// Uma sessão salva do omp (um `.jsonl` em `~/.omp/agent/sessions/<cwd>/`).
 class SessionInfo {
   const SessionInfo({
     required this.path,

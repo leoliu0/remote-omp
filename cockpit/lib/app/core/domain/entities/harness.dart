@@ -11,7 +11,7 @@ enum HarnessKind {
   cursor,
   gitHubCopilot,
   openCode,
-  pi,
+  omp,
 }
 
 class HarnessSpec {
@@ -86,12 +86,12 @@ abstract class HarnessCatalog {
       assetPath: 'assets/harness_icons/opencode.svg',
       isMonochrome: true,
     ),
-    HarnessKind.pi: HarnessSpec(
-      kind: HarnessKind.pi,
-      label: 'Pi',
-      primaryEntryPoint: 'pi',
+    HarnessKind.omp: HarnessSpec(
+      kind: HarnessKind.omp,
+      label: 'OMP',
+      primaryEntryPoint: 'omp',
       aliases: [],
-      assetPath: 'assets/harness_icons/pi.svg',
+      assetPath: 'assets/harness_icons/omp.svg',
       isMonochrome: true,
     ),
   };

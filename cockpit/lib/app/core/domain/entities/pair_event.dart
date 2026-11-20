@@ -1,5 +1,5 @@
-/// Eventos de uma sessão de pareamento (`/remote-pi pair`), já tipados a partir
-/// das mensagens custom do remote-pi no stream do `pi --mode rpc`.
+/// Eventos de uma sessão de pareamento (`/remote-omp pair`), já tipados a partir
+/// das mensagens custom do remote-omp no stream do `omp --mode rpc`.
 ///
 /// O wire é uma mensagem `role: "custom"` (em `message_start`/`message_end`) com
 /// `customType` + `details` — traduzida em `data/` para estes tipos. A `ui/`
@@ -8,7 +8,7 @@ sealed class PairEvent {
   const PairEvent();
 }
 
-/// `remote-pi:pair-code` — o código de pareamento (re)gerado. A [uri] é o que
+/// `remote-omp:pair-code` — o código de pareamento (re)gerado. A [uri] é o que
 /// vira QR Code; os demais campos servem pro botão "copiar dados". Reemitido
 /// periodicamente (o código se renova) — basta atualizar o QR.
 final class PairCodeReady extends PairEvent {
@@ -27,7 +27,7 @@ final class PairCodeReady extends PairEvent {
   final String? name;
 }
 
-/// `remote-pi:paired` — um aparelho leu o QR e pareou. Encerra o fluxo.
+/// `remote-omp:paired` — um aparelho leu o QR e pareou. Encerra o fluxo.
 final class PairDevicePaired extends PairEvent {
   const PairDevicePaired({this.name});
   final String? name;

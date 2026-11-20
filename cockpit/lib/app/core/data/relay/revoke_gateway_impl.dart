@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:cockpit/app/core/env.dart';
-import 'package:cockpit/app/core/data/relay/ephemeral_pi_rpc.dart';
+import 'package:cockpit/app/core/data/relay/ephemeral_omp_rpc.dart';
 import 'package:cockpit/app/core/domain/contracts/revoke_gateway.dart';
 import 'package:cockpit/app/core/domain/exceptions/relay_error.dart';
 import 'package:cockpit/app/core/domain/result.dart';
@@ -11,30 +11,30 @@ import 'package:cockpit/app/core/domain/result.dart';
 class RevokeGatewayFactoryImpl implements RevokeGatewayFactory {
   RevokeGatewayFactoryImpl(this._config);
 
-  final PiSpawnConfig _config;
+  final OmpSpawnConfig _config;
 
   @override
   RevokeGateway create() => RevokeGatewayImpl(_config);
 }
 
-/// Implementação do [RevokeGateway] sobre uma sessão [EphemeralPiRpc].
+/// Implementação do [RevokeGateway] sobre uma sessão [EphemeralOmpRpc].
 ///
-/// Comando one-shot: manda `/remote-pi revoke <shortId>` e espera o `notify` de
-/// confirmação. O remote-pi não emite custom event no revoke (diferente do
+/// Comando one-shot: manda `/remote-omp revoke <shortId>` e espera o `notify` de
+/// confirmação. O remote-omp não emite custom event no revoke (diferente do
 /// pair) — sinaliza por `extension_ui_request`/`notify`:
-/// - sucesso → `[remote-pi] Revoked: <name> …` (info)
+/// - sucesso → `[remote-omp] Revoked: <name> …` (info)
 /// - falha   → warning (`No peer matching`, `Revoke requires the relay`, …)
 class RevokeGatewayImpl implements RevokeGateway {
   RevokeGatewayImpl(this._config);
 
-  final PiSpawnConfig _config;
+  final OmpSpawnConfig _config;
 
   @override
   Future<Result<void, RelayError>> revoke(
     String shortId, {
     Duration timeout = const Duration(seconds: 30),
   }) async {
-    final rpc = EphemeralPiRpc(_config);
+    final rpc = EphemeralOmpRpc(_config);
     final completer = Completer<Result<void, RelayError>>();
 
     void finish(Result<void, RelayError> result) {
@@ -44,7 +44,7 @@ class RevokeGatewayImpl implements RevokeGateway {
     try {
       final command = jsonEncode(<String, dynamic>{
         'type': 'prompt',
-        'message': '/remote-pi revoke $shortId',
+        'message': '/remote-omp revoke $shortId',
       });
       await rpc.start(
         prompt: command,
@@ -93,13 +93,13 @@ class RevokeGatewayImpl implements RevokeGateway {
       finish(const Success(null));
       return;
     }
-    // Warnings do remote-pi durante o revoke = falha (peer inexistente, relay
+    // Warnings do remote-omp durante o revoke = falha (peer inexistente, relay
     // off, shortid ambíguo, setup pendente…).
-    if (json['notifyType'] == 'warning' && message.contains('remote-pi')) {
+    if (json['notifyType'] == 'warning' && message.contains('remote-omp')) {
       finish(Failure(RelayError(_clean(message))));
     }
   }
 
   String _clean(String message) =>
-      message.replaceFirst('[remote-pi] ', '').trim();
+      message.replaceFirst('[remote-omp] ', '').trim();
 }
