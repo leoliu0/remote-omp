@@ -1,26 +1,26 @@
 # Branding — Remote OMP
 
-Official visual identity assets. Source of truth: SVG vector files.
+Official visual identity assets ("Orbital Terminal Pulse"). Source of truth: SVG vector files.
 
 ## Palette
 
 | Color | Hex | Usage |
 |---|---|---|
-| Pure black | `#000000` | Background (full + adaptive icon bg) |
-| Pure white | `#FFFFFF` | Pi symbol π (primary foreground) |
-| Pi blue | `#4FC3F7` | Accent dot |
+| Midnight Navy | `#05070E` → `#13223A` | Adaptive icon background gradient (`#080D18` fallback color) |
+| Cool Ice White | `#FFFFFF` → `#DCEEFF` → `#38BDF8` | Orbital ring & terminal chevron |
+| Electric Cyan | `#7CF8FF` / `#00D4FF` / `#0EA5E9` | Live remote beacon, outer signal wave, cursor bar |
 
 ## Files
 
 | File | Content | Recommended Usage |
 |---|---|---|
-| `logo-full.svg` | Black background + white π + blue dot | Single-piece logo (favicon, README header, site, screenshots) |
-| `logo-foreground.svg` | π + dot on transparent background | iOS app icon (with separate bg), Android adaptive icon foreground |
-| `logo-background.svg` | Solid black 1024×1024 | Android adaptive icon background layer |
-| `logo-monochrome.svg` | Solid white silhouette | Android 13+ themed icon |
+| `logo-full.svg` | Midnight radial background + Orbital Terminal Pulse mark | Single-piece logo (iOS icon, README header, social/store preview) |
+| `logo-foreground.svg` | Orbital Terminal Pulse mark on transparent background | Android adaptive icon foreground layer |
+| `logo-background.svg` | Midnight navy + cyan aura radial background (1024×1024) | Android adaptive icon background layer |
+| `logo-monochrome.svg` | Solid white silhouette | Android 13+ Material You themed icon |
 | `banner.svg` / `banner.png` | 1280×640 horizontal banner | Package cards, README hero, social preview |
 
-All files: **1024×1024** viewBox, Android safe-zone compliant (~66% center).
+All logo files: **1024×1024** viewBox, Android adaptive-icon safe-zone compliant (outermost edge `r ≤ 291px`).
 
 ## PNG Conversion
 
@@ -36,9 +36,9 @@ rsvg-convert -w 1024 -h 1024 logo-full.svg -o logo-full.png
 
 | Platform | Size | Source File |
 |---|---|---|
-| iOS App Icon | 1024×1024 PNG (no alpha) | `logo-full.svg` |
-| Android Adaptive (foreground) | 432×432 PNG transparent | `logo-foreground.svg` |
-| Android Adaptive (background) | 432×432 PNG solid | `logo-background.svg` |
-| Android Themed (monochrome) | 432×432 PNG transparent | `logo-monochrome.svg` |
+| iOS App Icon | 1024×1024 PNG (opaque RGB, no alpha) | `logo-full.svg` |
+| Android Adaptive (background) | 108–432 PNG (`mipmap-mdpi`…`xxxhdpi`) | `logo-background.svg` |
+| Android Adaptive (foreground) | 108–432 PNG transparent | `logo-foreground.svg` |
+| Android Themed (monochrome) | 108–432 PNG transparent | `logo-monochrome.svg` |
 | Favicon | 32×32, 16×16 PNG | `logo-full.svg` |
 | npm registry README | 512×512 PNG | `logo-full.svg` |

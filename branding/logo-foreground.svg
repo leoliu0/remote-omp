@@ -1,15 +1,80 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <!-- Symbol only (no background) for Android adaptive icon foreground layer. -->
-  <!-- Content fits within Android safe zone (~66% center) -->
-  <!-- Pi symbol -->
-  <g fill="#FFFFFF">
-    <rect x="290" y="368" width="444" height="68" rx="10"/>
-    <rect x="345" y="436" width="68" height="320" rx="10"/>
-    <rect x="611" y="436" width="68" height="320" rx="10"/>
-    <path d="M 679 720 Q 712 740 720 700 L 720 712 Q 720 756 668 756 L 668 736 Z" fill="#FFFFFF"/>
-  </g>
+  <!-- Foreground-only Orbital Terminal Pulse mark; safe radius <= 291px inside 1024x1024 -->
+  <defs>
+    <linearGradient id="ringGrad" gradientUnits="userSpaceOnUse" x1="310" y1="290" x2="730" y2="740">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="38%" stop-color="#DCEEFF"/>
+      <stop offset="72%" stop-color="#7DD3FC"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+    <linearGradient id="chevronGrad" gradientUnits="userSpaceOnUse" x1="404" y1="444" x2="404" y2="580">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E0F2FE"/>
+    </linearGradient>
+    <linearGradient id="cursorGrad" gradientUnits="userSpaceOnUse" x1="532" y1="556" x2="638" y2="596">
+      <stop offset="0%" stop-color="#7CF8FF"/>
+      <stop offset="50%" stop-color="#00D4FF"/>
+      <stop offset="100%" stop-color="#0EA5E9"/>
+    </linearGradient>
+    <radialGradient id="beaconGrad" gradientUnits="userSpaceOnUse" cx="655" cy="349" r="38" fx="655" fy="349">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="42%" stop-color="#38F2FF"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </radialGradient>
+    <linearGradient id="waveGrad" gradientUnits="userSpaceOnUse" x1="635" y1="260" x2="764" y2="389">
+      <stop offset="0%" stop-color="#38F2FF"/>
+      <stop offset="100%" stop-color="#0EA5E9"/>
+    </linearGradient>
+    <radialGradient id="beaconHalo" gradientUnits="userSpaceOnUse" cx="664.7" cy="359.3" r="64">
+      <stop offset="0%" stop-color="#38F2FF" stop-opacity="0.34"/>
+      <stop offset="55%" stop-color="#00D4FF" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#00D4FF" stop-opacity="0"/>
+    </radialGradient>
 
-  <!-- Accent blue dot -->
-  <circle cx="780" cy="332" r="58" fill="#4FC3F7"/>
+    <filter id="softShadow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <feOffset in="SourceAlpha" dx="0" dy="8" result="off"/>
+      <feGaussianBlur in="off" stdDeviation="12" result="blur"/>
+      <feColorMatrix in="blur" type="matrix"
+        values="0 0 0 0 0.01  0 0 0 0 0.03  0 0 0 0 0.09  0 0 0 0.45 0" result="shadow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="cyanGlow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur"/>
+      <feComponentTransfer in="blur" result="softGlow">
+        <feFuncA type="linear" slope="0.55"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode in="softGlow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <circle cx="664.7" cy="359.3" r="64" fill="url(#beaconHalo)"/>
+
+  <!-- Open orbital ring (R=216, -12 deg clockwise to -78 deg) -->
+  <path d="M 723.3 467.1 A 216 216 0 1 1 556.9 300.7"
+        fill="none" stroke="url(#ringGrad)" stroke-width="42" stroke-linecap="round"
+        filter="url(#softShadow)"/>
+
+  <!-- Outer concentric remote signal wave (R=280, -64 deg to -26 deg) -->
+  <path d="M 634.7 260.3 A 280 280 0 0 1 763.7 389.3"
+        fill="none" stroke="url(#waveGrad)" stroke-width="22" stroke-linecap="round"
+        filter="url(#cyanGlow)"/>
+
+  <!-- Live remote beacon in upper-right gap (-45 deg) -->
+  <circle cx="664.7" cy="359.3" r="28" fill="url(#beaconGrad)" filter="url(#cyanGlow)"/>
+
+  <!-- Terminal prompt chevron > -->
+  <path d="M 404 444 L 486 512 L 404 580"
+        fill="none" stroke="url(#chevronGrad)" stroke-width="40"
+        stroke-linecap="round" stroke-linejoin="round" filter="url(#softShadow)"/>
+
+  <!-- Terminal cursor bar _ -->
+  <rect x="532" y="556" width="106" height="40" rx="20"
+        fill="url(#cursorGrad)" filter="url(#cyanGlow)"/>
 </svg>
