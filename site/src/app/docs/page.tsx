@@ -824,8 +824,7 @@ export default function DocsPage() {
           <InlineCode>.omp/remote-omp/</InlineCode> of its own. You can set the
           same variable yourself to override{" "}
           <InlineCode>&lt;cwd&gt;/.omp/remote-omp/config.json</InlineCode> for a
-          single run — an escape hatch for CI, ops, and the Cockpit desktop
-          client:
+          single run — an escape hatch for CI, ops, and custom RPC clients:
         </p>
         <CodeBlock
           code={`REMOTE_OMP_DIRECT_CONFIG='{"agent_name":"ci","auto_start_relay":true}' omp`}
@@ -929,12 +928,6 @@ export default function DocsPage() {
             Tutorials:{" "}
             <Link href="/tutorials" className="text-accent underline">
               hands-on guides
-            </Link>
-          </li>
-          <li>
-            Cockpit reference:{" "}
-            <Link href="/cockpit/docs" className="text-accent underline">
-              CLI, layouts, tasks, themes
             </Link>
           </li>
           <li>

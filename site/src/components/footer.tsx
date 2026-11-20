@@ -19,7 +19,6 @@ export function SiteFooter() {
           .
         </div>
         <nav className="footer-links">
-          <Link href="/cockpit">Cockpit</Link>
           <Link href="/download">Download</Link>
           <Link href="/terms">Terms of Service</Link>
           <Link href="/privacy">Privacy Policy</Link>

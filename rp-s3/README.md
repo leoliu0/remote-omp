@@ -1,6 +1,6 @@
 # rp-s3 — Remote OMP Downloads Server
 
-Minimal HTTP server (Rust + axum) serving Cockpit installers and release manifests from a mounted volume directory.
+Minimal HTTP server (Rust + axum) serving Remote OMP app installers and release manifests from a mounted volume directory.
 
 ## Routes
 

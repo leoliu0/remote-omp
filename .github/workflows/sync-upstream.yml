@@ -1,7 +1,7 @@
 name: sync-upstream
 
 # Manual only since plan 69 (Remote OMP rename, omp-only): an unattended merge of
-# jacobaraujo7/remote_pi can re-add pi-extension/ or Pi-only code that merges cleanly.
+# jacobaraujo7/remote_pi can re-add pi-extension/, cockpit/, or Pi-only code that merges cleanly.
 on:
   workflow_dispatch:
 

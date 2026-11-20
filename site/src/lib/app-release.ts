@@ -1,8 +1,6 @@
 /* ===========================================================
    Remote OMP App (Android) — release manifest
-   Mirror of src/lib/cockpit-release.ts for the mobile app (plan/44).
-   Same `latest.json` schema as the cockpit (plan/43, step 4), but the
-   app ships a single artifact: an Android APK (platform "android",
+   Ships a single artifact: an Android APK (platform "android",
    arch "universal", format "apk"). Distribution is direct APK — no
    Play Store — so the URL points at the GitHub Release asset.
 
@@ -116,4 +114,18 @@ export async function loadAppManifest(): Promise<AppManifestLoad> {
   } catch {
     return { manifest: APP_MOCK_MANIFEST, live: false };
   }
+}
+
+/** Last path segment of an artifact URL, e.g. `RemoteOMP.apk`. */
+export function artifactFileName(a: { url: string; format: string }): string {
+  const seg = a.url.split("/").pop();
+  return seg && seg.length > 0 ? seg : `remote-omp.${a.format}`;
+}
+
+/** Human-readable file size from a byte count. */
+export function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return "—";
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  return `${mb.toFixed(1)} MB`;
 }

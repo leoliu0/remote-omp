@@ -148,7 +148,7 @@ Estas decisões foram **propositalmente adiadas**. Quando alguém quiser fechar,
 | Decisão | Razão / nota |
 |---|---|
 | **App mobile: distribuição DUPLA** | iOS = **App Store**; Android = **Play Store** (AAB) **+ APK direto** (`RemotePi.apk` em GitHub Release `app-v*`, ofertado na `/download` do site). A frase "não precisamos subir pras lojas" significava não *depender* delas — as lojas continuam canais. Artefatos store-ready verificados em `1.1.0+5` (IPA assinado Apple Distribution + AAB assinado release), build manual via agente do App; o CI cobre só o APK direto |
-| **Cockpit (desktop): fora de lojas** | DMG notarizado (macOS) + EXE sem assinatura (Windows, SmartScreen documentado) + deb/rpm (Linux x64+arm64) via GitHub Release `cockpit-v*` |
+| ~~**Cockpit (desktop): fora de lojas**~~ | ~~DMG notarizado (macOS) + EXE sem assinatura (Windows, SmartScreen documentado) + deb/rpm (Linux x64+arm64) via GitHub Release `cockpit-v*`~~ _(superseded 2026-11-20: Cockpit removed)_ |
 | **Hospedagem de binários** | Assets de GitHub Releases (tags prefixadas por produto; monorepo ok como puro storage). VPS **sem SSH** → `rp-s3` serve só os `latest.json` por produto; usuário posiciona o manifest manualmente = **gate de publicação** |
 | **Updates** | ~~Sem auto-update.~~ **(revisto 2026-06-27 — plano 47)**: Cockpit **macOS/Windows** ganham **self-update** via Sparkle/WinSparkle (pacote `auto_updater`): baixa em background, card "reiniciar p/ instalar", troca + relança. **Linux mantém notify manual.** Gate de publicação manual no rp-s3 **continua** (agora cobre também os `appcast-{macos,windows}.xml`). Site (`/download`) + card in-app dispensável (Cockpit e app Android) seguem lendo o `latest.json` como fallback / caminho do Linux+Android; card pode aparecer pra install de loja (sem detecção de origem) |
 
@@ -174,6 +174,10 @@ Estas decisões foram **propositalmente adiadas**. Quando alguém quiser fechar,
 - **Unchanged on purpose:** the relay wire protocol and message names (other PCs and older apps keep interoperating), Cockpit's application id, the local checkout path, and historical records (plans 01–68, past CHANGELOG entries, `review/TESTING.md` rows, screenshots).
 - **Migration, not shims:** data moves once from `~/.pi/remote` to `~/.omp/remote`, the keyring identity is copied to the new service, per-folder config is read from the old path once and rewritten. Old `REMOTE_PI_*` env names are not read; the user's shell rc is updated instead.
 - **Cost accepted:** the phone installs the new app id next to the old one and pairs again.
+
+## Cockpit removed (decided 2026-11-20)
+
+- **Removed the Cockpit Flutter desktop client** (`cockpit/`, `.cockpit/`, `cockpit-cli.yml`, `cockpit-release.yml`, dispatch script, and site `/cockpit` pages/assets). Linux remains terminal-first (`omp` + `omp-extension/` + Android/web clients); `omp-extension` RPC control paths stay intact.
 
 ## Como atualizar este arquivo
 

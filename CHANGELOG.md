@@ -22,6 +22,8 @@ protocol is unchanged, so older apps and PCs keep talking to the relay.
 - **Migration:** the first start copies `~/.pi/remote` (identity, paired devices, settings, daemons, uploads) into `~/.omp/remote` once and leaves the old folder alone for sessions still running the old version; the keyring identity is copied to `dev.remoteomp.omp`; per-folder config is copied from `.pi/remote-pi/`. `remote-omp install` removes the old service.
 - **omp only.** Upstream Pi support is gone: no `--harness`, daemons always run omp, the plugin manifest is `omp`, thinking levels follow omp's `/effort` list.
 - The scheduled upstream merge workflow is manual-only.
+- **App icon:** replaced the logo with the **Orbital Terminal Pulse** mark (`>_` inside an open orbital ring with cyan beacon and signal wave on midnight-navy) across `branding/`, Android adaptive + Material You monochrome icons, and iOS `AppIcon`.
+- **Removed Cockpit:** deleted the `cockpit/` Flutter desktop app, `.cockpit/`, its CI workflows (`cockpit-cli.yml`, `cockpit-release.yml`), dispatch script, and `site/` Cockpit pages/assets.
 
 ### Added (plan 68)
 

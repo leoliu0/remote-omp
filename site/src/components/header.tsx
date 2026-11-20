@@ -72,9 +72,6 @@ export function SiteHeader() {
           <Link className="lnk" href="/web">
             Web App
           </Link>
-          <Link className="lnk" href="/cockpit">
-            Cockpit
-          </Link>
           <Link className="lnk" href="/tutorials">
             Tutorials
           </Link>
@@ -124,13 +121,6 @@ export function SiteHeader() {
               onClick={() => setMenuOpen(false)}
             >
               Web App
-            </Link>
-            <Link
-              className="m-lnk"
-              href="/cockpit"
-              onClick={() => setMenuOpen(false)}
-            >
-              Cockpit
             </Link>
             <Link
               className="m-lnk"

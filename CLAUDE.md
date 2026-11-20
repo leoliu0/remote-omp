@@ -30,7 +30,6 @@ See [README.md](./README.md) for an overview and [plan/](./plan/) for architectu
      drive the real flow with `adb input`, screenshot every step.
    - **Web (`site/`)** — drive the page in the browser tool, screenshot,
      visually confirm.
-   - **Desktop (`cockpit/`)** — `flutter test` + release build at minimum.
 3. **Evidence & ledger:** Evidence lives in `review/screens/` (PNG) + dated
    rows in `review/TESTING.md`.
 
@@ -58,7 +57,6 @@ dispatch to the target subproject with the plan as context.
 - `omp-extension/` — Node/TypeScript daemon running on paired PCs (omp plugin)
 - `relay/` — Rust WebSocket relay and presence router
 - `site/` — Next.js documentation and download site
-- `cockpit/` — Flutter desktop app (macOS / Windows / Linux)
 - `rp-s3/` — S3-compatible asset and update server (Rust)
 
 ## Workspace Panes
@@ -69,16 +67,7 @@ dispatch to the target subproject with the plan as context.
 | `Relay` | `relay/` |
 | `Extension` | `omp-extension/` |
 | `Site` | `site/` |
-| `Cockpit` | `cockpit/` |
 | `Orchestrator` | monorepo root |
-
-### Cockpit Dispatch
-
-```bash
-# By pane label or tab-id
-scripts/cockpit-dispatch.sh Extension 03-ts-codec "Implement step 3 of plan/03-protocol.md"
-scripts/cockpit-dispatch.sh --wait Extension 25-wave-x "..."
-```
 
 ### cmux Dispatch (Legacy fallback)
 
