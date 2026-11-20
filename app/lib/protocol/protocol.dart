@@ -983,6 +983,31 @@ class ReloadPlugins extends ClientMessage {
   Map<String, dynamic> toJson() => {'type': 'reload_plugins', 'id': id};
 }
 
+/// Asks the extension for changed files and branch in the active session's repo.
+class GitStatusRequest extends ClientMessage {
+  final String id;
+  GitStatusRequest({required this.id});
+
+  @override
+  Map<String, dynamic> toJson() => {'type': 'git_status', 'id': id};
+}
+
+/// Asks the extension for the unified diff of one repo-relative [path].
+class GitDiffRequest extends ClientMessage {
+  final String id;
+  final String path;
+  final bool staged;
+  GitDiffRequest({required this.id, required this.path, this.staged = false});
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'git_diff',
+    'id': id,
+    'path': path,
+    if (staged) 'staged': true,
+  };
+}
+
 /// omp plan mode command (typed action like `session_compact`): `enter` =
 /// `/plan`, `exit` = leave plan mode (the client confirms with the user first
 /// when a plan exists), `review` = `/plan-review` (re-opens the review).
@@ -1068,6 +1093,9 @@ sealed class ServerMessage {
       'file_chunk' => FileChunk.fromJson(json),
       'file_end' => FileEnd.fromJson(json),
       'file_cancel' => FileCancel.fromJson(json),
+      // Mobile Git Diff viewer.
+      'git_status_result' => GitStatusResult.fromJson(json),
+      'git_diff_result' => GitDiffResult.fromJson(json),
       // forward-compat: unknown types are not fatal — callers catch and log
       _ => throw UnsupportedTypeException(type ?? ''),
     };
@@ -2629,4 +2657,199 @@ class FileError extends ClientMessage {
 
   @override
   int get hashCode => Object.hash(fileId, reason);
+}
+
+// ---------------------------------------------------------------------------
+// Mobile Git Diff / Changed Files viewer
+// ---------------------------------------------------------------------------
+
+enum GitFileStatus {
+  modified('modified'),
+  added('added'),
+  deleted('deleted'),
+  renamed('renamed'),
+  untracked('untracked'),
+  conflicted('conflicted');
+
+  final String wire;
+  const GitFileStatus(this.wire);
+
+  static GitFileStatus fromWire(String? raw) {
+    for (final s in values) {
+      if (s.wire == raw) return s;
+    }
+    return GitFileStatus.modified;
+  }
+}
+
+class WireGitFileChange {
+  final String path;
+  final String? oldPath;
+  final GitFileStatus status;
+  final bool staged;
+  final bool unstaged;
+  final int? additions;
+  final int? deletions;
+  final bool binary;
+
+  const WireGitFileChange({
+    required this.path,
+    this.oldPath,
+    required this.status,
+    required this.staged,
+    required this.unstaged,
+    this.additions,
+    this.deletions,
+    this.binary = false,
+  });
+
+  factory WireGitFileChange.fromJson(Map<String, dynamic> j) =>
+      WireGitFileChange(
+        path: (j['path'] as String?) ?? '',
+        oldPath: j['old_path'] as String?,
+        status: GitFileStatus.fromWire(j['status'] as String?),
+        staged: (j['staged'] as bool?) ?? false,
+        unstaged: (j['unstaged'] as bool?) ?? false,
+        additions: (j['additions'] as num?)?.toInt(),
+        deletions: (j['deletions'] as num?)?.toInt(),
+        binary: (j['binary'] as bool?) ?? false,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireGitFileChange &&
+      other.path == path &&
+      other.oldPath == oldPath &&
+      other.status == status &&
+      other.staged == staged &&
+      other.unstaged == unstaged &&
+      other.additions == additions &&
+      other.deletions == deletions &&
+      other.binary == binary;
+
+  @override
+  int get hashCode => Object.hash(
+    path,
+    oldPath,
+    status,
+    staged,
+    unstaged,
+    additions,
+    deletions,
+    binary,
+  );
+}
+
+class GitStatusResult extends ServerMessage {
+  final String inReplyTo;
+  final bool isRepo;
+  final String? branch;
+  final String? repoRoot;
+  final List<WireGitFileChange> files;
+  final bool truncated;
+
+  const GitStatusResult({
+    required this.inReplyTo,
+    required this.isRepo,
+    this.branch,
+    this.repoRoot,
+    required this.files,
+    this.truncated = false,
+  });
+
+  factory GitStatusResult.fromJson(Map<String, dynamic> j) => GitStatusResult(
+    inReplyTo: (j['in_reply_to'] as String?) ?? '',
+    isRepo: (j['is_repo'] as bool?) ?? false,
+    branch: j['branch'] as String?,
+    repoRoot: j['repo_root'] as String?,
+    files: (j['files'] as List<dynamic>? ?? const <dynamic>[])
+        .map((e) => WireGitFileChange.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    truncated: (j['truncated'] as bool?) ?? false,
+  );
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! GitStatusResult ||
+        other.inReplyTo != inReplyTo ||
+        other.isRepo != isRepo ||
+        other.branch != branch ||
+        other.repoRoot != repoRoot ||
+        other.truncated != truncated ||
+        other.files.length != files.length) {
+      return false;
+    }
+    for (var i = 0; i < files.length; i++) {
+      if (files[i] != other.files[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    inReplyTo,
+    isRepo,
+    branch,
+    repoRoot,
+    truncated,
+    Object.hashAll(files),
+  );
+}
+
+class GitDiffResult extends ServerMessage {
+  final String inReplyTo;
+  final String path;
+  final bool staged;
+  final String diff;
+  final bool binary;
+  final bool truncated;
+  final int? additions;
+  final int? deletions;
+
+  const GitDiffResult({
+    required this.inReplyTo,
+    required this.path,
+    required this.staged,
+    required this.diff,
+    this.binary = false,
+    this.truncated = false,
+    this.additions,
+    this.deletions,
+  });
+
+  factory GitDiffResult.fromJson(Map<String, dynamic> j) => GitDiffResult(
+    inReplyTo: (j['in_reply_to'] as String?) ?? '',
+    path: (j['path'] as String?) ?? '',
+    staged: (j['staged'] as bool?) ?? false,
+    diff: (j['diff'] as String?) ?? '',
+    binary: (j['binary'] as bool?) ?? false,
+    truncated: (j['truncated'] as bool?) ?? false,
+    additions: (j['additions'] as num?)?.toInt(),
+    deletions: (j['deletions'] as num?)?.toInt(),
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is GitDiffResult &&
+      other.inReplyTo == inReplyTo &&
+      other.path == path &&
+      other.staged == staged &&
+      other.diff == diff &&
+      other.binary == binary &&
+      other.truncated == truncated &&
+      other.additions == additions &&
+      other.deletions == deletions;
+
+  @override
+  int get hashCode => Object.hash(
+    inReplyTo,
+    path,
+    staged,
+    diff,
+    binary,
+    truncated,
+    additions,
+    deletions,
+  );
 }

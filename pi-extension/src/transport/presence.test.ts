@@ -63,4 +63,22 @@ describe("OwnerPresence — relay presence of paired owners", () => {
     expect(p.isSubscribed("A")).toBe(false);
     expect(calls).toBe(1);
   });
+
+  test("anyOnline tracks whether any owner is online across updates and reset", () => {
+    const p = new OwnerPresence();
+    expect(p.anyOnline()).toBe(false);
+    p.handleLine(JSON.stringify({ type: "peer_offline", peer: "A", since_ts: 1 }));
+    expect(p.anyOnline()).toBe(false);
+    p.handleLine(JSON.stringify({ type: "peer_online", peer: "B" }));
+    expect(p.anyOnline()).toBe(true);
+    p.handleLine(JSON.stringify({ type: "peer_offline", peer: "B", since_ts: 2 }));
+    expect(p.anyOnline()).toBe(false);
+    p.handleLine(JSON.stringify({
+      type: "presence",
+      states: [{ peer: "A", online: true }, { peer: "B", online: false }],
+    }));
+    expect(p.anyOnline()).toBe(true);
+    p.reset();
+    expect(p.anyOnline()).toBe(false);
+  });
 });

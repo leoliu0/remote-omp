@@ -304,3 +304,37 @@ describe("model role frames (plan/66)", () => {
     expect(() => decodeClient('{"type":"model_roles","roles":[]}')).toThrow(DecodeError);
   });
 });
+
+describe("git_status and git_diff frames", () => {
+  test("client git frames encode/decode cleanly", () => {
+    const req1: ClientMessage = { type: "git_status", id: "act_1" };
+    const req2: ClientMessage = { type: "git_diff", id: "act_2", path: "src/app.ts", staged: true };
+    expect(decodeClient(encodeClient(req1))).toEqual(req1);
+    expect(decodeClient(encodeClient(req2))).toEqual(req2);
+  });
+
+  test("server git frames encode/decode and enforce direction", () => {
+    const res1: ServerMessage = {
+      type: "git_status_result",
+      in_reply_to: "act_1",
+      is_repo: true,
+      branch: "main",
+      files: [
+        { path: "src/app.ts", status: "modified", staged: false, unstaged: true, additions: 3, deletions: 1 },
+      ],
+    };
+    const res2: ServerMessage = {
+      type: "git_diff_result",
+      in_reply_to: "act_2",
+      path: "src/app.ts",
+      staged: true,
+      diff: "@@ -1 +1 @@\n-old\n+new\n",
+      additions: 1,
+      deletions: 1,
+    };
+    expect(decodeServer(encodeServer(res1))).toEqual(res1);
+    expect(decodeServer(encodeServer(res2))).toEqual(res2);
+    expect(() => decodeServer('{"type":"git_status","id":"act_1"}')).toThrow(DecodeError);
+    expect(() => decodeClient('{"type":"git_status_result","in_reply_to":"act_1","is_repo":true,"files":[]}')).toThrow(DecodeError);
+  });
+});

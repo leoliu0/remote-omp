@@ -108,6 +108,23 @@ class FakeRolesRepo implements IActionsRepository {
   Future<void> setThinking(ThinkingLevel level) async {}
 
   @override
+  Future<GitStatusResult> gitStatus() async => const GitStatusResult(
+    inReplyTo: 'fake',
+    isRepo: true,
+    branch: 'main',
+    files: [],
+  );
+
+  @override
+  Future<GitDiffResult> gitDiff(String path, {bool staged = false}) async =>
+      GitDiffResult(
+        inReplyTo: 'fake',
+        path: path,
+        staged: staged,
+        diff: '',
+      );
+
+  @override
   void dispose() {
     _rolesController.close();
   }

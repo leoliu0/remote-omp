@@ -131,6 +131,9 @@ vi.mock("./pairing/storage.js", async (importOriginal) => {
 // ── Mock config (no real fs writes) ───────────────────────────────────────────
 
 let _savedRelayUrl: string | null = null;
+let _savedNotifyUrl: string | undefined;
+let _savedNotifyToken: string | undefined;
+let _savedNotifyMode: "offline" | "always" | "off" | undefined;
 const _setRelayCalls: string[] = [];
 
 vi.mock("./config.js", async (importOriginal) => {
@@ -139,10 +142,23 @@ vi.mock("./config.js", async (importOriginal) => {
     ...orig,
     loadConfig: vi.fn().mockImplementation(() => ({
       ...(_savedRelayUrl ? { relay: _savedRelayUrl } : {}),
+      ...(_savedNotifyUrl ? { notify_url: _savedNotifyUrl } : {}),
+      ...(_savedNotifyToken ? { notify_token: _savedNotifyToken } : {}),
+      ...(_savedNotifyMode ? { notify_mode: _savedNotifyMode } : {}),
     })),
-    saveConfig: vi.fn().mockImplementation((patch: { relay?: string }) => {
-      _setRelayCalls.push(patch.relay ?? "");
-      if (patch.relay !== undefined) _savedRelayUrl = patch.relay;
+    saveConfig: vi.fn().mockImplementation((patch: {
+      relay?: string;
+      notify_url?: string;
+      notify_token?: string;
+      notify_mode?: "offline" | "always" | "off";
+    }) => {
+      if ("relay" in patch) {
+        _setRelayCalls.push(patch.relay ?? "");
+        if (patch.relay !== undefined) _savedRelayUrl = patch.relay;
+      }
+      if ("notify_url" in patch) _savedNotifyUrl = patch.notify_url;
+      if ("notify_token" in patch) _savedNotifyToken = patch.notify_token;
+      if ("notify_mode" in patch) _savedNotifyMode = patch.notify_mode;
     }),
     resolveRelayUrl: vi.fn().mockImplementation(() => {
       const env = process.env["REMOTE_PI_RELAY"];
@@ -152,6 +168,13 @@ vi.mock("./config.js", async (importOriginal) => {
       }
       return { url: orig.toHttpUrl(orig.kDefaultRelayUrl), source: "default" as const };
     }),
+    resolveNotifyConfig: vi.fn().mockImplementation(() =>
+      orig.resolveNotifyConfig({
+        notify_url: _savedNotifyUrl,
+        notify_token: _savedNotifyToken,
+        notify_mode: _savedNotifyMode,
+      }),
+    ),
     // isValidRelayUrl + isWebSocketScheme + kDefaultRelayUrl + toHttpUrl
     // + toWebSocketUrl come from orig (...spread).
   };
@@ -398,8 +421,13 @@ describe("extension default export", () => {
     // 8 plan-25 + 2 daemon registry (W1) + 6 fleet ops (W2) + 2 install (W3)
     // + 1 cross-PC inventory (plan-25 W D) + 1 cron (plan-39) + 1 rename (plan/41)
     // + 1 relay control (issue #119) + 2 web client (remote-pi web, rc web) + 11 /rc commands
-    // + 2 restart (remote-pi restart, rc restart).
-    expect(registeredCommands).toHaveLength(38);
+    // + 2 restart (remote-pi restart, rc restart)
+    // + 4 push notifications (remote-pi notify, remote-pi set-notify, rc notify, rc set-notify).
+    expect(registeredCommands).toHaveLength(42);
+    expect(registeredCommands).toContain("remote-pi notify");
+    expect(registeredCommands).toContain("remote-pi set-notify");
+    expect(registeredCommands).toContain("rc notify");
+    expect(registeredCommands).toContain("rc set-notify");
     expect(registeredCommands).toContain("remote-pi restart");
     expect(registeredCommands).toContain("rc restart");
     expect(registeredCommands).toContain("rc");
@@ -3607,6 +3635,41 @@ describe("/remote-pi set-relay + config", () => {
       expect.stringContaining("source: config"),
       "info",
     );
+  });
+
+  test("/remote-pi notify set/mode/status/clear updates notify config", async () => {
+    const notifyCmd = captureHandler("remote-pi notify");
+    try {
+      const ctx1 = makeMockCtx();
+      await notifyCmd("set https://ntfy.sh/rp-test --token tok123 --mode always", ctx1);
+      expect(ctx1.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining("Notify URL set to https://ntfy.sh/rp-test"),
+        "info",
+      );
+
+      const ctx2 = makeMockCtx();
+      await notifyCmd("status", ctx2);
+      const statusText = (ctx2.ui.notify.mock.calls[0]![0]) as string;
+      expect(statusText).toContain("https://ntfy.sh/rp-test");
+      expect(statusText).toContain("mode: always");
+      expect(statusText).toContain("token: set");
+
+      const ctx3 = makeMockCtx();
+      await notifyCmd("mode offline", ctx3);
+      expect(ctx3.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining("Notify mode set to offline"),
+        "info",
+      );
+
+      const ctx4 = makeMockCtx();
+      await notifyCmd("clear", ctx4);
+      expect(_savedNotifyUrl).toBeUndefined();
+      expect(_savedNotifyToken).toBeUndefined();
+    } finally {
+      _savedNotifyUrl = undefined;
+      _savedNotifyToken = undefined;
+      _savedNotifyMode = undefined;
+    }
   });
 });
 

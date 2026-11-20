@@ -680,4 +680,84 @@ void main() {
       s.cm.dispose();
     });
   });
+
+  group('ActionsRepository — git status & diff', () {
+    test('gitStatus sends git_status and resolves on git_status_result',
+        () async {
+      final s = await _setup();
+      final future = s.repo.gitStatus();
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final sent = s.ch.sent.single as GitStatusRequest;
+      expect(sent.toJson()['type'], 'git_status');
+      const reply = GitStatusResult(
+        inReplyTo: 'placeholder',
+        isRepo: true,
+        branch: 'main',
+        files: [
+          WireGitFileChange(
+            path: 'lib/app.dart',
+            status: GitFileStatus.modified,
+            staged: false,
+            unstaged: true,
+            additions: 2,
+            deletions: 1,
+          ),
+        ],
+      );
+      s.ch.push(GitStatusResult(
+        inReplyTo: sent.id,
+        isRepo: reply.isRepo,
+        branch: reply.branch,
+        files: reply.files,
+      ));
+      final resolved = await future;
+      expect(resolved.isRepo, isTrue);
+      expect(resolved.branch, 'main');
+      expect(resolved.files.single.path, 'lib/app.dart');
+      s.cm.dispose();
+    });
+
+    test('gitDiff sends git_diff and propagates ErrorMessage as ActionFailure',
+        () async {
+      final s = await _setup();
+      final future = s.repo.gitDiff('lib/app.dart', staged: true);
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final sent = s.ch.sent.single as GitDiffRequest;
+      expect(sent.toJson(), {
+        'type': 'git_diff',
+        'id': sent.id,
+        'path': 'lib/app.dart',
+        'staged': true,
+      });
+      s.ch.push(GitDiffResult(
+        inReplyTo: sent.id,
+        path: 'lib/app.dart',
+        staged: true,
+        diff: '+hello\n',
+        additions: 1,
+        deletions: 0,
+      ));
+      final resolved = await future;
+      expect(resolved.diff, '+hello\n');
+      expect(resolved.staged, isTrue);
+
+      final failFuture = s.repo.gitDiff('../bad');
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final badSent = s.ch.sent.last as GitDiffRequest;
+      s.ch.push(ErrorMessage(
+        inReplyTo: badSent.id,
+        code: 'invalid_message',
+        message: 'path escapes repository root',
+      ));
+      await expectLater(
+        failFuture,
+        throwsA(isA<ActionFailure>().having(
+          (e) => e.message,
+          'message',
+          'path escapes repository root',
+        )),
+      );
+      s.cm.dispose();
+    });
+  });
 }

@@ -337,6 +337,8 @@ export type ClientMessage =
   | { type: "thinking_set"; id: string; level: ThinkingLevel }
   | { type: "list_models"; id: string }
   | { type: "reload_plugins"; id: string }
+  | { type: "git_status"; id: string }
+  | { type: "git_diff"; id: string; path: string; staged?: boolean }
   // Plan/66 — omp model roles (`modelRoles` in omp's config.yml). The list is
   // answered with `model_roles`. `model_role_set` assigns a role globally
   // (`provider/model_id[:thinking]`, as omp's TUI writes it); omitting both
@@ -544,7 +546,51 @@ export type ServerMessage =
   | FileOfferMessage
   | FileChunkMessage
   | FileEndMessage
-  | FileCancelMessage;
+  | FileCancelMessage
+  // Mobile Git Diff / Changed Files viewer.
+  | GitStatusResultMessage
+  | GitDiffResultMessage;
+
+export type GitFileStatus =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "untracked"
+  | "conflicted";
+
+export interface WireGitFileChange {
+  path: string;
+  old_path?: string;
+  status: GitFileStatus;
+  staged: boolean;
+  unstaged: boolean;
+  additions?: number;
+  deletions?: number;
+  binary?: boolean;
+}
+
+export interface GitStatusResultMessage {
+  type: "git_status_result";
+  in_reply_to: string;
+  is_repo: boolean;
+  branch?: string;
+  repo_root?: string;
+  files: WireGitFileChange[];
+  truncated?: boolean;
+}
+
+export interface GitDiffResultMessage {
+  type: "git_diff_result";
+  in_reply_to: string;
+  path: string;
+  staged: boolean;
+  diff: string;
+  binary?: boolean;
+  truncated?: boolean;
+  additions?: number;
+  deletions?: number;
+}
 
 /**
  * One `status_line` snapshot: the values behind omp's footer segments

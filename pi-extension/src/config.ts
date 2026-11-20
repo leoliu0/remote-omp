@@ -14,7 +14,21 @@ const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
  */
 export const kDefaultRelayUrl = "https://relay-rp1.jacobmoura.work";
 
-export type RemotePiConfig = { relay?: string };
+export type NotifyMode = "offline" | "always" | "off";
+
+export type RemotePiConfig = {
+  relay?: string;
+  notify_url?: string;
+  notify_token?: string;
+  notify_mode?: NotifyMode;
+};
+
+export type NotifyConfigResolution = {
+  url: string | null;
+  token: string | null;
+  mode: NotifyMode;
+  source: "env" | "config" | "none";
+};
 
 export function loadConfig(): RemotePiConfig {
   try {
@@ -30,7 +44,15 @@ export function loadConfig(): RemotePiConfig {
 export function saveConfig(patch: Partial<RemotePiConfig>): void {
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   const current = loadConfig();
-  const next = { ...current, ...patch };
+  const next: RemotePiConfig = { ...current };
+  for (const key of Object.keys(patch) as Array<keyof RemotePiConfig>) {
+    const value = patch[key];
+    if (value === undefined) {
+      delete next[key];
+    } else {
+      (next as Record<string, unknown>)[key] = value;
+    }
+  }
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2));
 }
 
@@ -108,4 +130,62 @@ export function toHttpUrl(url: string): string {
   if (lower.startsWith("wss://")) return "https://" + url.slice("wss://".length);
   if (lower.startsWith("ws://"))  return "http://"  + url.slice("ws://".length);
   return url;
+}
+
+/**
+ * Strict validator for webhook / ntfy notification URLs: accepts only
+ * parseable `http://` or `https://` URLs.
+ */
+export function isValidNotifyUrl(url: string): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Type guard for supported push notification modes. */
+export function isValidNotifyMode(v: string): v is NotifyMode {
+  return v === "offline" || v === "always" || v === "off";
+}
+
+/**
+ * Resolves webhook/ntfy notification configuration.
+ *
+ * Precedence:
+ *   - URL: `REMOTE_PI_NOTIFY_URL` (env) > `~/.pi/remote/config.json` `notify_url`
+ *   - Token: `REMOTE_PI_NOTIFY_TOKEN` (env) > `config.json` `notify_token`
+ *   - Mode: `REMOTE_PI_NOTIFY_MODE` (env) > `config.json` `notify_mode` > `"offline"`
+ */
+export function resolveNotifyConfig(cfgOverride?: RemotePiConfig): NotifyConfigResolution {
+  const cfg = cfgOverride ?? loadConfig();
+
+  const envUrlRaw = process.env["REMOTE_PI_NOTIFY_URL"]?.trim() ?? "";
+  const cfgUrlRaw = typeof cfg.notify_url === "string" ? cfg.notify_url.trim() : "";
+
+  let url: string | null = null;
+  let source: "env" | "config" | "none" = "none";
+  if (envUrlRaw && isValidNotifyUrl(envUrlRaw)) {
+    url = envUrlRaw;
+    source = "env";
+  } else if (cfgUrlRaw && isValidNotifyUrl(cfgUrlRaw)) {
+    url = cfgUrlRaw;
+    source = "config";
+  }
+
+  const envToken = process.env["REMOTE_PI_NOTIFY_TOKEN"]?.trim() ?? "";
+  const cfgToken = typeof cfg.notify_token === "string" ? cfg.notify_token.trim() : "";
+  const token = envToken || cfgToken || null;
+
+  const envModeRaw = process.env["REMOTE_PI_NOTIFY_MODE"]?.trim().toLowerCase() ?? "";
+  const cfgModeRaw = typeof cfg.notify_mode === "string" ? cfg.notify_mode.trim().toLowerCase() : "";
+  const mode: NotifyMode = isValidNotifyMode(envModeRaw)
+    ? envModeRaw
+    : isValidNotifyMode(cfgModeRaw)
+      ? cfgModeRaw
+      : "offline";
+
+  return { url, token, mode, source };
 }

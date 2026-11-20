@@ -800,6 +800,8 @@ class SyncService extends Service {
       case ActionError():
       case ModelsList():
       case ModelRoles():
+      case GitStatusResult():
+      case GitDiffResult():
         break;
       case SkillsList(:final skills, :final inReplyTo):
         _dynamicSkills = skills;

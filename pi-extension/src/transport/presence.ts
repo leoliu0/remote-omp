@@ -31,6 +31,14 @@ export class OwnerPresence {
     return online === undefined ? "unknown" : online ? "online" : "offline";
   }
 
+  /** True when at least one tracked owner is currently reported online. */
+  anyOnline(): boolean {
+    for (const online of this.states.values()) {
+      if (online) return true;
+    }
+    return false;
+  }
+
   isSubscribed(peer: string): boolean {
     return this.subscribed.has(peer);
   }

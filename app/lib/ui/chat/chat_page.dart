@@ -21,6 +21,7 @@ import 'package:app/ui/chat/widgets/tool_request_card.dart';
 import 'package:app/ui/chat/widgets/activity_panel.dart';
 import 'package:app/ui/chat/widgets/todo_panel.dart';
 import 'package:app/ui/chat/widgets/extension_ui_sheet.dart';
+import 'package:app/ui/chat/widgets/git_changes_sheet.dart';
 import 'package:app/ui/chat/widgets/plan_review_sheet.dart';
 import 'package:app/ui/settings/settings_sheet.dart';
 import 'package:app_settings/app_settings.dart';
@@ -407,6 +408,12 @@ class _ChatPageState extends State<ChatPage> {
           // nav hints, so the bar is stable from frame 1. The dialog needs the
           // loaded PeerRecord; we read it at tap time (loaded within ms of
           // mount for the connection) and no-op in the unlikely pre-load tap.
+          IconButton(
+            key: const Key('chat_git_changes'),
+            icon: Icon(LucideIcons.fileDiff, size: 18, color: colors.muted2),
+            tooltip: 'Changes',
+            onPressed: () => showGitChangesSheet(context),
+          ),
           // Phones only: turns the phone sideways for the landscape layout.
           if (MediaQuery.sizeOf(context).shortestSide < 600)
             IconButton(

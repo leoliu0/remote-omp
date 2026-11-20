@@ -11,6 +11,7 @@ import 'package:app/ui/chat/quick_actions/widgets/dismiss_on_session_change.dart
 import 'package:app/ui/chat/quick_actions/widgets/model_picker_sheet.dart';
 import 'package:app/ui/chat/quick_actions/widgets/thinking_segmented.dart';
 import 'package:app/ui/chat/viewmodels/chat_viewmodel.dart';
+import 'package:app/ui/chat/widgets/git_changes_sheet.dart';
 import 'package:app/ui/home/widgets/session_tile.dart' show formatModelName;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -50,6 +51,10 @@ Future<void> showQuickActionsSheet(BuildContext context) {
             messenger: messenger,
             onSessionReset: chat.clearActiveSession,
             onSendPrompt: (t) => chat.sendMessage(t),
+            onOpenGitChanges: () {
+              if (!context.mounted) return;
+              showGitChangesSheet(context);
+            },
           ),
         ),
       );
@@ -68,12 +73,14 @@ class QuickActionsSheetBody extends StatefulWidget {
   /// [ChatViewModel.clearActiveSession].
   final Future<void> Function()? onSessionReset;
   final Future<void> Function(String text)? onSendPrompt;
+  final VoidCallback? onOpenGitChanges;
 
   const QuickActionsSheetBody({
     super.key,
     required this.messenger,
     this.onSessionReset,
     this.onSendPrompt,
+    this.onOpenGitChanges,
   });
   @override
   State<QuickActionsSheetBody> createState() => _QuickActionsSheetBodyState();
@@ -206,6 +213,18 @@ class _QuickActionsSheetBodyState extends State<QuickActionsSheetBody> {
               subtitle: 'Reload extensions, skills, and tools on the Pi.',
               busy: busyAction == ActionName.reloadPlugins,
               onTap: () => _onReloadPlugins(vm),
+            ),
+            const _Divider(),
+            _ActionTile(
+              key: const Key('qa-git-changes'),
+              icon: LucideIcons.fileDiff,
+              label: 'Git changes',
+              subtitle: 'Inspect modified files and unified diffs.',
+              busy: false,
+              onTap: () {
+                Navigator.of(context).pop();
+                widget.onOpenGitChanges?.call();
+              },
             ),
             const SizedBox(height: 18),
             ],

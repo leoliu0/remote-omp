@@ -46,6 +46,10 @@ and 27 (see [`plan/`](plan/) directory for design history).
 - Web client: on wide screens the chat has a session sidebar on the left with the same tabs, grouping and status badges as Home. One click switches session. It collapses to a rail of avatars, and that choice is remembered. Home keeps its tab after you leave a chat.
 ### Added
 
+#### Push notifications & mobile Git Diff viewer
+- Offline-aware webhook / `ntfy` push notifications in `pi-extension/` (`REMOTE_PI_NOTIFY_URL`, `REMOTE_PI_NOTIFY_TOKEN`, `REMOTE_PI_NOTIFY_MODE`, `/remote-pi notify`, `/remote-pi set-notify`, CLI `remote-pi notify`): notifies on turn completion (debounced & coalesced with interactive prompts), `ask_user` / `confirm` / `plan_review` requests (`needs_input`), and errors, gated by live relay phone presence (`OwnerPresence.anyOnline()`), with payload adapters for `ntfy`, Discord, Slack, and JSON webhooks.
+- Mobile Git Diff & Changed Files viewer (`git_status` / `git_diff` protocol frames, `pi-extension/src/actions/git_diff.ts`, and Flutter `GitChangesSheet` reachable from the chat top bar and Quick Actions): lists branch and modified/staged/untracked/renamed/conflicted files with line stats, renders syntax-colored unified diffs with Staged/Unstaged toggle and Copy, and rejects repo-root path escapes (`128 KB` / `200 files` cap).
+
 #### Always-on door (plan/67)
 - A registered daemon now stays up until you stop it on the machine. The supervisor restarts a daemon that crashes, is killed, or is closed with the app's Quit session (it returns as a fresh session). Retries back off to every 5 minutes and no longer stop after four attempts. `remote-pi daemon stop` during a retry wait now sticks, and a harness binary that was missing at boot is picked up once it is on PATH.
 - `remote-pi create <cwd> --harness omp` runs a daemon on omp. The default is `REMOTE_PI_HARNESS`, then the harness the command runs in, then `pi`.

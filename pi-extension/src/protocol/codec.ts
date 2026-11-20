@@ -24,6 +24,9 @@ const SERVER_TYPES = new Set<ServerMessage["type"]>([
   "file_cancel",
   // Plan/66 — omp model roles (reply + broadcast).
   "model_roles",
+  // Mobile Git Diff viewer.
+  "git_status_result",
+  "git_diff_result",
 ]);
 
 /** Frames the app (or web client) sends to the extension. */
@@ -52,6 +55,9 @@ const CLIENT_TYPES = new Set<ClientMessage["type"]>([
   // Plan/66 — omp model roles.
   "list_model_roles",
   "model_role_set",
+  // Mobile Git Diff viewer.
+  "git_status",
+  "git_diff",
 ]);
 
 export class DecodeError extends Error {

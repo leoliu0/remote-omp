@@ -138,6 +138,12 @@ abstract class IActionsRepository extends Repository {
   /// Stream of [activeRoomMeta] snapshots — deduplicated by equality
   /// so consumers don't rebuild on no-op emits.
   Stream<ActiveRoomMeta> get activeRoomMetaStream;
+
+  /// Fetches branch and changed files for the active session's git repo.
+  Future<GitStatusResult> gitStatus();
+
+  /// Fetches the unified diff for one repo-relative [path].
+  Future<GitDiffResult> gitDiff(String path, {bool staged = false});
 }
 
 class ActionsRepository extends Repository implements IActionsRepository {
@@ -253,6 +259,16 @@ class ActionsRepository extends Repository implements IActionsRepository {
         if (p == null) return;
         p.timeout.cancel();
         if (!p.completer.isCompleted) p.completer.complete(roles);
+      case GitStatusResult(:final inReplyTo):
+        final p = _pending.remove(inReplyTo);
+        if (p == null) return;
+        p.timeout.cancel();
+        if (!p.completer.isCompleted) p.completer.complete(msg);
+      case GitDiffResult(:final inReplyTo):
+        final p = _pending.remove(inReplyTo);
+        if (p == null) return;
+        p.timeout.cancel();
+        if (!p.completer.isCompleted) p.completer.complete(msg);
       default:
         // All other ServerMessages are owned by SessionRepository.
         break;
@@ -462,6 +478,16 @@ class ActionsRepository extends Repository implements IActionsRepository {
   @override
   Stream<List<WireModelRole>> get modelRolesStream =>
       _modelRolesController.stream;
+
+  @override
+  Future<GitStatusResult> gitStatus() =>
+      _dispatch<GitStatusResult>((id) => GitStatusRequest(id: id));
+
+  @override
+  Future<GitDiffResult> gitDiff(String path, {bool staged = false}) =>
+      _dispatch<GitDiffResult>(
+        (id) => GitDiffRequest(id: id, path: path, staged: staged),
+      );
 
   Future<T> _dispatch<T>(ClientMessage Function(String id) builder) async {
     final ch = _channel;

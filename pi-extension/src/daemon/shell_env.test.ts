@@ -32,12 +32,21 @@ describe("filterLoginShellEnv", () => {
         SHLVL: "2",
         _: "/usr/bin/node",
         REMOTE_PI_HOME: "/from-rc",
+        REMOTE_PI_NOTIFY_URL: "https://ntfy.sh/rc",
       },
-      { REMOTE_PI_HOME: "/from-service" },
+      {
+        REMOTE_PI_HOME: "/from-service",
+        REMOTE_PI_NOTIFY_URL: "https://ntfy.sh/svc",
+        REMOTE_PI_NOTIFY_TOKEN: "tok-svc",
+        REMOTE_PI_NOTIFY_MODE: "always",
+      },
     );
     expect(filtered).toEqual({
       API_KEY: "secret",
       REMOTE_PI_HOME: "/from-service",
+      REMOTE_PI_NOTIFY_URL: "https://ntfy.sh/svc",
+      REMOTE_PI_NOTIFY_TOKEN: "tok-svc",
+      REMOTE_PI_NOTIFY_MODE: "always",
     });
   });
 });

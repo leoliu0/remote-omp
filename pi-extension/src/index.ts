@@ -114,6 +114,7 @@ import {
   handleReloadPlugins,
   type ActionCtx,
 } from "./actions/handlers.js";
+import { handleGitDiff, handleGitStatus } from "./actions/git_diff.js";
 import { ensureModelRegistry } from "./actions/registry.js";
 import {
   handleListModelRoles,
@@ -154,11 +155,16 @@ import { hostname, tmpdir, homedir } from "node:os";
 import {
   kDefaultRelayUrl,
   resolveRelayUrl,
+  resolveNotifyConfig,
   saveConfig,
   isValidRelayUrl,
+  isValidNotifyUrl,
+  isValidNotifyMode,
   isWebSocketScheme,
   toWebSocketUrl,
+  type NotifyMode,
 } from "./config.js";
+import { cleanNotifySnippet, PushNotifier } from "./notify.js";
 import { Box, Container, Image, Text } from "@earendil-works/pi-tui";
 
 // ── State machine ─────────────────────────────────────────────────────────────
@@ -248,6 +254,13 @@ const _fileSender = new FileSender({
  *  relay drops frames for an offline peer silently, and `_activePeers` rarely
  *  sees a detach, so `send_to_phone` checks this before and during a send. */
 const _ownerPresence = new OwnerPresence((peer, online) => _fileSender.onPresence(peer, online));
+
+/** Offline-aware webhook / ntfy push notifier keyed off `_ownerPresence`. */
+const _notifier = new PushNotifier({
+  getConfig: resolveNotifyConfig,
+  isPhoneOnline: () => _ownerPresence.anyOnline(),
+});
+let _lastNotifiedTurnKey: string | null = null;
 
 /** (Re)subscribes this relay connection to presence of every paired owner
  *  (peers.json) and every attached one. Subscriptions belong to the
@@ -1424,8 +1437,33 @@ function _isBusyForQueueDrain(): boolean {
   return _turnActive || _agentActive || _currentTurnId !== null;
 }
 
+function _extractLastTurnNotification(): { id: string; snippet: string } | null {
+  for (let i = _messageBuffer.length - 1; i >= 0; i--) {
+    const last = _messageBuffer[i];
+    if (!last) continue;
+    if (last.role === "user") break;
+    if (last.role !== "assistant") continue;
+    const stopReason = (last as { stopReason?: unknown }).stopReason;
+    if (stopReason === "aborted" || stopReason === "error") return null;
+    const cwd = _liveSession().cwd;
+    const fullText = _extractAssistantText(last.content, cwd);
+    const snippet = cleanNotifySnippet(fullText, 240);
+    const hasToolCalls =
+      Array.isArray(last.content) &&
+      last.content.some((b) => Boolean(b && typeof b === "object" && (b as { type?: unknown }).type === "toolCall"));
+    if (!snippet && !hasToolCalls) return null;
+    const turnId = _currentTurnId ?? `msg_${last.timestamp ?? i}`;
+    const key = `${turnId}:${i}:${last.timestamp ?? 0}`;
+    if (key === _lastNotifiedTurnKey) return null;
+    _lastNotifiedTurnKey = key;
+    return { id: key, snippet: snippet || "Finished turn" };
+  }
+  return null;
+}
+
 function _maybeFinalizeTurn(): void {
   if (_turnActive || _agentActive) return;
+  const turnNote = _extractLastTurnNotification();
   if (_anyPeerActive()) {
     const turnId = _currentTurnId ?? "turn";
     // Close a dangling <think> wrapper before the client finalizes the turn.
@@ -1448,8 +1486,18 @@ function _maybeFinalizeTurn(): void {
         }
         break;
       }
-      _currentTurnId = null;
     }
+  }
+  _currentTurnId = null;
+  if (turnNote) {
+    const session = _effectiveDisplayName();
+    _notifier.notifyTurnDone({
+      id: turnNote.id,
+      title: `${session}: Done`,
+      body: turnNote.snippet,
+      session,
+      cwd: _liveSession().cwd,
+    });
   }
   _maybeDrainQueuedItem();
 }
@@ -2167,6 +2215,39 @@ export function _hasActivePeerForTest(appPeerIdStd: string): boolean {
  * use this — they go to the sender channel directly.
  */
 function _broadcastToActive(msg: ServerMessage): void {
+  if (msg.type === "extension_ui_request" && msg.method !== "notify") {
+    const session = _effectiveDisplayName();
+    const label = "plan" in msg && msg.plan
+      ? "Plan review ready"
+      : msg.ask
+        ? "Question needs input"
+        : msg.method === "confirm"
+          ? "Confirmation needed"
+          : "Input needed";
+    const rawBody = "plan" in msg && msg.plan?.title
+      ? msg.plan.title
+      : msg.ask?.questions?.[0]?.prompt
+        || msg.ask?.questions?.[0]?.label
+        || msg.ask?.title
+        || ("message" in msg && msg.message ? msg.message : "")
+        || ("title" in msg ? msg.title : "");
+    _notifier.notifyNeedsInput({
+      id: msg.id,
+      title: `${session}: ${label}`,
+      body: cleanNotifySnippet(rawBody, 240) || label,
+      session,
+      cwd: _liveSession().cwd,
+    });
+  } else if (msg.type === "error" && !msg.in_reply_to) {
+    const session = _effectiveDisplayName();
+    _notifier.notifyError({
+      id: `err:${Date.now()}:${msg.code}`,
+      title: `${session}: Error`,
+      body: cleanNotifySnippet(msg.message || msg.code, 240) || msg.code,
+      session,
+      cwd: _liveSession().cwd,
+    });
+  }
   for (const ch of _activePeers.values()) {
     try { ch.send(msg); } catch { /* best-effort per channel */ }
   }
@@ -2226,6 +2307,10 @@ function _displayName(cwd: string): string {
   if (_meshNode) return _meshNode.name();
   const local = loadLocalConfig(cwd);
   return local.agent_name || defaultAgentName(cwd);
+}
+
+function _effectiveDisplayName(): string {
+  return _displayName(_liveSession().cwd);
 }
 
 // ── Peer lookup helpers ───────────────────────────────────────────────────────
@@ -2390,6 +2475,7 @@ function _goIdle(byeReason?: import("./protocol/types.js").ByeReason): void {
   _pendingReceivedImagePreviews.length = 0;
   _pendingSteers = [];
   _lastConsumedSteerText = null;
+  _notifier.dispose();
   _resetQueuedItems();
 
   // Invalidate async producers and bridge ownership before closing the host
@@ -3479,14 +3565,28 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
     // assistant message with stopReason "error" + an `errorMessage` (pi-ai).
     // `error` is an existing ServerMessage the app already renders — no
     // protocol/app change. `in_reply_to` ties it to the turn the app awaits.
-    if (m.role === "assistant" && m.stopReason === "error" && _anyPeerActive()) {
+    if (m.role === "assistant" && m.stopReason === "error") {
       const message = typeof m.errorMessage === "string" && m.errorMessage
         ? m.errorMessage
         : "Provider error";
-      const errMsg: ServerMessage = _currentTurnId
-        ? { type: "error", in_reply_to: _currentTurnId, code: "provider_error", message }
-        : { type: "error", code: "provider_error", message };
-      _broadcastToActive(errMsg);
+      const hadTurnId = Boolean(_currentTurnId);
+      if (_anyPeerActive()) {
+        const errMsg: ServerMessage = _currentTurnId
+          ? { type: "error", in_reply_to: _currentTurnId, code: "provider_error", message }
+          : { type: "error", code: "provider_error", message };
+        _broadcastToActive(errMsg);
+      }
+      // `_broadcastToActive` already notifies on un-replied `error` frames.
+      if (!_anyPeerActive() || hadTurnId) {
+        const session = _effectiveDisplayName();
+        _notifier.notifyError({
+          id: _currentTurnId ? `provider:${_currentTurnId}` : `provider:${Date.now()}:${message.slice(0, 32)}`,
+          title: `${session}: Error`,
+          body: cleanNotifySnippet(message, 240) || "Provider error",
+          session,
+          cwd: _liveSession().cwd,
+        });
+      }
     }
   });
 
@@ -3799,6 +3899,7 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
     // module instances create their bridge in the factory.
     _extensionUiBridge?.dispose();
     _extensionUiBridge = null;
+    _notifier.dispose();
     // Drop captured ctxs immediately. On module-reuse hosts the same instance
     // survives session replacement; leaving `_lastCtx` pointing at the now-
     // stale command ctx is what crashed pi in _refreshFooter on peer reconnect
@@ -3850,6 +3951,8 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
         "pair", "devices", "revoke",
         "rename",
         "set-relay",
+        "notify", "notify status", "notify set", "notify mode", "notify test", "notify clear",
+        "set-notify",
         "relay", "relay start", "relay stop", "relay status", "relay url",
         "config",
         "peers",  // plan/25 Wave D — local + cross-PC inventory
@@ -3877,6 +3980,8 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
       else if (sub === "devices")                { await _cmdList(ctx); }
       else if (sub.startsWith("revoke"))         { await _cmdRevoke(sub.slice("revoke".length).trim(), ctx); }
       else if (sub.startsWith("set-relay"))      { _cmdSetRelay(sub.slice("set-relay".length).trim(), ctx); }
+      else if (sub === "notify" || sub.startsWith("notify ")) { await _cmdNotify(sub.slice("notify".length).trim(), ctx); }
+      else if (sub.startsWith("set-notify"))     { await _cmdNotify(`set ${sub.slice("set-notify".length).trim()}`.trim(), ctx); }
       else if (sub === "relay" || sub.startsWith("relay ")) { await _cmdRelay(sub.slice("relay".length).trim(), ctx); }
       else if (sub === "config")                 { _cmdConfig(ctx); }
       else if (sub === "rename" || sub.startsWith("rename ")) { await _renameAgent(sub.slice("rename".length).trim()); }
@@ -3909,6 +4014,8 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
         "pair", "devices", "revoke",
         "rename",
         "set-relay",
+        "notify", "notify status", "notify set", "notify mode", "notify test", "notify clear",
+        "set-notify",
         "relay", "relay start", "relay stop", "relay status", "relay url",
         "config",
         "peers",
@@ -3934,6 +4041,8 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
       else if (sub === "devices")                { await _cmdList(ctx); }
       else if (sub.startsWith("revoke"))         { await _cmdRevoke(sub.slice("revoke".length).trim(), ctx); }
       else if (sub.startsWith("set-relay"))      { _cmdSetRelay(sub.slice("set-relay".length).trim(), ctx); }
+      else if (sub === "notify" || sub.startsWith("notify ")) { await _cmdNotify(sub.slice("notify".length).trim(), ctx); }
+      else if (sub.startsWith("set-notify"))     { await _cmdNotify(`set ${sub.slice("set-notify".length).trim()}`.trim(), ctx); }
       else if (sub === "relay" || sub.startsWith("relay ")) { await _cmdRelay(sub.slice("relay".length).trim(), ctx); }
       else if (sub === "config")                 { _cmdConfig(ctx); }
       else if (sub === "rename" || sub.startsWith("rename ")) { await _renameAgent(sub.slice("rename".length).trim()); }
@@ -3971,6 +4080,8 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
     handler: async (args, ctx) => { _lastCtx = ctx; await _cmdRevoke(args.trim(), ctx); },
   });
   pi.registerCommand("remote-pi set-relay", { description: "Persist a new relay URL to user config", handler: async (args, ctx) => { _lastCtx = ctx; _cmdSetRelay(args.trim(), ctx); } });
+  pi.registerCommand("remote-pi notify", { description: "Configure webhook / ntfy push notifications: status | set <url> | mode | test | clear", handler: async (args, ctx) => { _lastCtx = ctx; await _cmdNotify(args.trim(), ctx); } });
+  pi.registerCommand("remote-pi set-notify", { description: "Persist a webhook / ntfy URL to user config", handler: async (args, ctx) => { _lastCtx = ctx; await _cmdNotify(`set ${args.trim()}`.trim(), ctx); } });
   pi.registerCommand("remote-pi config", { description: "Show the effective relay URL and where it came from", handler: async (_, ctx) => { _lastCtx = ctx; _cmdConfig(ctx); } });
   pi.registerCommand("remote-pi relay", { description: "Relay control: start | stop | status | url <http(s) url> (no arg toggles)", handler: async (args, ctx) => { _lastCtx = ctx; await _cmdRelay(args.trim(), ctx); } });
 
@@ -3983,6 +4094,8 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
   pi.registerCommand("rc devices",  { description: "List paired mobile devices", handler: async (_, ctx) => { _lastCtx = ctx; await _cmdList(ctx); } });
   pi.registerCommand("rc rename",   { description: "Rename this agent in the current session (updates mesh + relay room)", handler: async (args, ctx) => { _lastCtx = ctx; await _renameAgent(args.trim()); } });
   pi.registerCommand("rc set-relay", { description: "Persist a new relay URL to user config", handler: async (args, ctx) => { _lastCtx = ctx; _cmdSetRelay(args.trim(), ctx); } });
+  pi.registerCommand("rc notify",   { description: "Configure webhook / ntfy push notifications: status | set <url> | mode | test | clear", handler: async (args, ctx) => { _lastCtx = ctx; await _cmdNotify(args.trim(), ctx); } });
+  pi.registerCommand("rc set-notify", { description: "Persist a webhook / ntfy URL to user config", handler: async (args, ctx) => { _lastCtx = ctx; await _cmdNotify(`set ${args.trim()}`.trim(), ctx); } });
   pi.registerCommand("rc config",   { description: "Show the effective relay URL and where it came from", handler: async (_, ctx) => { _lastCtx = ctx; _cmdConfig(ctx); } });
   pi.registerCommand("rc relay",    { description: "Relay control: start | stop | status | url <http(s) url> (no arg toggles)", handler: async (args, ctx) => { _lastCtx = ctx; await _cmdRelay(args.trim(), ctx); } });
   pi.registerCommand("rc peers",    { description: "List local + cross-PC mesh peers, grouped by PC label", handler: async (_, ctx) => { _lastCtx = ctx; await _cmdPeers(ctx); } });
@@ -4859,6 +4972,119 @@ function _cmdSetRelay(arg: string, ctx: Pick<ExtensionContext, "ui">): void {
   );
 }
 
+function _formatNotifyStatusLines(): string {
+  const cfg = resolveNotifyConfig();
+  const urlPart = cfg.url ? `${cfg.url} (source: ${cfg.source})` : "not configured";
+  const tokenPart = cfg.token ? "set" : "none";
+  const phonePart = _ownerPresence.anyOnline() ? "online" : "offline/unknown";
+  return `  Notify URL: ${urlPart}\n  Notify mode: ${cfg.mode}, token: ${tokenPart}, phone: ${phonePart}`;
+}
+
+async function _cmdNotify(arg: string, ctx: Pick<ExtensionContext, "ui">): Promise<void> {
+  const raw = arg.trim();
+  const tokens = raw ? raw.split(/\s+/) : [];
+  const sub = (tokens[0] ?? "status").toLowerCase();
+
+  if (sub === "status" || raw === "") {
+    ctx.ui.notify(`[remote-pi]\n${_formatNotifyStatusLines()}`, "info");
+    return;
+  }
+
+  if (sub === "set") {
+    const rest = tokens.slice(1);
+    let url: string | undefined;
+    let token: string | undefined;
+    let mode: NotifyMode | undefined;
+    for (let i = 0; i < rest.length; i++) {
+      const tok = rest[i]!;
+      if (tok === "--token") {
+        const next = rest[i + 1];
+        if (!next || next.startsWith("--")) {
+          ctx.ui.notify("[remote-pi] --token requires a value", "error");
+          return;
+        }
+        token = next;
+        i++;
+      } else if (tok.startsWith("--token=")) {
+        token = tok.slice("--token=".length);
+      } else if (tok === "--mode") {
+        const next = (rest[i + 1] ?? "").toLowerCase();
+        if (!isValidNotifyMode(next)) {
+          ctx.ui.notify("[remote-pi] Invalid mode. Use: offline | always | off", "error");
+          return;
+        }
+        mode = next;
+        i++;
+      } else if (tok.startsWith("--mode=")) {
+        const next = tok.slice("--mode=".length).toLowerCase();
+        if (!isValidNotifyMode(next)) {
+          ctx.ui.notify("[remote-pi] Invalid mode. Use: offline | always | off", "error");
+          return;
+        }
+        mode = next;
+      } else if (!url && !tok.startsWith("-")) {
+        url = tok;
+      } else {
+        ctx.ui.notify(`[remote-pi] Unknown argument: ${tok}`, "warning");
+        return;
+      }
+    }
+    if (!url || !isValidNotifyUrl(url)) {
+      ctx.ui.notify(
+        "[remote-pi] Usage: /remote-pi notify set <http(s)://url> [--token <tok>] [--mode offline|always|off]",
+        "error",
+      );
+      return;
+    }
+    saveConfig({
+      notify_url: url,
+      ...(token !== undefined ? { notify_token: token } : {}),
+      ...(mode !== undefined ? { notify_mode: mode } : {}),
+    });
+    const envActive = process.env["REMOTE_PI_NOTIFY_URL"]?.trim();
+    const envHint = envActive ? ` (note: REMOTE_PI_NOTIFY_URL env is currently active)` : "";
+    ctx.ui.notify(
+      `[remote-pi] Notify URL set to ${url}${mode ? ` (mode=${mode})` : ""}.${envHint}`,
+      "info",
+    );
+    return;
+  }
+
+  if (sub === "mode") {
+    const next = (tokens[1] ?? "").toLowerCase();
+    if (!isValidNotifyMode(next)) {
+      ctx.ui.notify("[remote-pi] Usage: /remote-pi notify mode <offline|always|off>", "warning");
+      return;
+    }
+    saveConfig({ notify_mode: next });
+    ctx.ui.notify(`[remote-pi] Notify mode set to ${next}.`, "info");
+    return;
+  }
+
+  if (sub === "off" || sub === "clear") {
+    saveConfig({ notify_url: undefined, notify_token: undefined });
+    const envActive = process.env["REMOTE_PI_NOTIFY_URL"]?.trim();
+    const envHint = envActive ? " (REMOTE_PI_NOTIFY_URL env is still set)" : "";
+    ctx.ui.notify(`[remote-pi] Notifications cleared.${envHint}`, "info");
+    return;
+  }
+
+  if (sub === "test") {
+    const res = await _notifier.sendTest(_effectiveDisplayName(), _liveSession().cwd);
+    if (res.ok) {
+      ctx.ui.notify(`[remote-pi] Test notification sent (HTTP ${res.status ?? 200}).`, "info");
+    } else {
+      ctx.ui.notify(`[remote-pi] Test notification failed: ${res.error ?? `HTTP ${res.status}`}`, "error");
+    }
+    return;
+  }
+
+  ctx.ui.notify(
+    "[remote-pi] Usage: /remote-pi notify [status | set <url> [--token <tok>] [--mode offline|always|off] | mode <offline|always|off> | test | clear]",
+    "warning",
+  );
+}
+
 /**
  * `/remote-pi config` — print the effective relay URL and where it came from.
  *
@@ -4877,7 +5103,10 @@ function _cmdConfig(ctx: Pick<ExtensionContext, "ui">): void {
   const live = _relayUrl && _relayUrl !== url
     ? `\n  ⚠ Live connection still on ${_relayUrl} — run /remote-pi relay stop then /remote-pi relay start to apply.`
     : "";
-  ctx.ui.notify(`[remote-pi]\n  Relay URL: ${url}\n  Source: ${source} — ${origin}${live}`, "info");
+  ctx.ui.notify(
+    `[remote-pi]\n  Relay URL: ${url}\n  Source: ${source} — ${origin}${live}\n${_formatNotifyStatusLines()}`,
+    "info",
+  );
 }
 
 /**
@@ -6510,6 +6739,28 @@ export function _routeClientMessageFrom(
       );
       break;
     }
+    case "git_status": {
+      void handleGitStatus(_liveSession().cwd, sender, msg).catch((err) => {
+        sender.send({
+          type: "error",
+          in_reply_to: msg.id,
+          code: "internal_error",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
+      break;
+    }
+    case "git_diff": {
+      void handleGitDiff(_liveSession().cwd, sender, msg).catch((err) => {
+        sender.send({
+          type: "error",
+          in_reply_to: msg.id,
+          code: "internal_error",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
+      break;
+    }
   }
 }
 /**
@@ -6625,6 +6876,7 @@ function _resetSessionForNew(inReplyTo: string): void {
   _messageBuffer = [];
   _pendingSteers = [];
   _lastConsumedSteerText = null;
+  _lastNotifiedTurnKey = null;
   _resetQueuedItems({ broadcast: true });
   _sessionStartedAt = Date.now();
   _broadcastToActive({
@@ -7384,6 +7636,12 @@ if (_isDirectRun()) {
       saveConfig({ relay: raw });
       console.log(`Relay set to ${raw}`);
     }
+  } else if (subcmd === "notify") {
+    const joined = cliArgs.join(" ").trim();
+    await _cmdNotify(joined, _cliUiCtx());
+  } else if (subcmd === "set-notify") {
+    const joined = cliArgs.join(" ").trim();
+    await _cmdNotify(`set ${joined}`.trim(), _cliUiCtx());
   } else if (subcmd === "create") {
     // Standalone: `remote-pi create <cwd> [--name "X"] [--harness pi|omp]`.
     // Re-add quotes around any arg containing whitespace so `parseCreateArgs`
@@ -7482,6 +7740,7 @@ if (_isDirectRun()) {
       "",
       "Config:",
       "  set-relay <url>                 Set the relay URL (http:// or https://)",
+      "  notify [status|set|mode|test|clear]  Configure push webhook / ntfy alerts",
       "",
       "Agent mesh:",
       "  peers                           List agents on the local + cross-PC mesh",
