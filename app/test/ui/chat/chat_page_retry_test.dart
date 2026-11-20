@@ -62,6 +62,10 @@ class _FakeChatViewModel extends ChangeNotifier implements ChatViewModel {
   @override
   bool get isRoomLive => true;
   @override
+  bool get canReviveActiveRoom => false;
+  @override
+  bool get isReviving => false;
+  @override
   bool get isWorking => false;
   @override
   PeerRecord? get activePeer => _peer;

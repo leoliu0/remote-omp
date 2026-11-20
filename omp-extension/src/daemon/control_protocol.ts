@@ -47,7 +47,8 @@ export type ControlRequest =
   | { op: "register"; cwd: string; name?: string }
   | { op: "unregister"; id: string }
   // Plan/68: run a session the registry does not know (see Supervisor._opSpawnEphemeral).
-  | { op: "spawn_ephemeral"; cwd: string; name: string }
+  // `resume`: pass `--continue` to resume the folder's latest session instead of starting fresh.
+  | { op: "spawn_ephemeral"; cwd: string; name: string; resume?: boolean }
   // ── cron (plan/39) ──
   | { op: "cron_add"; daemon_id: string; schedule: string; prompt: string; tz?: string; skip_if_busy?: boolean; wake?: boolean; catchup?: boolean }
   | { op: "cron_list" }

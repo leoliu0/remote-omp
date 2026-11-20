@@ -163,11 +163,13 @@ function writeConfigFile(p: string, cfg: LocalConfig): string | null {
   }
 }
 
-export function loadLocalConfig(cwd: string): LocalConfig {
+export function loadLocalConfig(cwd: string, opts?: { ignoreDirectConfig?: boolean }): LocalConfig {
   // Precedence: inline `REMOTE_OMP_DIRECT_CONFIG` env wins over the files. An
   // unset/empty/malformed env falls through to the on-disk config.json.
-  const direct = directConfig();
-  if (direct) return direct;
+  if (!opts?.ignoreDirectConfig) {
+    const direct = directConfig();
+    if (direct) return direct;
+  }
 
   const p = pathFor(cwd);
   if (existsSync(p)) return readConfigFile(p) ?? {};

@@ -291,3 +291,15 @@ describe.skipIf(process.platform === "win32")("Supervisor — `start` with fresh
     expect(spawns()[1]).toContain("--continue");
   });
 });
+
+describe.skipIf(process.platform === "win32")("Supervisor — revive ephemeral session (`resume: true`)", () => {
+  test("passes --continue when `resume: true` while leaving default spawn_ephemeral fresh", async () => {
+    await boot();
+    const reply = await callSupervisor({ op: "spawn_ephemeral", cwd, name: "revived", resume: true });
+    expect(reply).toMatchObject({ cwd: realpathSync(cwd), name: "revived" });
+    await spawned(1);
+    expect(spawns()[0]).toContain("--mode rpc");
+    expect(spawns()[0]).toContain("--allow-home");
+    expect(spawns()[0]).toContain("--continue");
+  });
+});

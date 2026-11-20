@@ -62,11 +62,15 @@ abstract class NewSessionRequester {
   Future<DirsListResult> listDirs({String? path});
 
   /// Starts an omp session in [cwd]. [persistent] registers an always-on
-  /// daemon instead of a session that ends when its process does.
+  /// daemon instead of a session that ends when its process does. When
+  /// [resume] is true, revives an offline session (`--continue`) targeting
+  /// [roomId] when supplied.
   Future<SpawnResult> spawn({
     required String cwd,
     String? name,
     bool persistent = false,
+    bool resume = false,
+    String? roomId,
   });
 
   /// Waits until the session [result] describes is live as a room of the PC,
@@ -74,6 +78,7 @@ abstract class NewSessionRequester {
   Future<RoomInfo?> awaitRoom(
     SpawnResult result, {
     Duration timeout = const Duration(seconds: 20),
+    String? expectedRoomId,
   });
 }
 
@@ -97,12 +102,16 @@ class NewSessionRepository implements NewSessionRequester {
     required String cwd,
     String? name,
     bool persistent = false,
+    bool resume = false,
+    String? roomId,
   }) => _request<SpawnResult>(
     (id) => SpawnSessionRequest(
       id: id,
       cwd: cwd,
       name: name,
       persistent: persistent,
+      resume: resume,
+      roomId: roomId,
     ),
   );
 
@@ -182,8 +191,16 @@ class NewSessionRepository implements NewSessionRequester {
   Future<RoomInfo?> awaitRoom(
     SpawnResult result, {
     Duration timeout = const Duration(seconds: 20),
+    String? expectedRoomId,
   }) async {
     RoomInfo? find() {
+      if (expectedRoomId != null && expectedRoomId.isNotEmpty) {
+        for (final r in _conn.roomsFor(epk)) {
+          if (r.roomId == expectedRoomId && _conn.isRoomLive(epk, r.roomId)) {
+            return r;
+          }
+        }
+      }
       final want = _trimSlash(result.cwd);
       final matches = [
         for (final r in _conn.roomsFor(epk))

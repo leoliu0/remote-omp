@@ -24,6 +24,8 @@ class HomeViewModel extends ViewModel<HomeState> {
   final PairingStorage _storage;
   final Preferences _prefs;
   final ConnectionManager _conn;
+  final NewSessionRequester Function(String epk)? _requesterFactory;
+  final Set<String> _revivingKeys = {};
   StreamSubscription<Map<String, PresenceState>>? _presenceSub;
   StreamSubscription<Map<String, List<RoomInfo>>>? _roomsSub;
   StreamSubscription<ConnectionStatus>? _statusSub;
@@ -34,8 +36,13 @@ class HomeViewModel extends ViewModel<HomeState> {
   bool _relayUnreachable = false;
   bool _disposed = false;
 
-  HomeViewModel(this._storage, this._prefs, this._conn)
-    : super(const HomeLoading()) {
+  HomeViewModel(
+    this._storage,
+    this._prefs,
+    this._conn, {
+    NewSessionRequester Function(String epk)? requesterFactory,
+  }) : _requesterFactory = requesterFactory,
+       super(const HomeLoading()) {
     _relayConnected = _conn.status is StatusOnline;
     _relayUnreachable = _conn.status is StatusRetrying;
     _load();
@@ -280,7 +287,74 @@ class HomeViewModel extends ViewModel<HomeState> {
 
   /// What the New session sheet browses and spawns through for [epk]'s PC.
   NewSessionRequester newSessionRequester(String epk) =>
-      NewSessionRepository(_conn, epk: epk);
+      _requesterFactory?.call(epk) ?? NewSessionRepository(_conn, epk: epk);
+
+  static String _reviveKey(String epk, String roomId) =>
+      '${toStandardB64(epk)}:$roomId';
+
+  static String _trimSlash(String path) =>
+      path.length > 1 && (path.endsWith('/') || path.endsWith(r'\'))
+      ? path.substring(0, path.length - 1)
+      : path;
+
+  /// `true` when an offline [room] on [epk]'s PC can be revived from Home:
+  /// the room itself is offline/idle, [epk] has another live session on that
+  /// PC to relay the request, `room.cwd` is known, and no live room already
+  /// owns that folder.
+  bool canReviveSession(String epk, RoomInfo room) {
+    final cwd = room.cwd;
+    if (cwd == null || cwd.isEmpty) return false;
+    if (isRoomLive(epk, room.roomId) || isRoomWorking(epk, room.roomId)) {
+      return false;
+    }
+    if (!canStartSession(epk)) return false;
+    final want = _trimSlash(cwd);
+    for (final r in _conn.roomsFor(epk)) {
+      if (r.cwd != null &&
+          _trimSlash(r.cwd!) == want &&
+          (_conn.isRoomLive(epk, r.roomId) ||
+              _conn.isRoomWorking(epk, r.roomId))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// `true` while a revive request for `(epk, roomId)` is in flight.
+  bool isReviving(String epk, String roomId) =>
+      _revivingKeys.contains(_reviveKey(epk, roomId));
+
+  /// Revives an offline [room] on [epk]'s PC (`omp --continue`) and awaits its
+  /// live announcement. Returns `null` if already reviving or `room.cwd` is
+  /// missing; rethrows [NewSessionFailure] so the UI can surface errors.
+  Future<({SpawnResult spawn, RoomInfo? room})?> reviveSession(
+    String epk,
+    RoomInfo room,
+  ) async {
+    final cwd = room.cwd;
+    if (cwd == null || cwd.isEmpty) return null;
+    final key = _reviveKey(epk, room.roomId);
+    if (_revivingKeys.contains(key)) return null;
+    _revivingKeys.add(key);
+    notifyListeners();
+    try {
+      final requester = newSessionRequester(epk);
+      final spawn = await requester.spawn(
+        cwd: cwd,
+        name: room.name,
+        resume: true,
+        roomId: room.roomId,
+      );
+      final liveRoom = await requester.awaitRoom(
+        spawn,
+        expectedRoomId: room.roomId,
+      );
+      return (spawn: spawn, room: liveRoom);
+    } finally {
+      _revivingKeys.remove(key);
+      if (!_disposed) notifyListeners();
+    }
+  }
 
   @override
   void dispose() {

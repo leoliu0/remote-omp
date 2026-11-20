@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:app/data/actions/actions_repository.dart';
+import 'package:app/data/actions/new_session_repository.dart';
 import 'package:app/data/local/records/message_record.dart';
 import 'package:app/data/local/records/runtime_record.dart';
 import 'package:app/data/preferences/preferences.dart';
@@ -8,6 +9,7 @@ import 'package:app/data/repositories/session_read_repository.dart';
 import 'package:app/data/sync/sync_events.dart';
 import 'package:app/data/sync/sync_service.dart';
 import 'package:app/data/transport/connection_manager.dart';
+import 'package:app/data/transport/epk_encoding.dart';
 import 'package:app/domain/contracts/file_actions.dart';
 import 'package:app/domain/entities/received_file.dart';
 import 'package:app/domain/repositories/received_files_repository.dart';
@@ -31,6 +33,7 @@ class ChatViewModel extends ViewModel<ChatState> {
   final Preferences _prefs;
   final PairingStorage _storage;
   final IActionsRepository _actions;
+  final NewSessionRequester Function(String epk)? _newSessionRequester;
 
   /// Plan 65 — files the agent sent to this phone + their card actions.
   /// Optional so screens/tests without the feature keep working.
@@ -57,6 +60,8 @@ class ChatViewModel extends ViewModel<ChatState> {
   String _activeRoomId = 'main';
   bool _bootstrapping = true;
   bool _disposed = false;
+  bool _reviving = false;
+  bool _wasRoomLive = false;
 
   List<ChatMessage> _messages = const [];
   List<MessageRecord> _records = const [];
@@ -94,8 +99,10 @@ class ChatViewModel extends ViewModel<ChatState> {
     this._actions, {
     ReceivedFilesRepository? files,
     FileActions? fileActions,
+    NewSessionRequester Function(String epk)? newSessionRequester,
   }) : _files = files,
        _fileActions = fileActions,
+       _newSessionRequester = newSessionRequester,
        super(const ChatReady(messages: [])) {
     // Plan/32f — do NOT seed _streaming/_working from the shared SyncService
     // here: it may still be bound to the PREVIOUS chat (this VM is recreated
@@ -114,7 +121,7 @@ class ChatViewModel extends ViewModel<ChatState> {
     // The slash menu reads the lists at build time; `skills_list` is the last
     // frame of a sync reply, so repaint when it lands.
     _skillsSub = _sync.dynamicSkillsStream.listen((_) => notifyListeners());
-    _roomsSub = _conn.roomsStream.listen((_) => _recompute());
+    _roomsSub = _conn.roomsStream.listen((_) => _onRooms());
     _statusSub = _conn.statusStream.listen(_onStatus);
     // ignore: discarded_futures
     _bootstrap();
@@ -237,6 +244,7 @@ class ChatViewModel extends ViewModel<ChatState> {
     _filesSub = _files?.watchSession(epk, roomId).listen(_onFiles);
 
     _bootstrapping = false;
+    _wasRoomLive = isRoomLive;
     _sync.requestSync();
     _recompute();
 
@@ -314,6 +322,21 @@ class ChatViewModel extends ViewModel<ChatState> {
   void _onRuntime(RuntimeRecord r) {
     _runtime = r;
     _connectionResolved = true;
+    _recompute();
+  }
+
+  void _onRooms() {
+    final nowLive = isRoomLive;
+    if (nowLive && !_wasRoomLive) {
+      _peerOfflineReason = null;
+      if (_conn.activeRoomId != _activeRoomId) {
+        _conn.switchRoom(_activeRoomId);
+      }
+      if (_conn.status is StatusOnline) {
+        _sync.requestSync();
+      }
+    }
+    _wasRoomLive = nowLive;
     _recompute();
   }
 
@@ -549,6 +572,117 @@ class ChatViewModel extends ViewModel<ChatState> {
     // status update inline as the connection comes back.
     _recompute();
     await _conn.switchTo(peer);
+  }
+
+  static String _trimSlash(String path) =>
+      path.length > 1 && (path.endsWith('/') || path.endsWith(r'\'))
+      ? path.substring(0, path.length - 1)
+      : path;
+
+  bool get isReviving => _reviving;
+
+  /// `true` when this chat is offline, its folder is known, the PC itself is
+  /// reachable through another live session (not owning this folder), and
+  /// pairing hasn't been revoked.
+  bool get canReviveActiveRoom {
+    final peer = _activePeer;
+    final room = activeRoom;
+    final cwd = room?.cwd;
+    if (peer == null || room == null || cwd == null || cwd.isEmpty) {
+      return false;
+    }
+    if (_pairingRevoked) return false;
+    if (_conn.status is! StatusOnline) return false;
+    final active = _conn.activePeer?.remoteEpk;
+    if (active == null ||
+        toStandardB64(active) != toStandardB64(peer.remoteEpk)) {
+      return false;
+    }
+    if (isRoomLive || isWorking) return false;
+    final want = _trimSlash(cwd);
+    var hasOtherLiveRoom = false;
+    for (final r in _conn.roomsFor(peer.remoteEpk)) {
+      final live =
+          _conn.isRoomLive(peer.remoteEpk, r.roomId) ||
+          _conn.isRoomWorking(peer.remoteEpk, r.roomId);
+      if (!live) continue;
+      if (r.cwd != null && _trimSlash(r.cwd!) == want) return false;
+      hasOtherLiveRoom = true;
+    }
+    return hasOtherLiveRoom;
+  }
+
+  /// Revives the currently open offline room via `spawn_session(resume: true)`
+  /// and reconnects this chat to it. Returns `null` when live, or a short
+  /// user-facing message on timeout/error.
+  Future<String?> reviveActiveRoom() async {
+    if (_reviving) return null;
+    final peer = _activePeer;
+    final room = activeRoom;
+    final cwd = room?.cwd;
+    if (peer == null || room == null || cwd == null || cwd.isEmpty) {
+      return null;
+    }
+    _reviving = true;
+    notifyListeners();
+    try {
+      final requester =
+          _newSessionRequester?.call(peer.remoteEpk) ??
+          NewSessionRepository(_conn, epk: peer.remoteEpk);
+      final spawn = await requester.spawn(
+        cwd: cwd,
+        name: room.name,
+        resume: true,
+        roomId: room.roomId,
+      );
+      final liveRoom = await requester.awaitRoom(
+        spawn,
+        expectedRoomId: room.roomId,
+      );
+      if (_disposed) return null;
+      if (liveRoom == null) {
+        return 'Reviving "${spawn.name}"… It will connect shortly.';
+      }
+      _peerOfflineReason = null;
+      if (liveRoom.roomId != _activeRoomId) {
+        _activeRoomId = liveRoom.roomId;
+        _wasRoomLive = true;
+        _conn.switchRoom(liveRoom.roomId);
+        await _prefs.setSelectedRoom(
+          epk: peer.remoteEpk,
+          roomId: liveRoom.roomId,
+        );
+        await _sync.activate(peer.remoteEpk, liveRoom.roomId);
+        if (_disposed) return null;
+        await _msgsSub?.cancel();
+        await _runtimeSub?.cancel();
+        await _filesSub?.cancel();
+        _msgsSub = _read
+            .watchMessages(peer.remoteEpk, liveRoom.roomId)
+            .listen(_onMessages);
+        _runtimeSub = _read
+            .watchRuntime(peer.remoteEpk, liveRoom.roomId)
+            .listen(_onRuntime);
+        _filesSub = _files
+            ?.watchSession(peer.remoteEpk, liveRoom.roomId)
+            .listen(_onFiles);
+        _sync.requestSync();
+      } else {
+        final needsSync = !_wasRoomLive;
+        _wasRoomLive = true;
+        if (_conn.activeRoomId != _activeRoomId) {
+          _conn.switchRoom(_activeRoomId);
+        }
+        if (needsSync) _sync.requestSync();
+      }
+      _recompute();
+      return null;
+    } on NewSessionFailure catch (e) {
+      return e.userMessage;
+    } finally {
+      _reviving = false;
+      if (!_disposed) notifyListeners();
+    }
   }
 
   @override

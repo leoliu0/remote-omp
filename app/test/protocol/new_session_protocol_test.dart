@@ -56,6 +56,28 @@ void main() {
       ).toJson();
       expect(json, isNot(contains('harness')));
     });
+
+    test('SpawnSessionRequest includes resume and room_id only when reviving', () {
+      final fresh = SpawnSessionRequest(id: 'act_7', cwd: '/w/app').toJson();
+      expect(fresh, isNot(contains('resume')));
+      expect(fresh, isNot(contains('room_id')));
+
+      final revive = SpawnSessionRequest(
+        id: 'act_8',
+        cwd: '/w/app',
+        name: 'app',
+        resume: true,
+        roomId: 'room123',
+      ).toJson();
+      expect(revive, {
+        'type': 'spawn_session',
+        'id': 'act_8',
+        'cwd': '/w/app',
+        'name': 'app',
+        'resume': true,
+        'room_id': 'room123',
+      });
+    });
   });
 
   group('new session ServerMessage parsing', () {

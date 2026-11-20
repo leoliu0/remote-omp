@@ -41,6 +41,11 @@ class SessionTile extends StatelessWidget {
   /// Visible restart affordance on the row, rendered next to the bin icon.
   /// Optional; when null nothing is rendered.
   final VoidCallback? onRestart;
+  /// Visible revive affordance on an offline row, rendered before the bin icon.
+  /// Optional; when null nothing is rendered.
+  final VoidCallback? onRevive;
+  /// `true` while a revive request for this row is in flight.
+  final bool isReviving;
   const SessionTile({
     super.key,
     required this.peer,
@@ -54,6 +59,8 @@ class SessionTile extends StatelessWidget {
     this.onLongPress,
     this.onDelete,
     this.onRestart,
+    this.onRevive,
+    this.isReviving = false,
   });
 
   @override
@@ -99,6 +106,28 @@ class SessionTile extends StatelessWidget {
                     visualDensity: VisualDensity.compact,
                     icon: Icon(LucideIcons.rotateCw, size: 16, color: colors.muted2),
                     onPressed: onRestart,
+                  ),
+                if (isReviving)
+                  SizedBox(
+                    width: 36,
+                    height: 36,
+                    child: Center(
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colors.accent,
+                        ),
+                      ),
+                    ),
+                  )
+                else if (onRevive != null)
+                  IconButton(
+                    tooltip: 'Revive session',
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(LucideIcons.play, size: 16, color: colors.accent),
+                    onPressed: onRevive,
                   ),
                 if (onDelete != null)
                   IconButton(

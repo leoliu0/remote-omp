@@ -390,6 +390,48 @@ void main() {
       ).awaitRoom(spawned, timeout: const Duration(milliseconds: 50));
       expect(room, isNull);
     });
+
+    test('prefers expectedRoomId when matching a revived live room', () async {
+      final (cm, _) = await _online(
+        rooms: [
+          _room('other', '/w/app', name: 'app'),
+          _room('revived-room', '/w/app', name: 'custom'),
+        ],
+      );
+      final room = await NewSessionRepository(
+        cm,
+        epk: _epk,
+      ).awaitRoom(spawned, expectedRoomId: 'revived-room');
+      expect(room?.roomId, 'revived-room');
+    });
+
+    test('spawn forwards resume and roomId when reviving', () async {
+      final (cm, ch) = await _online(rooms: [_room('r2', '/b')]);
+      ch.onSend = (msg) {
+        msg as SpawnSessionRequest;
+        scheduleMicrotask(
+          () => ch.push(
+            SpawnResult(
+              inReplyTo: msg.id,
+              cwd: msg.cwd,
+              name: msg.name ?? 'app',
+              persistent: msg.persistent,
+              daemonId: 'd2',
+            ),
+          ),
+        );
+      };
+
+      await NewSessionRepository(cm, epk: _epk).spawn(
+        cwd: '/w/app',
+        name: 'app',
+        resume: true,
+        roomId: 'room-abc',
+      );
+      final req = ch.sent.single.msg as SpawnSessionRequest;
+      expect(req.resume, isTrue);
+      expect(req.roomId, 'room-abc');
+    });
   });
 
   group('NewSessionFailure.userMessage', () {

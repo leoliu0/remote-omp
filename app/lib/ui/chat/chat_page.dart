@@ -234,6 +234,14 @@ class _ChatPageState extends State<ChatPage> {
               TodoPanel(phases: state.todo, working: state.isWorking),
             if (!landscape && state is ChatReady && state.activity.isNotEmpty)
               ActivityPanel(jobs: state.activity),
+            if (showComposer &&
+                state is ChatReady &&
+                !state.pairingRevoked &&
+                (vm.canReviveActiveRoom || vm.isReviving))
+              _ReviveSessionBar(
+                reviving: vm.isReviving,
+                onRevive: () => _reviveActiveSession(context, vm),
+              ),
             if (showComposer)
               KeyedSubtree(
                 key: const Key('chat_composer'),
@@ -877,6 +885,34 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  /// Revives the offline room currently open in Chat, surfacing any refusal
+  /// or timeout message in a snackbar.
+  static Future<void> _reviveActiveSession(
+    BuildContext context,
+    ChatViewModel vm,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final colors = context.colors;
+    final message = await vm.reviveActiveRoom();
+    if (message == null || !context.mounted) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          backgroundColor: colors.surface,
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            message,
+            style: TextStyle(
+              fontFamily: kMonoFamily,
+              fontSize: 12,
+              color: colors.text,
+            ),
+          ),
+        ),
+      );
+  }
+
   /// Dispatches a `plan_mode` action; a failure (offline / timeout / the Pi's
   /// action_error) shows as a snackbar. The new state arrives as `plan_state`.
   static Future<void> _sendPlanMode(
@@ -1349,6 +1385,76 @@ class _RevokedBanner extends StatelessWidget {
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
                 decoration: TextDecoration.underline,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviveSessionBar extends StatelessWidget {
+  final bool reviving;
+  final VoidCallback onRevive;
+  const _ReviveSessionBar({required this.reviving, required this.onRevive});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return Container(
+      key: const Key('chat_revive_bar'),
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: colors.surface,
+        border: Border(top: BorderSide(color: colors.border)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: colors.muted,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Session is offline',
+              style: context.typo.mono.copyWith(
+                fontSize: 12,
+                color: colors.muted2,
+              ),
+            ),
+          ),
+          FilledButton.icon(
+            onPressed: reviving ? null : onRevive,
+            style: FilledButton.styleFrom(
+              backgroundColor: colors.accent,
+              foregroundColor: colors.onAccent,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              minimumSize: const Size(0, 32),
+              visualDensity: VisualDensity.compact,
+            ),
+            icon: reviving
+                ? SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: colors.onAccent,
+                    ),
+                  )
+                : const Icon(LucideIcons.play, size: 14),
+            label: Text(
+              reviving ? 'Reviving…' : 'Revive',
+              style: context.typo.mono.copyWith(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: colors.onAccent,
               ),
             ),
           ),

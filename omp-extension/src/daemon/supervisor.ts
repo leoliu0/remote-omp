@@ -552,7 +552,8 @@ export class Supervisor {
       return { ok: false, error: `a session is already running in ${cwd}`, code: "cwd_busy" };
     }
 
-    const slot = this._spawnEphemeral(id, cwd, name);
+    const resume = req.resume === true;
+    const slot = this._spawnEphemeral(id, cwd, name, resume);
     if ((await this._awaitStart(slot.child, EPHEMERAL_START_WAIT_MS)) === "exited") {
       return {
         ok: false,
@@ -768,14 +769,14 @@ export class Supervisor {
   }
 
   /** Spawns the child of a phone-started session (see `_opSpawnEphemeral`) and
-   *  registers its slot. Always a new session, never `--continue`. */
-  private _spawnEphemeral(id: string, cwd: string, name: string): ChildSlot {
+   *  registers its slot. Starts fresh unless `resume` is true (`--continue`). */
+  private _spawnEphemeral(id: string, cwd: string, name: string, resume = false): ChildSlot {
     const config: LocalConfig = { agent_name: name, auto_start_relay: true };
     const childOpts: RpcChildOptions = {
       extensionPath: this.opts.extensionPath,
       cwd,
       config,
-      freshSession: true,
+      freshSession: !resume,
     };
     if (this.opts.ompBin !== undefined) childOpts.ompBin = this.opts.ompBin;
     if (this.childEnv !== undefined) childOpts.env = this.childEnv;
@@ -790,8 +791,9 @@ export class Supervisor {
       ephemeral: { name },
     };
     this.children.set(id, slot);
+    const modeTag = resume ? "ephemeral, resume" : "ephemeral";
     process.stderr.write(
-      `[remote-omp-supervisord] spawning ${id} (name="${name}") in ${cwd} (ephemeral)\n`,
+      `[remote-omp-supervisord] spawning ${id} (name="${name}") in ${cwd} (${modeTag})\n`,
     );
     child.on("exit", (evt: RpcChildExitEvent) => this._onChildExit(slot, evt));
     child.spawn();

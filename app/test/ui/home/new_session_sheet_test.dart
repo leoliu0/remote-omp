@@ -108,6 +108,8 @@ class _FakeRequester implements NewSessionRequester {
     required String cwd,
     String? name,
     bool persistent = false,
+    bool resume = false,
+    String? roomId,
   }) {
     spawnCalls.add((cwd: cwd, name: name, persistent: persistent));
     final handler = onSpawn;
@@ -119,6 +121,7 @@ class _FakeRequester implements NewSessionRequester {
   Future<RoomInfo?> awaitRoom(
     SpawnResult result, {
     Duration timeout = const Duration(seconds: 20),
+    String? expectedRoomId,
   }) {
     awaitCalls.add((result: result, timeout: timeout));
     final handler = onAwait;

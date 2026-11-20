@@ -15,7 +15,9 @@ import { SupervisorOfflineError, SupervisorReplyError } from "../daemon/client.j
 import type { ControlRequest } from "../daemon/control_protocol.js";
 import { addDaemon, listDaemons } from "../daemon/registry.js";
 import type { ClientMessage, DirsListMessage, ServerMessage } from "../protocol/types.js";
+import { roomIdFor, roomIdForCwd } from "../rooms.js";
 import { acquireCwdLock } from "../session/cwd_lock.js";
+import { defaultAgentName, saveLocalConfig } from "../session/local_config.js";
 import {
   defaultSessionRoots,
   handleListDirs,
@@ -545,5 +547,96 @@ describe("spawn_session — persistent (Keep always on)", () => {
     const reply = await spawn({ persistent: true }, { callSupervisor: sup.callSupervisor });
     expect(reply).toMatchObject({ type: "error", code: "supervisor_offline" });
     expect(listDaemons()).toEqual([]);
+  });
+});
+
+describe("spawn_session — revive offline session (`resume: true`)", () => {
+  test("forwards resume: true to spawn_ephemeral without registering a daemon", async () => {
+    const sup = fakeSupervisor(ephemeralOk);
+    const reply = await spawn({ resume: true, name: "work" }, { callSupervisor: sup.callSupervisor });
+    expect(sup.calls).toEqual([{ op: "spawn_ephemeral", cwd: work, name: "work", resume: true }]);
+    expect(reply).toEqual({
+      type: "spawn_result",
+      in_reply_to: "S1",
+      cwd: work,
+      name: "work",
+      persistent: false,
+      daemon_id: "eph00001",
+    });
+    expect(listDaemons()).toEqual([]);
+  });
+
+  test("starts a stopped registered daemon via { op: 'start', fresh: false } and replies persistent: true", async () => {
+    const entry = addDaemon(work, "door");
+    const sup = fakeSupervisor((req) => {
+      if (req.op !== "start") throw new Error(`unexpected op ${req.op}`);
+      return { id: req.id, state: "starting", started: true };
+    });
+    const reply = await spawn({ resume: true, name: "door" }, { callSupervisor: sup.callSupervisor });
+    expect(sup.calls).toEqual([{ op: "start", id: entry.id, fresh: false }]);
+    expect(reply).toEqual({
+      type: "spawn_result",
+      in_reply_to: "S1",
+      cwd: work,
+      name: "door",
+      persistent: true,
+      daemon_id: entry.id,
+    });
+  });
+
+  test("refuses a running registered daemon with cwd_busy when resume: true", async () => {
+    addDaemon(work, "door");
+    const held = await acquireCwdLock(work, "door");
+    expect(held.ok).toBe(true);
+    const sup = fakeSupervisor(ephemeralOk);
+    try {
+      expect(await spawn({ resume: true, name: "door" }, { callSupervisor: sup.callSupervisor })).toMatchObject({
+        type: "error",
+        code: "cwd_busy",
+      });
+      expect(sup.calls).toEqual([]);
+    } finally {
+      if (held.ok) held.release();
+    }
+  });
+
+  test("resolves defaultAgentName(cwd) when room_id matches roomIdForCwd(cwd) despite phone-local rename", async () => {
+    const sup = fakeSupervisor(ephemeralOk);
+    const reply = await spawn(
+      { resume: true, name: "Custom Local Title", room_id: roomIdForCwd(work) },
+      { callSupervisor: sup.callSupervisor },
+    );
+    expect(sup.calls).toEqual([
+      { op: "spawn_ephemeral", cwd: work, name: defaultAgentName(work), resume: true },
+    ]);
+    expect(reply).toMatchObject({ type: "spawn_result", name: defaultAgentName(work) });
+  });
+
+  test("resolves agent_name from <cwd>/.omp/remote-omp/config.json even when REMOTE_OMP_DIRECT_CONFIG is set", async () => {
+    saveLocalConfig(work, { agent_name: "disk-agent" });
+    const prevDirect = process.env["REMOTE_OMP_DIRECT_CONFIG"];
+    process.env["REMOTE_OMP_DIRECT_CONFIG"] = JSON.stringify({ agent_name: "always-on", auto_start_relay: true });
+    try {
+      const sup = fakeSupervisor(ephemeralOk);
+      const reply = await spawn(
+        { resume: true, name: "Renamed On Phone", room_id: roomIdFor(work, "disk-agent") },
+        { callSupervisor: sup.callSupervisor },
+      );
+      expect(sup.calls).toEqual([
+        { op: "spawn_ephemeral", cwd: work, name: "disk-agent", resume: true },
+      ]);
+      expect(reply).toMatchObject({ type: "spawn_result", name: "disk-agent" });
+    } finally {
+      if (prevDirect === undefined) delete process.env["REMOTE_OMP_DIRECT_CONFIG"];
+      else process.env["REMOTE_OMP_DIRECT_CONFIG"] = prevDirect;
+    }
+  });
+
+  test("rejects non-boolean resume or non-string room_id as invalid_message", async () => {
+    const sup = fakeSupervisor(ephemeralOk);
+    const deps = { callSupervisor: sup.callSupervisor };
+    expect(await spawn({ resume: "yes" as never }, deps)).toMatchObject({ type: "error", code: "invalid_message" });
+    expect(await spawn({ room_id: 123 as never }, deps)).toMatchObject({ type: "error", code: "invalid_message" });
+    expect(sup.calls).toEqual([]);
   });
 });

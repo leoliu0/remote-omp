@@ -35,6 +35,7 @@ protocol is unchanged, so older apps and PCs keep talking to the relay.
 - **Retry** under a failed turn re-runs it with omp's `retry()`, without sending the prompt twice.
 - **Questions one at a time.** A multi-question ask shows one question per page with Back/Next; Submit stays disabled until every question is answered (optional ones have an explicit Skip), and closing with answers asks first.
 - The `/` menu lists the commands the PC actually has (omp builtins, extension and prompt commands, skills).
+- **Revive offline sessions.** Offline rows on Home (play icon + long-press "Revive session") and an inline Revive bar inside offline chats resume the folder's latest omp conversation (`--continue`) or restart a stopped registered daemon via `spawn_session { resume: true, room_id }` and rejoin the same room.
 
 ### Fixed on omp (plan 69)
 

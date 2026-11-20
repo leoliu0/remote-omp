@@ -23,9 +23,10 @@ import type {
   WireDirEntry,
   WireRecentDir,
 } from "../protocol/types.js";
+import { roomIdFor, roomIdForCwd } from "../rooms.js";
 import { lockPathFor } from "../session/cwd_lock.js";
 import { tryConnect } from "../session/leader_election.js";
-import { defaultAgentName, migrateAgentName } from "../session/local_config.js";
+import { defaultAgentName, loadLocalConfig, migrateAgentName } from "../session/local_config.js";
 import type { ActionReplySender } from "./handlers.js";
 
 /**
@@ -391,7 +392,7 @@ async function rollbackRegistration(id: string, deps: SessionsDeps): Promise<voi
 }
 
 /** `remote-omp create` plus an immediate start: the folder gets an always-on daemon (plan/67). */
-async function startPersistent(cwd: string, name: string, deps: SessionsDeps): Promise<string> {
+async function startPersistent(cwd: string, name: string, deps: SessionsDeps, fresh = true): Promise<string> {
   if (!(await deps.supervisorOnline())) throw new SessionsError("supervisor_offline", OFFLINE_MESSAGE);
   let record: DaemonRecord;
   try {
@@ -403,12 +404,36 @@ async function startPersistent(cwd: string, name: string, deps: SessionsDeps): P
     throw err;
   }
   try {
-    await deps.callSupervisor({ op: "start", id: record.id, fresh: true });
+    await deps.callSupervisor({ op: "start", id: record.id, fresh });
   } catch (err) {
     await rollbackRegistration(record.id, deps);
     throw err;
   }
   return record.id;
+}
+
+/**
+ * Resolves the `agent_name` that reproduces `expectedRoomId` for `cwd` when
+ * reviving an offline session (the user may have renamed the room locally on
+ * the phone).
+ */
+export function resolveReviveName(
+  cwd: string,
+  requestedName: string | undefined,
+  expectedRoomId: string | undefined,
+): string {
+  const candidate = ((requestedName ?? "").trim() || defaultAgentName(cwd)).slice(0, MAX_NAME_LENGTH);
+  if (!expectedRoomId || roomIdFor(cwd, candidate) === expectedRoomId) {
+    return candidate;
+  }
+  if (expectedRoomId === roomIdForCwd(cwd)) {
+    return defaultAgentName(cwd);
+  }
+  const cfgName = loadLocalConfig(cwd, { ignoreDirectConfig: true }).agent_name;
+  if (cfgName && roomIdFor(cwd, cfgName) === expectedRoomId) {
+    return cfgName;
+  }
+  return candidate;
 }
 
 export async function handleSpawnSession(
@@ -427,21 +452,55 @@ export async function handleSpawnSession(
     if (msg.persistent !== undefined && typeof msg.persistent !== "boolean") {
       throw new SessionsError("invalid_message", "persistent must be a boolean");
     }
+    if (msg.resume !== undefined && typeof msg.resume !== "boolean") {
+      throw new SessionsError("invalid_message", "resume must be a boolean");
+    }
+    if (msg.room_id !== undefined && typeof msg.room_id !== "string") {
+      throw new SessionsError("invalid_message", "room_id must be a string");
+    }
     const persistent = msg.persistent === true;
+    const resume = msg.resume === true;
+    const expectedRoomId = typeof msg.room_id === "string" && msg.room_id.trim() ? msg.room_id.trim() : undefined;
 
     const cwd = await resolveFolder(msg.cwd, resolve(deps.home()));
-    const name = ((msg.name ?? "").trim() || defaultAgentName(cwd)).slice(0, MAX_NAME_LENGTH);
+    const name = resume
+      ? resolveReviveName(cwd, msg.name, expectedRoomId)
+      : ((msg.name ?? "").trim() || defaultAgentName(cwd)).slice(0, MAX_NAME_LENGTH);
 
-    if (deps.listDaemons().some((d) => d.cwd === cwd)) {
-      throw new SessionsError("already_registered", "That folder is already an always-on session");
+    const existing = deps.listDaemons().find((d) => d.cwd === cwd);
+    if (existing) {
+      if (!resume) {
+        throw new SessionsError("already_registered", "That folder is already an always-on session");
+      }
+      if (await deps.cwdLockHeld(cwd, existing.name)) {
+        throw new SessionsError("cwd_busy", "A session is already running in that folder");
+      }
+      if (!(await deps.supervisorOnline())) {
+        throw new SessionsError("supervisor_offline", OFFLINE_MESSAGE);
+      }
+      await deps.callSupervisor({ op: "start", id: existing.id, fresh: false });
+      sender.send({
+        type: "spawn_result",
+        in_reply_to: msg.id,
+        cwd,
+        name: existing.name,
+        persistent: true,
+        daemon_id: existing.id,
+      });
+      return;
     }
+
     if (await deps.cwdLockHeld(cwd, name)) {
       throw new SessionsError("cwd_busy", "A session is already running in that folder");
     }
 
     const daemonId = persistent
-      ? await startPersistent(cwd, name, deps)
-      : (await deps.callSupervisor({ op: "spawn_ephemeral", cwd, name })).id;
+      ? await startPersistent(cwd, name, deps, !resume)
+      : (
+          await deps.callSupervisor(
+            resume ? { op: "spawn_ephemeral", cwd, name, resume: true } : { op: "spawn_ephemeral", cwd, name },
+          )
+        ).id;
 
     const reply: SpawnResultMessage = {
       type: "spawn_result",

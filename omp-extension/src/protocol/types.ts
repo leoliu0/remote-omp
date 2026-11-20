@@ -443,14 +443,25 @@ export type ClientMessage =
   | { type: "git_diff"; id: string; path: string; staged?: boolean }
   // Mobile composer `@` file autocomplete — answered with `files_list`.
   | { type: "list_files"; id: string; query: string; limit?: number }
-  // Plan/68 — new session from the phone. `list_dirs` browses the PC's folders
-  // (answered with `dirs_list`); `spawn_session` starts an omp session in one
-  // (answered with `spawn_result`, or an `error` whose `code` says why:
-  // cwd_busy, already_registered, not_found, supervisor_offline, …).
+  // Plan/68 — new session / revive offline session from the phone.
+  // `list_dirs` browses the PC's folders (answered with `dirs_list`);
+  // `spawn_session` starts an omp session in one (answered with
+  // `spawn_result`, or an `error` whose `code` says why: cwd_busy,
+  // already_registered, not_found, supervisor_offline, …).
   // `persistent` registers an always-on daemon (plan/67) instead of an
   // ephemeral session that ends when the process does.
+  // `resume` (`--continue`) revives an offline session instead of starting fresh;
+  // `room_id` lets the PC resolve the matching `agent_name`.
   | { type: "list_dirs"; id: string; path?: string }
-  | { type: "spawn_session"; id: string; cwd: string; name?: string; persistent?: boolean }
+  | {
+      type: "spawn_session";
+      id: string;
+      cwd: string;
+      name?: string;
+      persistent?: boolean;
+      resume?: boolean;
+      room_id?: string;
+    }
   // Plan/66 — omp model roles (`modelRoles` in omp's config.yml). The list is
   // answered with `model_roles`. `model_role_set` assigns a role globally
   // (`provider/model_id[:thinking]`, as omp's TUI writes it); omitting both

@@ -1,3 +1,4 @@
+import 'package:app/data/actions/new_session_repository.dart' show NewSessionFailure;
 import 'package:app/data/transport/epk_encoding.dart';
 import 'package:app/pairing/storage.dart';
 import 'package:app/protocol/protocol.dart' show RoomInfo;
@@ -383,6 +384,8 @@ class HomePage extends StatelessWidget {
           it.peer.remoteEpk,
           it.room.roomId,
         );
+    final canRevive = vm.canReviveSession(it.peer.remoteEpk, it.room);
+    final isReviving = vm.isReviving(it.peer.remoteEpk, it.room.roomId);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -399,6 +402,8 @@ class HomePage extends StatelessWidget {
           onRestart: (isLive || isWorking)
               ? () => _confirmRestart(context, vm, it)
               : null,
+          onRevive: canRevive ? () => _reviveSession(context, vm, it) : null,
+          isReviving: isReviving,
           onDelete: () => _confirmDelete(context, vm, it),
         ),
         Divider(color: colors.border, height: 1),
@@ -435,6 +440,18 @@ class HomePage extends StatelessWidget {
                   onTap: () {
                     Navigator.of(sheetCtx).pop();
                     _confirmRestart(context, vm, it);
+                  },
+                )
+              else if (vm.canReviveSession(it.peer.remoteEpk, it.room))
+                ListTile(
+                  leading: Icon(LucideIcons.play, color: colors.accent),
+                  title: Text(
+                    'Revive session',
+                    style: TextStyle(color: colors.text),
+                  ),
+                  onTap: () {
+                    Navigator.of(sheetCtx).pop();
+                    _reviveSession(context, vm, it);
                   },
                 ),
               ListTile(
@@ -623,6 +640,43 @@ class HomePage extends StatelessWidget {
     RoomInfo room,
   ) async {
     await openSession(context, vm, peer, room);
+  }
+
+  static Future<void> _reviveSession(
+    BuildContext context,
+    HomeViewModel vm,
+    HomeItem it,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final outcome = await vm.reviveSession(it.peer.remoteEpk, it.room);
+      if (outcome == null || !context.mounted) return;
+      final room = outcome.room;
+      if (room == null) {
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Text(
+                'Reviving "${outcome.spawn.name}"… It will appear online shortly.',
+              ),
+            ),
+          );
+        return;
+      }
+      await _open(context, vm, it.peer, room);
+    } on NewSessionFailure catch (e) {
+      if (!context.mounted) return;
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(e.userMessage),
+          ),
+        );
+    }
   }
 
   /// Plan 68 — "New session" on a PC's section: pick a folder, start an omp

@@ -1056,16 +1056,22 @@ class ListDirsRequest extends ClientMessage {
 /// Plan 68 — starts an omp session in [cwd] on the PC. [persistent] registers
 /// an always-on daemon there instead of a session that ends when its process
 /// does. An empty or null [name] leaves the choice to the PC (the folder name).
+/// When [resume] is true, revives an offline session via `omp --continue` and
+/// optionally passes [roomId] so the PC matches the original agent name.
 class SpawnSessionRequest extends ClientMessage {
   final String id;
   final String cwd;
   final String? name;
   final bool persistent;
+  final bool resume;
+  final String? roomId;
   SpawnSessionRequest({
     required this.id,
     required this.cwd,
     this.name,
     this.persistent = false,
+    this.resume = false,
+    this.roomId,
   });
 
   @override
@@ -1075,6 +1081,8 @@ class SpawnSessionRequest extends ClientMessage {
     'cwd': cwd,
     if (name != null && name!.isNotEmpty) 'name': name,
     if (persistent) 'persistent': true,
+    if (resume) 'resume': true,
+    if (roomId != null && roomId!.isNotEmpty) 'room_id': roomId,
   };
 }
 
